@@ -1,7 +1,7 @@
 from setuptools import setup,find_packages
   
 setup(
-    name='WDMWaveletTransforms',
+    name='DTMCMC',
     version='0.1',
     description='Python Implementation of Differentially Tempered Markov-Chain Monte Carlo',
     author='Matthew C. Digman',

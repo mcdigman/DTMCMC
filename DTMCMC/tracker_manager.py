@@ -105,6 +105,7 @@ class TrackerManager():
             # build the print string for jump labels
             print("Acceptance Summary:")
             label_str = "%12s " % "Temperature"
+            print(jump_labels_need)
             for itrj, label_got in enumerate(jump_labels_need):
                 # find the label if it is recorded somewhere
                 label_got = jump_labels_need[itrj]

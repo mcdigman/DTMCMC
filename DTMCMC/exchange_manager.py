@@ -70,7 +70,7 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
                 exchange_tracker[0, 0, itrt] += 1
                 exchange_tracker[0, 0, itrt_target] += 1
                 # track nn exchanges
-                if itrt_target == itrt+1:
+                if itrt_target == itrt+1 or itrt_target==itrt-1:
                     exchange_tracker[1, 0, itrt] += 1
                     exchange_tracker[1, 0, itrt_target] += 1
         else:
@@ -82,7 +82,7 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
                 exchange_tracker[0, 1, itrt] += 1
                 exchange_tracker[0, 1, itrt_target] += 1
                 # track nn exchanges
-                if itrt_target == itrt+1:
+                if itrt_target == itrt+1 or itrt_target==itrt-1:
                     exchange_tracker[1, 1, itrt] += 1
                     exchange_tracker[1, 1, itrt_target] += 1
 

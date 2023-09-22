@@ -6,7 +6,7 @@ import numpy as np
 from DTMCMC.jump_manager import JumpManager
 
 # define unique codes for each jump type
-AUXILLIARY_JUMPS = np.array([])
+AUXILLIARY_JUMPS = np.array([],dtype=np.int64)
 
 # dictionary of display names for the jumps
 JUMP_LABELS = {}
