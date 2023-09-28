@@ -17,7 +17,7 @@ def get_blockwise_vars(N_blocks, n_burnin, samples_store, block_size, itrr, itrp
 @njit()
 def get_blockwise_vars_scramble(N_blocks, n_cold, n_burnin, samples_store, block_size, itrr, itrp, blockwise_vars_scramble, blockwise_means_scramble):
     """get the variances for random blocks of samples"""
-    dim1 = (samples_store.shape[0]-n_burnin)
+    dim1 = samples_store.shape[0]-n_burnin
     dim2 = n_cold
     for itrb in range(0, N_blocks):
         sample_block_loc = np.zeros(block_size*n_cold)

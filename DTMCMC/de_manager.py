@@ -21,10 +21,10 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in DE_JUMPS])
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, strategy_params_arch):
+    def __init__(self, T_ladder, like_obj, config):
         """create the manager object"""
         self.n_chain = T_ladder.n_chain
-        self.strategy_params = DEStrategyParameters(strategy_params_arch.config)
+        self.strategy_params = DEStrategyParameters(config)
         self.de_thin = self.strategy_params.de_thin
         self.de_size = self.strategy_params.de_size
         self.like_obj = like_obj
@@ -91,8 +91,8 @@ class DEJumpManager(JumpManager):
         jump_weights = np.zeros((n_chain, self.n_jump_types))
         jump_weights[:] = 1./3.                                        # just a default equal weight
 
-        standard_prob = (1-self.strategy_params.big_de_prob)           # probability of doing a standard jump
-        subspace_prob = (1.-de_full_frac)                              # probability of doing a subspace jump
+        standard_prob = 1-self.strategy_params.big_de_prob             # probability of doing a standard jump
+        subspace_prob = 1.-de_full_frac                                # probability of doing a subspace jump
 
         standard_full_prob = standard_prob*de_full_frac                # probability of doing a standard full jump
         standard_subspace_prob = standard_prob*subspace_prob           # probability of doing a standard subspace jump
@@ -113,7 +113,8 @@ class DEJumpManager(JumpManager):
         jump_weights[n_cold:, self.code_to_idx[DE_BIG_RANDOM_SUBSPACE]] = hot_de_weight*big_subspace_prob
 
         self.jump_weights = jump_weights
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
+        # get the normalized conditional jump probabilities
+        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
 
         assert np.all(self.jump_weights>=0.)
@@ -163,6 +164,10 @@ class DEJumpManager(JumpManager):
         null proposals are marked as failures"""
         sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, True, True)
         return sample_propose, 0., np.any(sample_point != sample_propose)
+
+    def record_config(self,config_in):
+        """record the current configuration to an input ConfigParser object config_in"""
+        self.strategy_params.record_config(config_in)
 
 
 @njit()
@@ -237,4 +242,16 @@ class DEStrategyParameters():
 
     def copy(self):
         """copy the object"""
-        return DEStrategyParameters(self.cold_de_weight, self.hot_de_weight, self.big_de_prob, self.de_subspace_frac, self.de_subspace_override_frac, self.de_size, self.de_thin)
+        return DEStrategyParameters(self.config)
+
+    def record_config(self,config_in):
+        """record the current configuration to the requested configuration object 
+            inputs:
+                config_in: ConfigParser object"""
+        config_in['DEJumpManager']['cold_de_weight'] = str(self.cold_de_weight)
+        config_in['DEJumpManager']['hot_de_weight'] = str(self.hot_de_weight)
+        config_in['DEJumpManager']['big_de_prob'] = str(self.big_de_prob)
+        config_in['DEJumpManager']['de_subspace_frac'] = str(self.de_subspace_frac)
+        config_in['DEJumpManager']['de_subspace_override_frac'] = str(self.de_subspace_override_frac)
+        config_in['DEJumpManager']['de_size'] = str(self.de_size)
+        config_in['DEJumpManager']['de_thin'] = str(self.de_thin)

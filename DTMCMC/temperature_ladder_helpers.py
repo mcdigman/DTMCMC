@@ -325,7 +325,8 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
 
     # Interpolate the integrate heat capacity and get the derivative
     # Note that because we actually want to interpolate the derivative we need to use k=3 splines, despite possible dangers
-    heat_capacity_got = -InterpolatedUnivariateSpline(betas_use[::-1],heat_capacity_integ[::-1],k=3,ext=3).derivative(1)(betas_got)*betas_got
+
+    heat_capacity_got = InterpolatedUnivariateSpline(betas_use[::-1],-heat_capacity_integ[::-1],k=3,ext=3).derivative(1)(betas_got)*betas_got
 
     heat_capacity_got[heat_capacity_got < 0.] = 0. # remove spurious negative heat capacities
 
@@ -431,12 +432,12 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
         key_col = max(key_col1,key_col2)
 
         prominences[itrp] = cur_max_val - key_col
-    
+
     # cut out micro-prominent maxima, which are probably just noise
     if prominences.size > 0:
         micro_thresh_loc = min(micro_thresh,np.max(prominences)) # make sure we keep at least one peak if there are any
     else:
-        micro_thresh_loc = micro_thresh 
+        micro_thresh_loc = micro_thresh
 
     maxima_Ts = maxima_Ts[prominences>micro_thresh_loc]
     maxima_vals = maxima_vals[prominences>micro_thresh_loc]

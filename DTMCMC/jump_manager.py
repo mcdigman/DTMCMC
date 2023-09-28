@@ -59,3 +59,9 @@ class JumpManager(ABC):
             block_size: int, the number of steps in this block
             samples: 3D float array of samples
             logLs: 2D float array of likelihoods"""
+
+
+    @abstractmethod
+    def record_config(self,config_in):
+        """do any necessary steps to record the current configuration of the manager
+        to the input ConfigParser object config_in"""

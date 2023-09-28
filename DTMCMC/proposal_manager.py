@@ -8,17 +8,21 @@ import DTMCMC.prior_manager as ph
 class ProposalManager(JumpManager):
     """manage generation of proposals, handles all dispatching of jumps"""
 
-    def __init__(self, T_ladder, strategy_params, managers, exchange_manager):
+    def __init__(self, T_ladder, managers, exchange_manager, config):
         """create the core proposal manager object, subclass of DTMCMC.jump_manager.JumpManager
             inputs:
                 T_ladder: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
-                strategy_params: a DTMCMC.strategy_helper.StrategyParams object (or suitable replacement)
                 managers: a tuple of objects extending DTMCMC.jump_manager.JumpManager, managers to dispatch jumps too
                 exchange_manager: a DTMCMC.exchange_manager.ExchangeManager object (or suitable replacement)
                                   exchanges are a separate manager from the other jump types because
-                                  they are fundamentally different in how the temperatures interact"""
+                                  they are fundamentally different in how the temperatures interact
+                config: a ConfigParser object storing any relevant configuration variables"""
+
+        self.config = config
+
+        self.only_prior_hot = config['ProposalManager'].getboolean('only_prior_hot',True)
+
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params
 
         self.managers = managers
         self.n_managers = len(self.managers)
@@ -38,7 +42,11 @@ class ProposalManager(JumpManager):
         self.jumps_need = np.hstack(jumps_need_temp)
         self.jump_labels_array = np.hstack(jump_labels_temp)
         self.n_jump_types = self.jumps_need.size
+        
+        self.choose_idx_modifiers = np.cumsum(self.n_jumps_managers)
+
         print(self.jumps_need)
+        print(self.choose_idx_modifiers)
 
         # map the codes that exist to indices in jumps_need
         self.code_to_idx = np.zeros(self.jumps_need.max()+1, dtype=np.int64)-1
@@ -66,9 +74,10 @@ class ProposalManager(JumpManager):
             else:
                 choose_sum += self.jump_probs[itrt][itrp]
 
-        new_point = sample_point.copy()
-        density_fac = 0.
-        success = False
+        # default in case fail to find
+        #new_point = sample_point.copy()
+        #density_fac = 0.
+        #success = False
 
         found = False
 
@@ -77,7 +86,7 @@ class ProposalManager(JumpManager):
             choose_code = self.jumps_need[choose]
 
         itrj1 = 0
-        for itrm in range(0, self.n_managers):
+        for itrm in range(self.n_managers):
             itrj2 = itrj1+self.n_jumps_managers[itrm]
             if itrj1 <= choose < itrj2:
                 # found the correct manager, dispatch the jump
@@ -100,15 +109,17 @@ class ProposalManager(JumpManager):
         jump_weights = np.zeros((n_chain, self.n_jump_types))
 
         itrj1 = 0
-        for itrm in range(0, self.n_managers):
+        for itrm in range(self.n_managers):
             itrj2 = itrj1+self.n_jumps_managers[itrm]
             jump_weights[:, itrj1:itrj2] = self.managers[itrm].get_jump_weights()
-            if not isinstance(self.managers[itrm], ph.PriorManager):
-                jump_weights[n_chain-1, itrj1:itrj2] = 0.  # override specified weights and only allow prior-type draws to contribute to the last chain
+            if self.only_prior_hot and not isinstance(self.managers[itrm], ph.PriorManager):
+                # override specified weights and only allow prior-type draws to contribute to the last chain
+                # TODO make this an option
+                jump_weights[n_chain-1, itrj1:itrj2] = 0.
             itrj1 = itrj2
 
         jump_probs = (jump_weights.T/jump_weights.sum(axis=1)).T
-        jump_probs[~np.isfinite(jump_probs)]=0.
+        jump_probs[~np.isfinite(jump_probs)] = 0.
 
         self.jump_weights = jump_weights
         self.jump_probs = jump_probs
@@ -126,11 +137,18 @@ class ProposalManager(JumpManager):
     def post_step_update(self, samples):
         """do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer"""
-        for itrm in range(0, self.n_managers):
+        for itrm in range(self.n_managers):
             self.managers[itrm].post_step_update(samples)
 
     def post_block_update(self, itrn, block_size, samples, logLs):
         """do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates"""
-        for itrm in range(0, self.n_managers):
+        for itrm in range(self.n_managers):
             self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
+
+    def record_config(self,config_in):
+        """record the current configuration to an input ConfigParser object config_in"""
+        for itrm in range(self.n_managers):
+            self.managers[itrm].record_config(config_in)
+
+        config_in['ProposalManager']['only_prior_hot'] = self.only_prior_hot

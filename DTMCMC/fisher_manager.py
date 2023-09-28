@@ -2,8 +2,6 @@
 module to store objects related to fisher matrix jumps"""
 import numpy as np
 
-import configparser
-
 from DTMCMC.lapack_wrappers import solve_triangular
 from DTMCMC.jump_manager import JumpManager
 
@@ -22,14 +20,14 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in FISHER_JUMPS])
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, sample_set, strategy_params_arch):
+    def __init__(self, T_ladder, like_obj, sample_set, config):
         """create the object"""
 
         self.n_chain = T_ladder.n_chain
         self.n_par = sample_set.shape[1]
 
         self.T_ladder = T_ladder
-        self.strategy_params = FisherStrategyParameters(strategy_params_arch.config)
+        self.strategy_params = FisherStrategyParameters(config)
         self.sample_set = sample_set
         self.betas = T_ladder.betas
         self.like_obj = like_obj
@@ -70,7 +68,7 @@ class FisherJumpManager(JumpManager):
         cold_weight = self.strategy_params.cold_fisher_weight
         hot_weight = self.strategy_params.hot_fisher_weight
 
-        subspace_weight = (1.-self.strategy_params.fisher_subspace_override_frac)
+        subspace_weight = 1.-self.strategy_params.fisher_subspace_override_frac
         full_weight = self.strategy_params.fisher_subspace_override_frac
 
         if self.strategy_params.use_chol_fishers:
@@ -92,9 +90,10 @@ class FisherJumpManager(JumpManager):
             jump_weights[n_cold:, self.code_to_idx[SIGMA_RANDOM_SUBSPACE]] = hot_weight*subspace_weight
 
         self.jump_weights = jump_weights
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
+        # get the normalized conditional jump probabilities
+        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
-        
+
         assert np.all(self.jump_weights>=0.)
 
     def get_jump_weights(self):
@@ -157,6 +156,10 @@ class FisherJumpManager(JumpManager):
                 samples_fisher[itrt] = samples[np.unravel_index(np.argmax(logLs[:, :]), logLs.shape)]
                 # samples_fisher[itrt] = samples[np.random.randint(0,self.block_size+1),np.random.randint(0,self.n_cold),:]
             self.reset_fishers_from_point(samples_fisher)
+
+    def record_config(self,config_in):
+        """record the current configuration to an input ConfigParser object config_in"""
+        self.strategy_params.record_config(config_in)
 
 
 def set_fishers(sample_set, strategy_params, n_chain, like_obj):
@@ -289,18 +292,8 @@ class FisherStrategyParameters():
 #                 sigma_default=0.25,                # default sigma for fisher matrix jumps
 #                 max_fisher_el=np.inf):              # maximum element of fisher matrix
         """initialize the object with the prescribed parameters"""
-        #self.use_chol_fishers = use_chol_fishers
-        #self.cold_fisher_weight = cold_fisher_weight
-        #self.hot_fisher_weight = hot_fisher_weight
-        #self.fisher_subspace_frac = fisher_subspace_frac
-        #self.fisher_subspace_override_frac = fisher_subspace_override_frac
-        #self.fisher_downsample = fisher_downsample
-        #self.sigma_default = sigma_default
-        #self.max_fisher_el = max_fisher_el
         self.config = config
 
-#        config = configparser.ConfigParser()
-#        config.read('default_config.ini')
         self.use_chol_fishers = config['FisherJumpManager'].getboolean('use_chol_fishers',False)
         self.cold_fisher_weight = config['FisherJumpManager'].getfloat('cold_fisher_weight',0.333)
         self.hot_fisher_weight = config['FisherJumpManager'].getfloat('hot_fisher_weight',0.333)
@@ -314,4 +307,19 @@ class FisherStrategyParameters():
 
     def copy(self):
         """copy the object"""
-        return FisherStrategyParameters(self.use_chol_fishers, self.cold_fisher_weight, self.hot_fisher_weight, self.fisher_subspace_frac, self.fisher_subspace_override_frac, self.sigma_default, self.max_fisher_el)
+        return FisherStrategyParameters(self.config)
+
+    def record_config(self,config_in):
+        """record the current configuration to the requested configuration object 
+            inputs:
+                config_in: ConfigParser object"""
+        config_in['FisherJumpManager']['use_chol_fishers'] = str(self.use_chol_fishers)
+        config_in['FisherJumpManager']['cold_fisher_weight'] = str(self.cold_fisher_weight)
+        config_in['FisherJumpManager']['hot_fisher_weight'] = str(self.hot_fisher_weight)
+        config_in['FisherJumpManager']['fisher_subspace_frac'] = str(self.fisher_subspace_frac)
+        config_in['FisherJumpManager']['fisher_subspace_override_frac'] = str(self.fisher_subspace_override_frac)
+        config_in['FisherJumpManager']['fisher_downsample'] = str(self.fisher_downsample)
+        config_in['FisherJumpManager']['sigma_default'] = str(self.sigma_default)
+        config_in['FisherJumpManager']['max_fisher_el'] = str(self.max_fisher_el)
+
+

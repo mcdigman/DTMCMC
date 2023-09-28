@@ -20,13 +20,12 @@ class ExchangeManager():
 
     def do_ptmcmc_exchange(self, itrb, samples, logLs, T_ladder, exchange_tracker, chain_track):
         """do the exchange step"""
-        assert self.is_exchange_step(itrb)#itrb % 2 == 0
+        assert self.is_exchange_step(itrb)
         return do_ptmcmc_exchange(itrb-1, samples, logLs, T_ladder.n_chain, T_ladder.betas, exchange_tracker, chain_track, self.strategy, self.track_full_exchanges)
 
     def is_exchange_step(self, itrb):
         """check whether the step with the given index should be an exchange step, currently based on alternating even and odd"""
         return itrb % 2 == 0
-        #return itrb % 4 in (1,2)
 
 
 @njit()

@@ -11,7 +11,7 @@ from DTMCMC.tracker_manager import TrackerManager
 class PTMCMCChain():
     """object to manage the overall chain evolution"""
 
-    def __init__(self, T_ladder_in, like_obj, strategy_params, block_size, store_size,
+    def __init__(self, T_ladder_in, like_obj, block_size, store_size,
                  tracker_manager=None, proposal_manager=None, starting_samples=None,
                  store_thin=1, n_record=-1):
         """create the chain object
@@ -20,9 +20,8 @@ class PTMCMCChain():
             store_size: scalar integer, the number of MCMC states to store
             like_obj: a subclass of the abstract DTMCMC.Likelihood object, that gets likelihoods for a given set of parameters
             T_ladder_in: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
-            strategy_params: a DTMCMC.strategy_helpers.StrategyParams object (or suitable replacement)
             tracker_manager: a DTMCMC.tracker_manager.TrackerManager object (or suitable replacement)
-            proposal_manager: a DTCMCM.proposal_manager.ProposalManager object
+            proposal_manager: a DTMCMC.proposal_manager.ProposalManager object
             starting_samples: a (n_chain, n_par) float array of starting samples
             store_thin: scalar integer, how much to thin the stored samples by (default 1)
             n_record: scalar integer, how many chains to store the results of (default n_cold)"""
@@ -33,7 +32,6 @@ class PTMCMCChain():
         self.store_idx = 0
         self.store_counter = 0
         self.like_obj = like_obj
-        self.strategy_params = strategy_params
         self.tracker_manager = tracker_manager
         self.proposal_manager = proposal_manager
         self.starting_samples = starting_samples
@@ -82,7 +80,7 @@ class PTMCMCChain():
     def initialize_jumps(self):
         """anything that needs to be done to initialize the various jumps"""
         if self.proposal_manager is None:
-            self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.strategy_params, self.samples[0, :, :])
+            self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])
 
     def initialize_state(self):
         """initialize the samples"""

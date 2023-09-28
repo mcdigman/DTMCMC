@@ -5,7 +5,7 @@ from numba.experimental import jitclass
 from numba import njit
 from DTMCMC.correction_helpers import reflect_into_range
 
-# n dimensional unit normal motivated by the 100d considerations in 
+# n dimensional unit normal motivated by the 100d considerations in
 # https://statmodeling.stat.columbia.edu/2017/03/15/ensemble-methods-doomed-fail-high-dimensions/
 
 #@jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])

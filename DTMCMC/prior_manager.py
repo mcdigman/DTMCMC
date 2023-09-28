@@ -17,12 +17,12 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in PRIOR_JUMPS])
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, strategy_params_arch):
+    def __init__(self, T_ladder, like_obj, config):
         """take a likelihood object and create an object that can propose prior draws"""
         self.like_obj = like_obj
         self.n_chain = T_ladder.n_chain
         self.T_ladder = T_ladder
-        self.strategy_params = PriorStrategyParameters(strategy_params_arch.config)
+        self.strategy_params = PriorStrategyParameters(config)
 
         self.n_jump_types = PRIOR_JUMPS.size
         self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
@@ -54,13 +54,16 @@ class PriorManager(JumpManager):
         cold_prior_weight = self.strategy_params.cold_prior_weight
         hot_prior_weight = self.strategy_params.hot_prior_target_weight
 
+        idx_prior_full = self.code_to_idx[PRIOR_FULL]
+
         jump_weights[n_chain-1, :] = 0.
-        jump_weights[n_chain-1, self.code_to_idx[PRIOR_FULL]] = 1.
-        jump_weights[n_cold:n_chain-1, self.code_to_idx[PRIOR_FULL]] = np.linspace(cold_prior_weight, hot_prior_weight, (n_chain-n_cold))[1:]
-        jump_weights[:n_cold,self.code_to_idx[PRIOR_FULL]] = cold_prior_weight
+        jump_weights[n_chain-1, idx_prior_full] = 1.
+        jump_weights[n_cold:n_chain-1, idx_prior_full] = np.linspace(cold_prior_weight, hot_prior_weight, n_chain-n_cold)[1:]
+        jump_weights[:n_cold, idx_prior_full] = cold_prior_weight
 
         self.jump_weights = jump_weights
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
+        # get the normalized conditional jump probabilities
+        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
 
         assert np.all(self.jump_weights >= 0.)
@@ -87,6 +90,10 @@ class PriorManager(JumpManager):
         ie, fisher matrix updates"""
         return
 
+    def record_config(self,config_in):
+        """record the current configuration to an input ConfigParser object config_in"""
+        self.strategy_params.record_config(config_in)
+
 class PriorStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
 
@@ -101,4 +108,11 @@ class PriorStrategyParameters():
 
     def copy(self):
         """copy the object"""
-        return PriorStrategyParameters(self.cold_prior_weight, self.hot_prior_target_weight)
+        return PriorStrategyParameters(self.config)
+
+    def record_config(self,config_in):
+        """record the current configuration to the requested configuration object 
+            inputs:
+                config_in: ConfigParser object"""
+        config_in['PriorManager']['cold_prior_weight'] = str(self.cold_prior_weight)
+        config_in['PriorManager']['hot_prior_target_weight'] = str(self.hot_prior_target_weight)

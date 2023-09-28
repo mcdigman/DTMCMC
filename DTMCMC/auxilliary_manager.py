@@ -16,12 +16,12 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in AUXILLIARY_JUMPS])
 class AuxilliaryJumpManager(JumpManager):
     """template manager for an extra jump type, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, strategy_params):
+    def __init__(self, T_ladder, like_obj, config):
         """a blank """
         self.like_obj = like_obj
         self.n_chain = T_ladder.n_chain
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params
+        self.strategy_params = AuxilliaryStrategyParameters(config)
 
         self.n_jump_types = AUXILLIARY_JUMPS.size
         self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
@@ -51,7 +51,8 @@ class AuxilliaryJumpManager(JumpManager):
         jump_weights[:] = 1./3.  # just a default equal weight
 
         self.jump_weights = jump_weights
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
+        # get the normalized conditional jump probabilities
+        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T
         self.jump_probs[~np.isfinite(self.jump_probs)] = 0.
 
         assert np.all(self.jump_weights >= 0.)
@@ -76,4 +77,27 @@ class AuxilliaryJumpManager(JumpManager):
     def post_block_update(self, itrn, block_size, samples, logLs):
         """do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates"""
+        return
+
+    def record_config(self,config_in):
+        """record the current configuration to an input ConfigParser object config_in"""
+        self.strategy_params.record_config(config_in)
+
+
+
+class AuxilliaryStrategyParameters():
+    """container to store some parameters related to the strategy of proposal generation"""
+
+    def __init__(self,config):
+        """initialize the object with the prescribed parameters"""
+        self.config = config
+
+    def copy(self):
+        """copy the object"""
+        return AuxilliaryStrategyParameters(self.config)
+
+    def record_config(self,config_in):
+        """record the current configuration to the requested configuration object 
+            inputs:
+                config_in: ConfigParser object"""
         return
