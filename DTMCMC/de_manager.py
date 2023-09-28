@@ -24,7 +24,7 @@ class DEJumpManager(JumpManager):
     def __init__(self, T_ladder, like_obj, strategy_params_arch):
         """create the manager object"""
         self.n_chain = T_ladder.n_chain
-        self.strategy_params = strategy_params_arch.de_strategy
+        self.strategy_params = DEStrategyParameters(strategy_params_arch.config)
         self.de_thin = self.strategy_params.de_thin
         self.de_size = self.strategy_params.de_size
         self.like_obj = like_obj
@@ -208,22 +208,32 @@ def write_de_helper(itrde_count, itrde_write, de_buffer, samples):
 class DEStrategyParameters():
     """container to store some parameters related to the strategy of differential evolution proposal generation"""
 
-    def __init__(self,
-                 cold_de_weight=1./3.,              # how often to do de draws in the cold chains
-                 hot_de_weight=1./3.,               # how often to do de draws in the hottest finite temperature chain
-                 big_de_prob=0.5,                   # how often to do the big differential evolution jump
-                 de_subspace_frac=1.,               # what fraction of dimensions to include in de subspace jumps
-                 de_subspace_override_frac=1.,      # how often to not do subspace jumps when doing a de jump
-                 de_size=1000,                      # size of differential evolution buffer
-                 de_thin=1):                        # how much to thin the differential evolution buffer by
+    def __init__(self,config):
+                 #cold_de_weight=1./3.,              # how often to do de draws in the cold chains
+                 #hot_de_weight=1./3.,               # how often to do de draws in the hottest finite temperature chain
+                 #big_de_prob=0.5,                   # how often to do the big differential evolution jump
+                 #de_subspace_frac=1.,               # what fraction of dimensions to include in de subspace jumps
+                 #de_subspace_override_frac=1.,      # how often to not do subspace jumps when doing a de jump
+                 #de_size=1000,                      # size of differential evolution buffer
+                 #de_thin=1):                        # how much to thin the differential evolution buffer by
         """initialize the object with the prescribed parameters"""
-        self.cold_de_weight = cold_de_weight
-        self.hot_de_weight = hot_de_weight
-        self.big_de_prob = big_de_prob
-        self.de_subspace_frac = de_subspace_frac
-        self.de_subspace_override_frac = de_subspace_override_frac
-        self.de_size = de_size
-        self.de_thin = de_thin
+        self.config = config
+
+        #self.cold_de_weight = cold_de_weight
+        #self.hot_de_weight = hot_de_weight
+        #self.big_de_prob = big_de_prob
+        #self.de_subspace_frac = de_subspace_frac
+        #self.de_subspace_override_frac = de_subspace_override_frac
+        #self.de_size = de_size
+        #self.de_thin = de_thin
+
+        self.cold_de_weight = config['DEJumpManager'].getfloat('cold_de_weight',0.333)
+        self.hot_de_weight = config['DEJumpManager'].getfloat('hot_de_weight',0.333)
+        self.big_de_prob = config['DEJumpManager'].getfloat('big_de_prob',0.5)
+        self.de_subspace_frac = config['DEJumpManager'].getfloat('de_subspace_frac',1.)
+        self.de_subspace_override_frac = config['DEJumpManager'].getfloat('de_subspace_override_frac',1.)
+        self.de_size = config['DEJumpManager'].getint('de_size',1000)
+        self.de_thin = config['DEJumpManager'].getint('de_thin',1)
 
     def copy(self):
         """copy the object"""

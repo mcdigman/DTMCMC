@@ -2,10 +2,10 @@
 module to store objects related to fisher matrix jumps"""
 import numpy as np
 
+import configparser
+
 from DTMCMC.lapack_wrappers import solve_triangular
 from DTMCMC.jump_manager import JumpManager
-
-# TODO trap negative weights
 
 # define unique codes for each jump type
 FISHER_FULL = 110
@@ -29,7 +29,7 @@ class FisherJumpManager(JumpManager):
         self.n_par = sample_set.shape[1]
 
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params_arch.fisher_strategy
+        self.strategy_params = FisherStrategyParameters(strategy_params_arch.config)
         self.sample_set = sample_set
         self.betas = T_ladder.betas
         self.like_obj = like_obj
@@ -279,24 +279,38 @@ def set_scales(n_par, T_ladder, sigma_diags):
 class FisherStrategyParameters():
     """container to store some parameters related to the strategy of fisher matrix proposal generation"""
 
-    def __init__(self,
-                 use_chol_fishers=False,            # whether to do fisher jumps using the cholesky decomposition
-                 cold_fisher_weight=1./3.,          # how often to do fisher draws in the cold chains
-                 hot_fisher_weight=1./3.,           # how often to do fisher draws in the hottest finite temperature chain
-                 fisher_subspace_frac=1.,           # what fraction of dimensions to include in fisher subspace jumps
-                 fisher_subspace_override_frac=1.,  # how often to not do subspace jumps when doing a fisher jump
-                 fisher_downsample=1,               # how many blocks to skip between fisher matrix updates
-                 sigma_default=0.25,                # default sigma for fisher matrix jumps
-                 max_fisher_el=np.inf):              # maximum element of fisher matrix
+    def __init__(self,config):
+#                 use_chol_fishers=False,            # whether to do fisher jumps using the cholesky decomposition
+#                 cold_fisher_weight=0.333,          # how often to do fisher draws in the cold chains
+#                 hot_fisher_weight=0.333,           # how often to do fisher draws in the hottest finite temperature chain
+#                 fisher_subspace_frac=1.,           # what fraction of dimensions to include in fisher subspace jumps
+#                 fisher_subspace_override_frac=1.,  # how often to not do subspace jumps when doing a fisher jump
+#                 fisher_downsample=1,               # how many blocks to skip between fisher matrix updates
+#                 sigma_default=0.25,                # default sigma for fisher matrix jumps
+#                 max_fisher_el=np.inf):              # maximum element of fisher matrix
         """initialize the object with the prescribed parameters"""
-        self.use_chol_fishers = use_chol_fishers
-        self.cold_fisher_weight = cold_fisher_weight
-        self.hot_fisher_weight = hot_fisher_weight
-        self.fisher_subspace_frac = fisher_subspace_frac
-        self.fisher_subspace_override_frac = fisher_subspace_override_frac
-        self.fisher_downsample = fisher_downsample
-        self.sigma_default = sigma_default
-        self.max_fisher_el = max_fisher_el
+        #self.use_chol_fishers = use_chol_fishers
+        #self.cold_fisher_weight = cold_fisher_weight
+        #self.hot_fisher_weight = hot_fisher_weight
+        #self.fisher_subspace_frac = fisher_subspace_frac
+        #self.fisher_subspace_override_frac = fisher_subspace_override_frac
+        #self.fisher_downsample = fisher_downsample
+        #self.sigma_default = sigma_default
+        #self.max_fisher_el = max_fisher_el
+        self.config = config
+
+#        config = configparser.ConfigParser()
+#        config.read('default_config.ini')
+        self.use_chol_fishers = config['FisherJumpManager'].getboolean('use_chol_fishers',False)
+        self.cold_fisher_weight = config['FisherJumpManager'].getfloat('cold_fisher_weight',0.333)
+        self.hot_fisher_weight = config['FisherJumpManager'].getfloat('hot_fisher_weight',0.333)
+        self.fisher_subspace_frac = config['FisherJumpManager'].getfloat('fisher_subspace_frac',1.)
+        self.fisher_subspace_override_frac = config['FisherJumpManager'].getfloat('fisher_subspace_override_frac',1.)
+        self.fisher_downsample = config['FisherJumpManager'].getint('fisher_downsample',1)
+        self.sigma_default = config['FisherJumpManager'].getfloat('sigma_default',100.)
+        self.max_fisher_el = config['FisherJumpManager'].getfloat('max_fisher_el',np.inf)
+
+
 
     def copy(self):
         """copy the object"""

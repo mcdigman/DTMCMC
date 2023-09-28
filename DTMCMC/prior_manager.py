@@ -22,7 +22,7 @@ class PriorManager(JumpManager):
         self.like_obj = like_obj
         self.n_chain = T_ladder.n_chain
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params_arch.prior_strategy
+        self.strategy_params = PriorStrategyParameters(strategy_params_arch.config)
 
         self.n_jump_types = PRIOR_JUMPS.size
         self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
@@ -90,12 +90,13 @@ class PriorManager(JumpManager):
 class PriorStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self,
-                 cold_prior_weight=1./3.,           # how often to do prior draws in the cold chains
-                 hot_prior_target_weight=1./3.):     # how often to do prior draws in the hottest finite temperature chain
+    def __init__(self,config):
+#                 cold_prior_weight=1./3.,           # how often to do prior draws in the cold chains
+#                 hot_prior_target_weight=1./3.):     # how often to do prior draws in the hottest finite temperature chain
         """initialize the object with the prescribed parameters"""
-        self.cold_prior_weight = cold_prior_weight
-        self.hot_prior_target_weight = hot_prior_target_weight
+        self.config = config
+        self.cold_prior_weight = config['PriorManager'].getfloat('cold_prior_weight',0.333)
+        self.hot_prior_target_weight = config['PriorManager'].getfloat('hot_prior_target_weight',0.333)
 
 
     def copy(self):
