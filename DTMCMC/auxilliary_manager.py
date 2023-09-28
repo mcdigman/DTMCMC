@@ -16,7 +16,7 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in AUXILLIARY_JUMPS])
 class AuxilliaryJumpManager(JumpManager):
     """template manager for an extra jump type, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, strategy_params, like_obj):
+    def __init__(self, T_ladder, like_obj, strategy_params):
         """a blank """
         self.like_obj = like_obj
         self.n_chain = T_ladder.n_chain
@@ -52,7 +52,9 @@ class AuxilliaryJumpManager(JumpManager):
 
         self.jump_weights = jump_weights
         self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
-        self.jump_probs[~np.isfinite(self.jump_probs)]=0.
+        self.jump_probs[~np.isfinite(self.jump_probs)] = 0.
+
+        assert np.all(self.jump_weights >= 0.)
 
     def get_jump_weights(self):
         """get the desired weights of this jump type as a function of temperature"""

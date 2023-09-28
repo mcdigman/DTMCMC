@@ -17,12 +17,12 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in PRIOR_JUMPS])
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, strategy_params, like_obj):
+    def __init__(self, T_ladder, like_obj, strategy_params_arch):
         """take a likelihood object and create an object that can propose prior draws"""
         self.like_obj = like_obj
         self.n_chain = T_ladder.n_chain
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params
+        self.strategy_params = strategy_params_arch.prior_strategy
 
         self.n_jump_types = PRIOR_JUMPS.size
         self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
@@ -63,6 +63,8 @@ class PriorManager(JumpManager):
         self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
 
+        assert np.all(self.jump_weights >= 0.)
+
     def get_jump_weights(self):
         """get the desired weights of this jump type as a function of temperature"""
         return self.jump_weights
@@ -84,3 +86,18 @@ class PriorManager(JumpManager):
         """do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates"""
         return
+
+class PriorStrategyParameters():
+    """container to store some parameters related to the strategy of proposal generation"""
+
+    def __init__(self,
+                 cold_prior_weight=1./3.,           # how often to do prior draws in the cold chains
+                 hot_prior_target_weight=1./3.):     # how often to do prior draws in the hottest finite temperature chain
+        """initialize the object with the prescribed parameters"""
+        self.cold_prior_weight = cold_prior_weight
+        self.hot_prior_target_weight = hot_prior_target_weight
+
+
+    def copy(self):
+        """copy the object"""
+        return PriorStrategyParameters(self.cold_prior_weight, self.hot_prior_target_weight)

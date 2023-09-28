@@ -113,6 +113,8 @@ class ProposalManager(JumpManager):
         self.jump_weights = jump_weights
         self.jump_probs = jump_probs
 
+        assert np.all(self.jump_weights >= 0.)
+
     def get_jump_codes(self):
         """return the internal codes the manager object uses to index its respective jump types"""
         return self.jumps_need.copy()

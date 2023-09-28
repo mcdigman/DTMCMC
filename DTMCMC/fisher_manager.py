@@ -5,6 +5,8 @@ import numpy as np
 from DTMCMC.lapack_wrappers import solve_triangular
 from DTMCMC.jump_manager import JumpManager
 
+# TODO trap negative weights
+
 # define unique codes for each jump type
 FISHER_FULL = 110
 SIGMA_FULL = 120
@@ -20,14 +22,14 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in FISHER_JUMPS])
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, strategy_params, like_obj, sample_set):
+    def __init__(self, T_ladder, like_obj, sample_set, strategy_params_arch):
         """create the object"""
 
         self.n_chain = T_ladder.n_chain
         self.n_par = sample_set.shape[1]
 
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params
+        self.strategy_params = strategy_params_arch.fisher_strategy
         self.sample_set = sample_set
         self.betas = T_ladder.betas
         self.like_obj = like_obj
@@ -92,6 +94,8 @@ class FisherJumpManager(JumpManager):
         self.jump_weights = jump_weights
         self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
+        
+        assert np.all(self.jump_weights>=0.)
 
     def get_jump_weights(self):
         """get the desired weights of this jump type as a function of temperature"""
@@ -271,3 +275,29 @@ def set_scales(n_par, T_ladder, sigma_diags):
         for itrp in range(n_par):
             sigma_scales[itrj, itrp] = 2.38*(sigma_diags[itrj, itrp]/np.sqrt(beta_loc)/np.sqrt(n_par))
     return sigma_scales, gamma_mults
+
+class FisherStrategyParameters():
+    """container to store some parameters related to the strategy of fisher matrix proposal generation"""
+
+    def __init__(self,
+                 use_chol_fishers=False,            # whether to do fisher jumps using the cholesky decomposition
+                 cold_fisher_weight=1./3.,          # how often to do fisher draws in the cold chains
+                 hot_fisher_weight=1./3.,           # how often to do fisher draws in the hottest finite temperature chain
+                 fisher_subspace_frac=1.,           # what fraction of dimensions to include in fisher subspace jumps
+                 fisher_subspace_override_frac=1.,  # how often to not do subspace jumps when doing a fisher jump
+                 fisher_downsample=1,               # how many blocks to skip between fisher matrix updates
+                 sigma_default=0.25,                # default sigma for fisher matrix jumps
+                 max_fisher_el=np.inf):              # maximum element of fisher matrix
+        """initialize the object with the prescribed parameters"""
+        self.use_chol_fishers = use_chol_fishers
+        self.cold_fisher_weight = cold_fisher_weight
+        self.hot_fisher_weight = hot_fisher_weight
+        self.fisher_subspace_frac = fisher_subspace_frac
+        self.fisher_subspace_override_frac = fisher_subspace_override_frac
+        self.fisher_downsample = fisher_downsample
+        self.sigma_default = sigma_default
+        self.max_fisher_el = max_fisher_el
+
+    def copy(self):
+        """copy the object"""
+        return FisherStrategyParameters(self.use_chol_fishers, self.cold_fisher_weight, self.hot_fisher_weight, self.fisher_subspace_frac, self.fisher_subspace_override_frac, self.sigma_default, self.max_fisher_el)

@@ -4,9 +4,10 @@ helpers for computing the temperature ladder for parallel tempering"""
 from warnings import warn
 import numpy as np
 
-from scipy.interpolate import InterpolatedUnivariateSpline
+from scipy.interpolate import InterpolatedUnivariateSpline,interp1d
 from scipy.integrate import cumtrapz
 
+# TODO increase flexibility of temperatureladder
 
 class TemperatureLadder():
     """store a temperature ladder for parallel tempering"""
@@ -51,10 +52,13 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
     if n_cold > n_chain:
         raise ValueError('n cold cannot be more than total number of chains')
 
+
     assert T_min>0. and np.isfinite(T_min)
     assert T_max>0. and np.isfinite(T_max)
     assert T_cold>0. and np.isfinite(T_cold)
     assert T_max>T_min
+    assert n_cold >= 0
+    assert n_chain > 0
 
     betas = np.zeros(n_chain)
     Ts = np.zeros(n_chain)
@@ -66,13 +70,13 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
         if n_chain == n_cold:
             warn("all chains are cold, infinite temperature chain will be overwritten")
         else:
-            if T_cold == T_min:
+            if T_cold == T_min and n_cold != 0:
                 n_geo = n_chain-n_cold
             else:
                 n_geo = n_chain-n_cold-1
 
             beta_loc = 10**np.linspace(-np.log10(T_min), -np.log10(T_max), n_geo)
-            if T_cold == T_min:
+            if T_cold == T_min and n_cold != 0:
                 betas[n_cold:n_chain-1] = beta_loc[1:]
             else:
                 betas[n_cold:n_chain-1] = beta_loc
@@ -84,12 +88,12 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
             Ts[-1] = np.inf
 
     else:
-        if T_cold == T_min:
+        if T_cold == T_min and n_cold != 0:
             n_geo = n_chain-n_cold+1
         else:
             n_geo = n_chain-n_cold
         beta_loc = 10**np.linspace(-np.log10(T_min), -np.log10(T_max), n_geo)
-        if T_cold == T_min:
+        if T_cold == T_min and n_cold != 0:
             betas[n_cold:n_chain] = beta_loc[1:]
         else:
             betas[n_cold:n_chain] = beta_loc
@@ -101,38 +105,56 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
 
     return betas, Ts
 
-
-def entropy_spacing_grad(n_chain_need, betas_in, logLs_in):
+def entropy_spaced_betas(n_chain_need, n_cold, Ts_in, logL_vars_in,use_inf_final=True,T_cold=1.,correct_last=False):
     """estimate constant entropy increase spaced chain from an input file of betas and logLs"""
-    # as implemented, can't interpolate temperature ladder at non-finite Ts, so remove them
-    logLs_in = logLs_in[betas_in > 0.]
-    betas_in = betas_in[betas_in > 0.]
+    if n_cold > n_chain_need:
+        raise ValueError('cannot have more cold chains than total chains')
 
-    Ts_in = betas_to_Ts(betas_in)
+    assert T_cold >= 0.
+    assert np.all(logL_vars_in >= 0.)
+    assert np.all(Ts_in >= 0.)
+    assert Ts_in.size == logL_vars_in.size
+    assert n_cold >= 0
+    assert n_chain_need > 0
 
-    # need to sort the input temperatures and get only unique ones so we can interpolate
-    Ts_use = np.unique(Ts_in)
-    logLs_use = np.zeros(Ts_use.size)
+    betas_in = Ts_to_betas(Ts_in)
 
-    for itrf in range(0, Ts_use.size):
-        # if there were duplicate temps, average the likelihoods
-        logLs_use[itrf] = np.mean(logLs_in[Ts_use[itrf] == Ts_in])
+    if n_cold == 0:
+        n_chain_space = n_chain_need
+    else:
+        n_chain_space = n_chain_need-n_cold+1
 
-    heat_capacities2 = np.abs(-np.gradient(logLs_use, Ts_use))
-    heat_capacity_integ = cumtrapz(heat_capacities2/Ts_use, Ts_use, initial=0.)
-    space_heat_need = heat_capacity_integ[Ts_use.size-1]/n_chain_need
-    heat_grid_need = np.arange(0, n_chain_need)*space_heat_need
-    T_grid_got = 10**InterpolatedUnivariateSpline(heat_capacity_integ, np.log10(Ts_use))(heat_grid_need)
+    Ts_got = entropy_spacing(n_chain_space, betas_in, logL_vars_in,correct_last=correct_last)
 
-    return T_grid_got
+    assert np.all(Ts_got>=0.)
+
+    if use_inf_final:
+        Ts_got[-1] = np.inf
+
+        if n_chain_need == n_cold:
+            warn("all chains are cold, infinite temperature chain will be overwritten")
+
+    # TODO add option to do include cold spacing adaptively or not
+    if n_cold > 0:
+        Ts_got[0] = T_cold
+
+    if n_cold>1:
+        Ts_got = np.hstack([np.full(n_cold-1,T_cold),Ts_got])
+
+    assert Ts_got.size==n_chain_need
+
+    betas_got = Ts_to_betas(Ts_got)
+
+    return betas_got,Ts_got
+
 
 def standardize_input_vars(betas_in,logL_vars_in):
-    """standardize the input betas and variances"""
+    """helper to standardize the input betas and variances so that the heat capacity integration can work correctly"""
     # need to sort the input temperatures and get only unique ones so we can interpolate
     betas_use = np.unique(betas_in)[::-1]
     # Note that using partition functions the lowest order taylor approximation
     # of the heat capacity integral from T=zero to T1 is 0,
-    # And we cannot compute the next order correction knowing only the variances of the log likelihoods, 
+    # And we cannot compute the next order correction knowing only the variances of the log likelihoods,
     # So the simplest thing to do is to just cut out any zero temperature (infinite beta) chains from the heat capacity integrals
     betas_use = betas_use[np.isfinite(betas_use)]
 
@@ -152,8 +174,8 @@ def standardize_input_vars(betas_in,logL_vars_in):
 
     return betas_use,logL_vars_use
 
-def entropy_spacing_var(n_chain_need, betas_in, logL_vars_in,correct_last=False):
-    """estimate constant entropy increase spaced chain from an input file of betas and logLs"""
+def entropy_spacing(n_chain_need, betas_in, logL_vars_in,correct_last=False):
+    """helper to estimate constant entropy increase spaced chain from an input file of betas and logLs"""
     assert n_chain_need > 0
     assert betas_in.size > 0
     assert betas_in.size == logL_vars_in.size
@@ -192,7 +214,7 @@ def entropy_spacing_var(n_chain_need, betas_in, logL_vars_in,correct_last=False)
     if not np.all(np.diff(beta_grid_got)<=0.):
         warn('Temperature grid is not sorted correctly')
         beta_grid_got = np.sort(beta_grid_got)[::-1]
-        
+
 
     assert np.all(beta_grid_got >= 0.)
     assert np.all(np.diff(beta_grid_got)<=0.)
@@ -203,7 +225,7 @@ def entropy_spacing_var(n_chain_need, betas_in, logL_vars_in,correct_last=False)
     return T_grid_got
 
 def get_heat_capacity_integrated(logL_vars_use,betas_use,correct_last):
-    """get the integral of the heat capacity"""
+    """helper to get the integral of the heat capacity"""
     heat_capacity_integrand = -np.abs(logL_vars_use)*betas_use
     heat_capacity_integrand[~np.isfinite(heat_capacity_integrand)] = 0. # cannot handle this case correctly
 
@@ -220,7 +242,7 @@ def get_heat_capacity_integrated(logL_vars_use,betas_use,correct_last):
     # Handle if first value is zero
     if heat_capacity_integ[0] == 0.:
         if np.any(heat_capacity_integ>0.):
-            heat_capacity_integ[0] = 1.e-14*np.min(heat_capacity_integ) 
+            heat_capacity_integ[0] = 1.e-14*np.min(heat_capacity_integ)
         else:
             heat_capacity_integ[0] = 1.e-15
 
@@ -236,39 +258,6 @@ def get_heat_capacity_integrated(logL_vars_use,betas_use,correct_last):
     return heat_capacity_integ
 
 
-def entropy_spaced_betas(n_chain_need, n_cold, Ts_in, logL_vars_in,use_inf_final=True,T_cold=1.,correct_last=False):
-    """estimate constant entropy increase spaced chain from an input file of betas and logLs"""
-    if n_cold > n_chain_need:
-        raise ValueError('cannot have more cold chains than total chains')
-
-    assert T_cold >= 0.
-    assert np.all(logL_vars_in >= 0.)
-    assert np.all(Ts_in >= 0.)
-    assert Ts_in.size == logL_vars_in.size
-
-    betas_in = Ts_to_betas(Ts_in)
-
-    n_chain_space = n_chain_need-n_cold+1
-    Ts_got = entropy_spacing_var(n_chain_space, betas_in, logL_vars_in,correct_last=correct_last)
-
-    assert np.all(Ts_got>=0.)
-
-    if use_inf_final:
-        Ts_got[-1] = np.inf
-
-        if n_chain_need == n_cold:
-            warn("all chains are cold, infinite temperature chain will be overwritten")
-
-    # TODO add option to do include cold spacing adaptively or not
-
-    Ts_got[0] = T_cold
-    if n_cold>1:
-        Ts_got = np.hstack([np.full(n_cold-1,T_cold),Ts_got])
-    assert Ts_got.size==n_chain_need
-
-    betas_got = Ts_to_betas(Ts_got)
-
-    return betas_got,Ts_got
 
 def Ts_to_betas(Ts_in):
     """convert Ts to betas=1/Ts safely handling infinities and zeros:
@@ -300,8 +289,8 @@ def betas_to_Ts(betas_in):
 
 
 
-def entropy_spacing_fromfile_var(n_chain_need, n_cold, T_file_in, logL_var_file_in,use_inf_final=True,T_cold=1.,correct_last=False):
-    """estimate constant entropy increase spaced chain from an input file of betas and logLs"""
+def entropy_spacing_fromfile(n_chain_need, n_cold, T_file_in, logL_var_file_in,use_inf_final=True,T_cold=1.,correct_last=False):
+    """estimate constant entropy increase spaced chain from an input file of betas and logL variances"""
 
     Ts_in = np.load(T_file_in)
     logL_vars_in = np.load(logL_var_file_in)
@@ -309,33 +298,44 @@ def entropy_spacing_fromfile_var(n_chain_need, n_cold, T_file_in, logL_var_file_
 
     assert np.all(logL_vars_in >= 0.)
     assert np.all(Ts_in >= 0.)
-    assert Ts_in.size == logL_vars_in.size 
+    assert Ts_in.size == logL_vars_in.size
 
     return entropy_spaced_betas(n_chain_need, n_cold, Ts_in, logL_vars_in,use_inf_final=use_inf_final,T_cold=T_cold,correct_last=correct_last)
 
-def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_chain_need=2048):
+def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_chain_need=2048,micro_thresh=1.e-5):
     """find the best estimates for temperatures of potential phase transitions by interpolating the integrated heat capacity"""
     maxima = []
     minima = []
 
     #get a spacing that is predicted to be good
-    Ts_got = entropy_spacing_var(n_chain_need, betas_in, logL_vars_in,correct_last=correct_last)
+    Ts_in = Ts_to_betas(betas_in)
 
-    betas_got = Ts_to_betas(Ts_got)
 
     #get the integrated heat capacity
     betas_use,logL_vars_use = standardize_input_vars(betas_in,logL_vars_in)
     heat_capacity_integ = get_heat_capacity_integrated(logL_vars_use,betas_use,correct_last)
 
-    #Interpolate the integrate heat capacity and get the derivative
-    heat_capacity_got = -InterpolatedUnivariateSpline(betas_use[::-1],heat_capacity_integ[::-1]).derivative(1)(betas_got)*betas_got
-    #import matplotlib.pyplot as plt
+    Ts_use = betas_to_Ts(betas_use)
+
+    # Sample the grid with increased density around predicted maxima, but also include and all input points
+    betas_got, Ts_got = entropy_spaced_betas(n_chain_need, 0, Ts_in, logL_vars_in,use_inf_final=False,T_cold=1.,correct_last=correct_last)
+    betas_got = np.unique(np.hstack([betas_use,betas_got]))[::-1]
+    Ts_got = betas_to_Ts(betas_got)
+    n_chain_got = betas_got.size
+
+    # Interpolate the integrate heat capacity and get the derivative
+    # Note that because we actually want to interpolate the derivative we need to use k=3 splines, despite possible dangers
+    heat_capacity_got = -InterpolatedUnivariateSpline(betas_use[::-1],heat_capacity_integ[::-1],k=3,ext=3).derivative(1)(betas_got)*betas_got
+
+    heat_capacity_got[heat_capacity_got < 0.] = 0. # remove spurious negative heat capacities
+
+    assert np.all(heat_capacity_got>=0.)
 
     #find local maxima that may represent a phase transition
     itrt_last = 0
     itrt = 1
 
-    while heat_capacity_got[itrt_last] == heat_capacity_got[itrt] and itrt<n_chain_need-2:
+    while heat_capacity_got[itrt_last] == heat_capacity_got[itrt] and itrt<n_chain_got-2:
         # while loops instead of for loops to handle the unlikely case where some heat capacities are exactly equal
         itrt = itrt + 1
 
@@ -347,43 +347,41 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
     elif heat_capacity_got[0] >  heat_capacity_got[itrt]:
         maxima.append(0)
 
-    while itrt_next < n_chain_need:
+    while itrt_next < n_chain_got:
         # while loops instead of for loops to handle the unlikely case where some heat capacities are exactly equal
 
-        while heat_capacity_got[itrt] == heat_capacity_got[itrt_next] and itrt_next<n_chain_need-1:
+        while heat_capacity_got[itrt] == heat_capacity_got[itrt_next] and itrt_next<n_chain_got-1:
             itrt_next = itrt_next + 1
 
         if heat_capacity_got[itrt_last]<heat_capacity_got[itrt] and heat_capacity_got[itrt_next]<=heat_capacity_got[itrt]:
             maxima.append(itrt)
-            #plt.scatter(betas_got[itrt],heat_capacity_got[itrt])
 
         elif heat_capacity_got[itrt_last]>heat_capacity_got[itrt] and heat_capacity_got[itrt_next]>=heat_capacity_got[itrt]:
             minima.append(itrt)
-            #plt.scatter(betas_got[itrt],heat_capacity_got[itrt])
 
         itrt_last = itrt
         itrt = itrt_next
         itrt_next = itrt+1
 
-    # handle ending boundary 
+    # handle ending boundary
     if heat_capacity_got[itrt_last] >  heat_capacity_got[-1]:
-        minima.append(n_chain_need-1)
+        minima.append(n_chain_got-1)
     elif heat_capacity_got[itrt_last] <  heat_capacity_got[-1]:
-        maxima.append(n_chain_need-1)
+        maxima.append(n_chain_got-1)
 
     minima = np.array(minima)
     maxima = np.array(maxima)
 
-    minima_vals = heat_capacity_got[minima]
-    maxima_vals = heat_capacity_got[maxima]
-
     minima_Ts = Ts_got[minima]
     maxima_Ts = Ts_got[maxima]
 
-    #default end values 
+    minima_vals = heat_capacity_got[minima]
+    maxima_vals = heat_capacity_got[maxima]
+
+    #default end values
     maxima_Ts[maxima==0] = 1./betas_use[0]
-    maxima_Ts[maxima==n_chain_need-1] = 0.
-    
+    maxima_Ts[maxima==n_chain_got-1] = 0.
+
     # calculate the prominence of each maxima, in the same sense as topographic prominence
     # prominence is difference between maxima and key col, where key col is lowest point between that maxima and a higher maxima
     prominences = np.zeros(maxima.size)
@@ -392,13 +390,9 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
 
         key_col1 = 0.
         key_col2 = 0.
-        
-        val_last = 0.
-        val_next = 0.
 
-        
         itrt_last = 0
-        itrt_next = n_chain_need-1
+        itrt_next = n_chain_got-1
 
         itrp_last = itrp-1
         if itrp_last >= 0:
@@ -409,7 +403,6 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
 
         if itrp_last >= 0:
             itrt_last = maxima[itrp_last]
-            val_last = maxima_vals[itrp_last]
 
             if np.any((minima>=itrt_last)&(minima<=itrt)):
                 key_col1 = np.min(minima_vals[(minima>=itrt_last)&(minima<=itrt)])
@@ -427,7 +420,6 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
 
         if itrp_next < maxima.size:
             itrt_next = maxima[itrp_next]
-            val_next = maxima_vals[itrp_next]
 
             if np.any((minima<=itrt_next)&(minima>=itrt)):
                 key_col2 = np.min(minima_vals[(minima<=itrt_next)&(minima>=itrt)])
@@ -435,33 +427,19 @@ def find_potential_phase_transitions(betas_in,logL_vars_in,correct_last=True,n_c
                 key_col2 = cur_max_val
         else:
             key_col2 = 0.
-        
+
         key_col = max(key_col1,key_col2)
 
         prominences[itrp] = cur_max_val - key_col
+    
+    # cut out micro-prominent maxima, which are probably just noise
+    if prominences.size > 0:
+        micro_thresh_loc = min(micro_thresh,np.max(prominences)) # make sure we keep at least one peak if there are any
+    else:
+        micro_thresh_loc = micro_thresh 
+
+    maxima_Ts = maxima_Ts[prominences>micro_thresh_loc]
+    maxima_vals = maxima_vals[prominences>micro_thresh_loc]
+    prominences = prominences[prominences>micro_thresh_loc]
 
     return maxima_Ts,maxima_vals,prominences
-
-
-
-
-
-def entropy_spacing_fromfile(n_chain_need, n_cold, T_file_in, logL_file_in,use_inf_final=True):
-    """estimate constant entropy increase spaced chain from an input file of betas and logLs"""
-    Ts_in = np.load(T_file_in)
-    logLs_in = np.load(logL_file_in)
-
-    betas_in = betas_to_Ts(Ts_in) 
-
-    if use_inf_final:
-        n_chain_space =  n_chain_need-n_cold
-    else:
-        n_chain_space = n_chain_need-n_cold+1
-    Ts_got = entropy_spacing(n_chain_space, betas_in, logLs_in)
-    Ts_got[0] = 1.
-    if n_cold>1:
-        Ts_got = np.hstack([np.full(n_cold-1,1.),Ts_got])
-    if use_inf_final:
-        Ts_got = np.hstack([Ts_got,np.inf])
-    assert Ts_got.size==n_chain_need
-    return Ts_got

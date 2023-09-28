@@ -2,6 +2,11 @@
 hold some helpers to help determine the proposal strategy"""
 import numpy as np
 
+import DTMCMC.fisher_manager as fm
+import DTMCMC.de_manager as dm
+import DTMCMC.prior_manager as pm
+
+# TODO make proposal strategy hierarchical
 
 class ProposalStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
@@ -25,23 +30,9 @@ class ProposalStrategyParameters():
                  de_size=1000,                      # size of differential evolution buffer
                  de_thin=1):                        # how much to thin the differential evolution buffer by
         """initialize the object with the prescribed parameters"""
-        self.use_chol_fishers = use_chol_fishers
-        self.cold_prior_weight = cold_prior_weight
-        self.cold_de_weight = cold_de_weight
-        self.hot_de_weight = hot_de_weight
-        self.cold_fisher_weight = cold_fisher_weight
-        self.hot_fisher_weight = hot_fisher_weight
-        self.hot_prior_target_weight = hot_prior_target_weight
-        self.big_de_prob = big_de_prob
-        self.de_subspace_frac = de_subspace_frac
-        self.de_subspace_override_frac = de_subspace_override_frac
-        self.fisher_subspace_frac = fisher_subspace_frac
-        self.fisher_subspace_override_frac = fisher_subspace_override_frac
-        self.fisher_downsample = fisher_downsample
-        self.sigma_default = sigma_default
-        self.max_fisher_el = max_fisher_el
-        self.de_size = de_size
-        self.de_thin = de_thin
+        self.fisher_strategy = fm.FisherStrategyParameters(use_chol_fishers, cold_fisher_weight, hot_fisher_weight, fisher_subspace_frac, fisher_subspace_override_frac, sigma_default, max_fisher_el)
+        self.de_strategy = dm.DEStrategyParameters(cold_de_weight, hot_de_weight, big_de_prob, de_subspace_frac, de_subspace_override_frac, de_size, de_thin)
+        self.prior_strategy = pm.PriorStrategyParameters(cold_prior_weight, hot_prior_target_weight)
 
     def copy(self):
         """copy the object"""

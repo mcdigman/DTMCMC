@@ -21,15 +21,15 @@ JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in DE_JUMPS])
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, strategy_params, like_obj):
+    def __init__(self, T_ladder, like_obj, strategy_params_arch):
         """create the manager object"""
         self.n_chain = T_ladder.n_chain
-        self.de_thin = strategy_params.de_thin
-        self.de_size = strategy_params.de_size
+        self.strategy_params = strategy_params_arch.de_strategy
+        self.de_thin = self.strategy_params.de_thin
+        self.de_size = self.strategy_params.de_size
         self.like_obj = like_obj
         self.n_par = self.like_obj.n_par
         self.T_ladder = T_ladder
-        self.strategy_params = strategy_params
 
         self.de_subspace_frac = self.strategy_params.de_subspace_frac
 
@@ -115,6 +115,8 @@ class DEJumpManager(JumpManager):
         self.jump_weights = jump_weights
         self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  # the normalized conditional jump probabilities
         self.jump_probs[~np.isfinite(self.jump_probs)]=0.
+
+        assert np.all(self.jump_weights>=0.)
 
     def get_jump_weights(self):
         """get the desired weights of this jump type as a function of temperature"""
@@ -202,3 +204,27 @@ def write_de_helper(itrde_count, itrde_write, de_buffer, samples):
     """helper to write to the differential evolution buffer"""
     if itrde_count == 0:
         de_buffer[itrde_write, :] = samples
+
+class DEStrategyParameters():
+    """container to store some parameters related to the strategy of differential evolution proposal generation"""
+
+    def __init__(self,
+                 cold_de_weight=1./3.,              # how often to do de draws in the cold chains
+                 hot_de_weight=1./3.,               # how often to do de draws in the hottest finite temperature chain
+                 big_de_prob=0.5,                   # how often to do the big differential evolution jump
+                 de_subspace_frac=1.,               # what fraction of dimensions to include in de subspace jumps
+                 de_subspace_override_frac=1.,      # how often to not do subspace jumps when doing a de jump
+                 de_size=1000,                      # size of differential evolution buffer
+                 de_thin=1):                        # how much to thin the differential evolution buffer by
+        """initialize the object with the prescribed parameters"""
+        self.cold_de_weight = cold_de_weight
+        self.hot_de_weight = hot_de_weight
+        self.big_de_prob = big_de_prob
+        self.de_subspace_frac = de_subspace_frac
+        self.de_subspace_override_frac = de_subspace_override_frac
+        self.de_size = de_size
+        self.de_thin = de_thin
+
+    def copy(self):
+        """copy the object"""
+        return DEStrategyParameters(self.cold_de_weight, self.hot_de_weight, self.big_de_prob, self.de_subspace_frac, self.de_subspace_override_frac, self.de_size, self.de_thin)
