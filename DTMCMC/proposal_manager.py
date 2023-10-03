@@ -51,28 +51,7 @@ class ProposalManager(JumpManager):
         print(self.jumps)
         print(self.choose_idx_modifiers)
 
-        #self.n_chain = self.T_ladder.n_chain
-
-        #self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-        #self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
-
-        #self.set_jump_weights()
-
         JumpManager.__init__(self, T_ladder, like_obj, self.jumps)
-
-        #for itrm in range(self.n_managers):
-        #    itrj2 = itrj1+self.n_jumps_managers[itrm]
-        #    if itrj1 <= choose < itrj2:
-        #        # found the correct manager, dispatch the jump
-        #        choose_loc = choose-self.choose_idx_modifiers[itrm]
-        #        new_point, density_fac, success = self.managers[itrm].dispatch_jump(sample_point, itrt, choose_loc)
-        #        found = True
-        #        break
-        #    itrj1 = itrj2
-
-        #assert found  # make sure we actually tried a jump
-
-        #return new_point, density_fac, choose, success
 
     def get_jump_weights(self):
         """return the unnormalized jump weights for each jump type the manager knows"""

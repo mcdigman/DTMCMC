@@ -21,6 +21,7 @@ class AuxilliaryJumpManager(JumpManager):
         """set the relative probabilities of the different jump types"""
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
+
         # default to equal weight
         jump_weights[:] = self.strategy_params.auxilliary_jump_weight
 

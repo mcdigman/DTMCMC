@@ -8,6 +8,7 @@ from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.tracker_manager import TrackerManager
 
 # TODO rename this module
+# TODO add any necessary handlers for block length
 
 
 class PTMCMCChain():
@@ -293,9 +294,7 @@ def advance_block_ptmcmc(
     return samples
 
 
-def advance_step_ptmcmc(
-    itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj
-):
+def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
     """advance a single step step in the ptmcmc chain"""
     n_chain = T_ladder.n_chain
     betas = T_ladder.betas
@@ -304,11 +303,13 @@ def advance_step_ptmcmc(
         new_point, density_fac, success, idx_jump = proposal_manager.dispatch_jump(samples[itrb-1, itrt], itrt)
 
         if success:
-            # skip likelihood evaluation if proposal is marked as a failure
-            # try to make the point legal and fail if unsuccesful
-            new_point = like_obj.correct_bounds(new_point)
-            success = like_obj.check_bounds(new_point)
+            # see if the point is in bounds, if not try to make it legal
+            if not like_obj.check_bounds(new_point):
+                # try to make the point in bounds and fail if unsuccesful
+                new_point = like_obj.correct_bounds(new_point)
+                success = like_obj.check_bounds(new_point)
 
+        # skip likelihood evaluation if proposal is marked as a failure
         if success:
             # if the point passes, get the likelihood
             logL_new = like_obj.get_loglike(new_point)
@@ -316,17 +317,22 @@ def advance_step_ptmcmc(
             # Failed, ensure the point will not be accepted
             logL_new = -np.inf
 
-        # draw to determine if we will accept
-        test = np.log(np.random.uniform(0., 1.))
+        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump)
 
-        # process acceptance or rejection
-        if betas[itrt]*(logL_new-logLs[itrb-1, itrt])+density_fac > test:
-            # the draw was accepted, assign its parameters
-            samples[itrb, itrt] = new_point
-            logLs[itrb, itrt] = logL_new
-            accept_record[0, itrt, idx_jump] += 1
-        else:
-            # the draw was rejected, assign the old parameters
-            samples[itrb, itrt] = samples[itrb-1, itrt]
-            logLs[itrb, itrt] = logLs[itrb-1, itrt]
-            accept_record[1, itrt, idx_jump] += 1
+@njit()
+def mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump):
+    """Helper to decide whether mcmc point is accepted or not and process accordingly"""
+    # draw to determine if we will accept
+    test = np.log(np.random.uniform(0., 1.))
+
+    # process acceptance or rejection
+    if betas[itrt]*(logL_new-logLs[itrb-1, itrt]) + density_fac > test:
+        # the draw was accepted, assign its parameters
+        samples[itrb, itrt] = new_point
+        logLs[itrb, itrt] = logL_new
+        accept_record[0, itrt, idx_jump] += 1
+    else:
+        # the draw was rejected, assign the old parameters
+        samples[itrb, itrt] = samples[itrb-1, itrt]
+        logLs[itrb, itrt] = logLs[itrb-1, itrt]
+        accept_record[1, itrt, idx_jump] += 1

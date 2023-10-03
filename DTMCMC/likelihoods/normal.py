@@ -3,49 +3,28 @@ import numpy as np
 import numba as nb
 from numba.experimental import jitclass
 from numba import njit
+
 from DTMCMC.correction_helpers import reflect_into_range
+from DTMCMC.likelihood import RectangularLikelihood
 
 # n dimensional unit normal motivated by the 100d considerations in
 # https://statmodeling.stat.columbia.edu/2017/03/15/ensemble-methods-doomed-fail-high-dimensions/
 
 #@jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-class Likelihood():
+class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self,n_par=100,eps_default=1.e-4,cutoff=5):
+    def __init__(self,n_par=100,cutoff=5):
         """create the class and store any object specific variables"""
         self.n_par = n_par
-        self.epsilons = np.zeros(n_par)+eps_default
-        self.cutoff = cutoff
+        low_lims = np.full(n_par, -cutoff)
+        high_lims = np.full(n_par, cutoff)
+
+        RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
     def get_loglike(self,v):
         """get the log likelihood given a set of parameters v"""
         return get_loglike(v)
 
-    def get_snr(self,v):
-        """get the snr given a set of parameters v"""
-        #TODO check if this is needed
-        return get_loglike(v)
-
-    def prior_draw(self):
-        """get a draw from the prior"""
-        return prior_draw(self.n_par,self.cutoff)
-
-    def prior_proposal(self,v_in):
-        """get a proposal from the prior"""
-        v_out = prior_draw(self.n_par,self.cutoff)
-        return v_out,prior_factor(v_in,self.n_par)-prior_factor(v_out,self.n_par),True
-
-    def prior_factor(self,v):
-        """get the density factor for prior draws, if the prior draws are not uniform"""
-        return prior_factor(v,self.n_par)
-
-    def correct_bounds(self,v):
-        """correct the bounds of a draw to be in range, if allowed for this likelihood"""
-        return correct_bounds(v,self.cutoff)
-
-    def check_bounds(self,v):
-        """check if the bounds of a draw are in the prior range but do not change them"""
-        return check_bounds(v,self.cutoff)
 
 @njit()
 def get_loglike(v):
@@ -56,7 +35,7 @@ def get_loglike(v):
         res += const-1/2*v[itrp]**2
     return res
 
-#@njit()
+@njit()
 def prior_draw(n_par,cutoff):
     """get a prior draw"""
     draw = np.zeros(n_par)
@@ -64,10 +43,10 @@ def prior_draw(n_par,cutoff):
         draw[itrp] = np.random.uniform(-cutoff,cutoff)
     return draw
 
-@njit()
-def prior_factor(v,n_par):
-    """prior draw density factor, if we need one"""
-    return 0.
+#@njit()
+#def prior_factor(v,n_par):
+#    """prior draw density factor, if we need one"""
+#    return 0.
 
 @njit()
 def correct_bounds(v,cutoff):

@@ -1,11 +1,22 @@
 """C 2023 Matthew C. Digman
 abstract class to hold a likelihood object"""
+
 from abc import ABC, abstractmethod
+
 import numpy as np
 
+from numba import njit
 
-class Likelihood(ABC):
+from DTMCMC.correction_helpers import reflect_into_range
+
+
+class AbstractLikelihood(ABC):
     """abstract likelihood object"""
+
+    def __init__(self, n_par):
+        """initialize the likelihood
+            input: n_par integer, how many dimensions in the parameter space"""
+        self.n_par = n_par
 
     @abstractmethod
     def get_loglike(self, params_in):
@@ -22,16 +33,6 @@ class Likelihood(ABC):
             output:
                 params: a 1D float array of parameters"""
         return np.zeros(1)
-
-    @abstractmethod
-    def prior_proposal(self, params_in):
-        """get a proposal from the priors for this likelihood
-            input:
-                params_in: a 1D float array of parameters for the old point
-            output:
-                params_out: a 1D float array of parameters
-                density_fac: a scalar density factor for the prior draw, connecting the old point to the new point"""
-        return np.zeros(params_in.size), 0.
 
     @abstractmethod
     def prior_factor(self, params_in):
@@ -59,3 +60,65 @@ class Likelihood(ABC):
             output:
                 valid: a scalar boolean which is True is the point is valid in the prior volume and false otherwise"""
         return True
+
+    def get_epsilons(self):
+        """Special helper for FisherJumpManager
+        if this likelihood has special epsilons specified for fisher matrix jumps, get them here, 
+        otherwise just return zeros"""
+        return np.zeros(self.n_par)
+
+#TODO make epsilons a configurable object
+
+class RectangularLikelihood(AbstractLikelihood):
+    """Handle a likelihood with rectangular bounds
+    by default assume a uniform prior"""
+    
+    def __init__(self, n_par, low_lims, high_lims):
+        self.low_lims = low_lims
+        self.high_lims = high_lims
+
+        assert self.low_lims.size == n_par
+        assert self.high_lims.size == n_par
+
+        AbstractLikelihood.__init__(self,n_par)
+
+    def correct_bounds(self, params_in):
+        """correct bounds for rectangular walls"""
+        return correct_bounds_rectangular(params_in,self.low_lims,self.high_lims)
+
+    def check_bounds(self,params_in):
+        """check bounds for rectangular walls"""
+        return check_bounds_rectangular(params_in,self.low_lims,self.high_lims)
+        
+    def prior_factor(self,v):
+        """get the density factor for prior draws assuming a uniform prior"""
+        return 0.
+
+    def prior_draw(self):
+        """get a draw from the prior"""
+        return prior_draw_rectangular(self.n_par,self.low_lims,self.high_lims)
+
+
+@njit()
+def correct_bounds_rectangular(v,low_lims,high_lims):
+    """wrap parameters into range"""
+    for itrp in range(0,v.size):
+        v[itrp] = reflect_into_range(v[itrp],low_lims[itrp],high_lims[itrp])
+    return v
+
+@njit()
+def prior_draw_rectangular(n_par, low_lims, high_lims):
+    """get a uniform prior draw with rectangular walls"""
+    draw = np.zeros(n_par)
+    for itrp in range(0,n_par):
+        draw[itrp] = np.random.uniform(low_lims[itrp], high_lims[itrp])
+
+    return draw
+
+@njit()
+def check_bounds_rectangular(v,low_lims,high_lims):
+    """check if a sample is within the prior range"""
+    for itrp in range(v.size):
+        if not low_lims[itrp] < v[itrp] < high_lims[itrp]:
+            return False
+    return True

@@ -3,8 +3,9 @@ helpers to perform the parallel tempering exchanges"""
 import numpy as np
 from numba import njit
 
+#TODO implement option to not do exchanges at all
 
-RANDOM_TARGETS = 0      # uniformlly random exchange targetting
+RANDOM_TARGETS = 0      # uniform random exchange targetting
 SEQUENTIAL_TARGETS = 1  # target sequentially from back to front
 ADJACENT_TARGETS = 2    # target alternating +/- 1 positions
 NULL_TARGETS = 3        # do not do any exchanges

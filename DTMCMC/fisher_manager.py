@@ -2,6 +2,8 @@
 module to store objects related to fisher matrix jumps"""
 import numpy as np
 
+from numba import njit
+
 from DTMCMC.lapack_wrappers import solve_triangular
 from DTMCMC.jump_manager import JumpManager,AbstractJump
 
@@ -11,15 +13,13 @@ class FisherJumpManager(JumpManager):
     def __init__(self, T_ladder, like_obj, sample_set, config):
         """create the object"""
 
-        self.betas = T_ladder.betas
-
         self.strategy_params = FisherStrategyParameters(config)
-        self.sample_set = sample_set
 
         jumps = [FisherFullJump(self),SigmaFullJump(self),SigmaRandomSubspaceJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
+        self.sample_set = sample_set
         self.reset_fishers_from_point(self.sample_set)
 
     def set_jump_weights(self):
@@ -27,7 +27,8 @@ class FisherJumpManager(JumpManager):
         n_cold = self.T_ladder.n_cold
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
-        jump_weights[:] = 1./3.  # just a default equal weight
+        # just a default equal weight
+        jump_weights[:] = 0.333
 
         cold_weight = self.strategy_params.cold_fisher_weight
         hot_weight = self.strategy_params.hot_fisher_weight
@@ -89,7 +90,8 @@ class FisherJumpManager(JumpManager):
         """reset the fisher matrices from input samples"""
         if itrn//block_size < 4 or itrn % (block_size*self.strategy_params.fisher_downsample) == 0:
             samples_fisher = np.zeros((self.n_chain, self.n_par))
-            print("fisher update", itrn)
+            if self.strategy_params.verbose_fisher:
+                print("fisher update", itrn)
             for itrt in range(self.n_chain):
                 # TODO fishers should not all be the same,
                 # but try making them so for now because of fisher calculation instability
@@ -106,7 +108,7 @@ class FisherJumpManager(JumpManager):
 class FisherFullJump(AbstractJump):
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'Fisher Full')
+        AbstractJump.__init__(self,'Fisher All-D')
 
     def __call__(self, sample_point, itrt):
         """apply a fisher matrix jump"""
@@ -119,30 +121,40 @@ class FisherFullJump(AbstractJump):
         return new_point, 0., True
 
 class SigmaFullJump(AbstractJump):
+    """Standard Deviation Jump in Full Dimensions"""
+
     def __init__(self,manager):
+        """Create the jump"""
         self.manager = manager
-        AbstractJump.__init__(self,'Std Full')
+        AbstractJump.__init__(self,'Std All-D')
 
     def __call__(self, sample_point, itrt):
         """apply a standard deviation jump"""
-        n_par = self.manager.n_par
-        mult = np.random.normal(0., 1., n_par)
-        new_point = sample_point+self.manager.sigma_scales[itrt]*mult
-        return new_point, 0., True
+        return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, True)
+        #n_par = self.manager.n_par
+        #mult = np.random.normal(0., 1., n_par)
+        #new_point = sample_point+self.manager.sigma_scales[itrt]*mult
+        #return new_point, 0., True
 
 class SigmaRandomSubspaceJump(AbstractJump):
+    """Standard deviation jump in random subspaces"""
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'Std Random Subspace')
+        AbstractJump.__init__(self,'Std Random-D')
 
     def __call__(self,sample_point,itrt):
         """Apply a standard deviation jump in random subspaces"""
-        n_par = self.manager.n_par
-        mult = np.random.normal(0., 1., n_par)
-        count = n_par
-        # average fraction of dimensions to use in subspace
-        subspace_frac = self.manager.strategy_params.fisher_subspace_frac
+        return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, False)
 
+@njit()
+def sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, sigma_scales, do_full):
+    """Helper to compute a standard deviation jump in random subspaces"""
+    mult = np.random.normal(0., 1., n_par)
+    count = n_par
+    # average fraction of dimensions to use in subspace
+    subspace_frac = fisher_subspace_frac
+
+    if not do_full:
         # ensure at least one random direction is protected so we aren't making null proposals
         safe_itrp = np.random.randint(n_par)
         for itrp in range(0, n_par):
@@ -150,10 +162,10 @@ class SigmaRandomSubspaceJump(AbstractJump):
                 mult[itrp] = 0.
                 count -= 1
 
-        assert count > 0
+    assert count > 0
 
-        new_point = sample_point+self.manager.sigma_scales[itrt]*np.sqrt(n_par/count)*mult
-        return new_point, 0., True
+    new_point = sample_point+sigma_scales[itrt]*np.sqrt(n_par/count)*mult
+    return new_point, 0., True
 
 
 def set_fishers(sample_set, strategy_params, n_chain, like_obj):
@@ -171,7 +183,12 @@ def set_fishers(sample_set, strategy_params, n_chain, like_obj):
         fishers = np.zeros((0, 0, 0))
         chol_fishers = np.zeros((0, 0, 0))
 
-    epsilons = like_obj.epsilons
+    
+    epsilons = like_obj.get_epsilons()
+    for itrp,eps in enumerate(epsilons):
+        if eps == 0.:
+            epsilons[itrp] = strategy_params.eps_default
+
 
     for itrt in range(n_chain):
         new_point = sample_set[itrt]
@@ -305,6 +322,10 @@ class FisherStrategyParameters():
         self.sigma_default = config_f.getfloat('sigma_default', 100.)
         # maximum element of fisher matrix
         self.max_fisher_el = config_f.getfloat('max_fisher_el', np.inf)
+        # default epsilon of fisher matrix
+        self.eps_default = config_f.getfloat('eps_default', 1.e-4)
+        # whether to print a notification every time the fisher matrix is update
+        self.verbose_fisher = config_f.getboolean('verbose_fisher', True)
 
     def copy(self):
         """copy the object"""
@@ -323,3 +344,5 @@ class FisherStrategyParameters():
         config_f['fisher_downsample'] = str(self.fisher_downsample)
         config_f['sigma_default'] = str(self.sigma_default)
         config_f['max_fisher_el'] = str(self.max_fisher_el)
+        config_f['eps_default'] = str(self.eps_default)
+        config_f['verbose_Fisher'] = str(self.verbose_fisher)

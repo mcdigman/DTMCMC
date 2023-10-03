@@ -6,8 +6,10 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from numba import njit
+
 # TODO update docs
-# TODO create abstract jump class
+# TODO jump name length check
 
 class AbstractJump(ABC):
     """An object that performs a single proposal from its __call__ method"""
@@ -29,6 +31,7 @@ class AbstractJump(ABC):
                 density_factor: a scalar float, proposal density factor
                     if no proposal density factor is needed can just be set to 0.
                 success: a boolean, whether generating the proposal succeeded"""
+        return np.zeros(sample_point.size), 0., True
 
     def get_print_name(self):
         """Retrieve the formatted name of the jump
@@ -83,31 +86,27 @@ class JumpManager(ABC):
 
         if choose == -1:
             # choose the jump
-            choose_val = np.random.uniform(0., 1)
-            choose_sum = self.jump_probs[itrt][0]
-            choose = self.jump_probs[itrt].size-1
-            for itrp in range(1, self.jump_probs[itrt].size):
-                if choose_val < choose_sum:
-                    choose = itrp-1
-                    break
-                else:
-                    choose_sum += self.jump_probs[itrt][itrp]
-
-        if choose < self.n_jump_types:
-            new_point, density_fac, success = self.jumps[choose](sample_point,itrt)
-            return new_point, density_fac, success, choose
+            choose = choose_prob_helper(self.jump_probs[itrt])
         else:
-            raise ValueError('Unrecognized Option for Jump Type')
+            # validate the input choice if it is forced
+            assert 0 <= choose < self.n_jump_types
 
-    @abstractmethod
+        new_point, density_fac, success = self.jumps[choose](sample_point,itrt)
+        return new_point, density_fac, success, choose
+
     def set_jump_weights(self):
         """set the relative jump probabilities as a function of temperature for each jump type the manager exports
         based on a given strategy parameter object"""
+        jump_weights = np.zeros((self.n_chain, self.n_jump_types))
+        # just a default equal weight
+        jump_weights[:] = 0.333
+        self.jump_weights = jump_weights 
 
     @abstractmethod
     def record_config(self,config_in):
         """do any necessary steps to record the current configuration of the manager
         to the input ConfigParser object config_in"""
+        return
 
     def set_jump_probs(self):
         """set the normalized probabilities of the jump subtypes
@@ -161,3 +160,18 @@ class JumpManager(ABC):
             samples: 3D float array of samples
             logLs: 2D float array of likelihoods"""
         return
+
+@njit()
+def choose_prob_helper(jump_probs):
+    """helper that picks a random integer with the given input probabilities"""
+    choose_val = np.random.uniform(0., 1)
+    choose_sum = jump_probs[0]
+    choose = jump_probs.size-1
+    for itrp in range(1, jump_probs.size):
+        if choose_val < choose_sum:
+            choose = itrp-1
+            break
+        else:
+            choose_sum += jump_probs[itrp]
+    return choose
+

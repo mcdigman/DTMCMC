@@ -22,7 +22,8 @@ class PriorManager(JumpManager):
         n_cold = self.T_ladder.n_cold
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
-        jump_weights[:] = 1./3.  # just a default equal weight
+        # just a default equal weight
+        jump_weights[:] = 0.333
 
         cold_prior_weight = self.strategy_params.cold_prior_weight
         hot_prior_weight = self.strategy_params.hot_prior_target_weight
@@ -50,10 +51,12 @@ class PriorFullJump(AbstractJump):
 
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'Prior Full')
+        AbstractJump.__init__(self,'Prior All-D')
 
     def __call__(self,sample_point,itrt):
-        return self.manager.like_obj.prior_proposal(sample_point)
+        new_point = self.manager.like_obj.prior_draw()
+        density_fac = self.manager.like_obj.prior_factor(sample_point)-self.manager.like_obj.prior_factor(new_point)
+        return new_point, density_fac, True
 
 
 class PriorStrategyParameters():

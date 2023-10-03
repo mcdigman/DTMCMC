@@ -6,6 +6,7 @@ from numba import njit
 from DTMCMC.jump_manager import JumpManager,AbstractJump
 
 # TODO apply a global default jump weight
+# TODO fix name lengths
 
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
@@ -53,7 +54,8 @@ class DEJumpManager(JumpManager):
         big_de_prob = self.strategy_params.big_de_prob        # probability of doing a full length de jump
 
         jump_weights = np.zeros((n_chain, self.n_jump_types))
-        jump_weights[:] = 1./3.                               # just a default equal weight
+        # just a default equal weight
+        jump_weights[:] = 0.333
 
         standard_prob = 1-self.strategy_params.big_de_prob    # probability of doing a standard jump
         subspace_prob = 1.-de_full_frac                       # probability of doing a subspace jump
@@ -117,11 +119,10 @@ class DEStandardFullJump(AbstractJump):
 
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'DE scale full')
+        AbstractJump.__init__(self,'DE Std All-D')
 
     def __call__(self,sample_point,itrt):
-        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
+        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
 
 class DEStandardRandomSubspaceJump(AbstractJump):
     """apply a jump with standard random size in a random subspace
@@ -129,11 +130,10 @@ class DEStandardRandomSubspaceJump(AbstractJump):
 
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'DE scale subspace')
+        AbstractJump.__init__(self,'DE Std Random-D')
 
     def __call__(self,sample_point,itrt):
-        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
+        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
 
 class DEBigFullJump(AbstractJump):
     """apply the full length differential evolution jump in all dimensions
@@ -141,11 +141,10 @@ class DEBigFullJump(AbstractJump):
 
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'DE big full')
+        AbstractJump.__init__(self,'DE Big All-D')
 
     def __call__(self,sample_point,itrt):
-        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
+        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
 
 class DEBigRandomSubspaceJump(AbstractJump):
     """apply the full length differential evolution jump in a random subspace
@@ -153,11 +152,10 @@ class DEBigRandomSubspaceJump(AbstractJump):
 
     def __init__(self,manager):
         self.manager = manager
-        AbstractJump.__init__(self,'DE big subspace')
+        AbstractJump.__init__(self,'DE Big Random-D')
 
     def __call__(self,sample_point,itrt):
-        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
+        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
 
 @njit()
 def apply_de_helper(de_buffer, de_subspace_frac, itrt, sample_point, do_subspace, do_big):
@@ -182,8 +180,15 @@ def apply_de_helper(de_buffer, de_subspace_frac, itrt, sample_point, do_subspace
                 delta[itrp] = 0.
                 count -= 1
         assert count > 0
+
+    # calculate the new point based on the shifts above
     new_point = sample_point+alpha*delta
-    return new_point
+
+    # make sure something changed or else flag the jump as trivial
+    nontrivial = not np.all(delta == 0.) and not alpha == 0.
+
+    # density factor is 0 for differential evolution jumps
+    return new_point, 0., nontrivial
 
 
 def initialize_de_helper(de_buffer, de_size, n_chain, like_obj):
