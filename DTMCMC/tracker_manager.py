@@ -99,7 +99,6 @@ class TrackerManager():
             a_yes_unique = a_yes_unique[:, a_any_mask]
             a_no_unique = a_no_unique[:, a_any_mask]
             a_tot_unique = a_tot_unique[:, a_any_mask]
-            jump_codes_need = proposal_manager.get_jump_codes()[a_any_mask]
             jump_labels_need = proposal_manager.get_jump_labels()[a_any_mask]
 
             # build the print string for jump labels
@@ -118,7 +117,7 @@ class TrackerManager():
             print(label_str)
             for itrt, T_loc in enumerate(Ts_unique):
                 label_T = "%12e " % T_loc
-                for itrj in range(jump_codes_need.size):
+                for itrj in range(jump_labels_need.size):
                     if a_tot_unique[itrt, itrj] == 0:
                         # no trials so print something useful instead of nan
                         label_loc = "%-15s " % " No Trials"

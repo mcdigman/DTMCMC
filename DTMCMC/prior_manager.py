@@ -3,12 +3,7 @@ manager to manage prior-draw based jumps"""
 
 import numpy as np
 
-from DTMCMC.jump_manager import JumpManager
-
-JUMP_NAMES = ['PRIOR_FULL']
-# dictionary of display names for the jumps
-JUMP_LABELS_DICT = {'PRIOR_FULL': 'prior full'}
-
+from DTMCMC.jump_manager import JumpManager,AbstractJump
 
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
@@ -17,15 +12,9 @@ class PriorManager(JumpManager):
         """take a likelihood object and create an object that can propose prior draws"""
         self.strategy_params = PriorStrategyParameters(config)
 
-        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
+        jumps = [PriorFullJump(self)]
 
-
-    def dispatch_jump(self, sample_point, itrt, choose):
-        """dispatch the prior draw jumps"""
-        if choose == 0:
-            return self.like_obj.prior_proposal(sample_point)
-        else:
-            assert False
+        JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
 
     def set_jump_weights(self):
@@ -38,7 +27,12 @@ class PriorManager(JumpManager):
         cold_prior_weight = self.strategy_params.cold_prior_weight
         hot_prior_weight = self.strategy_params.hot_prior_target_weight
 
-        idx_prior_full = self.name_to_idx['PRIOR_FULL']
+        idx_prior_full = -1
+        for itrp,jump in enumerate(self.jumps):
+            if isinstance(jump,PriorFullJump):
+                idx_prior_full = itrp
+
+        assert idx_prior_full >= -1
 
         jump_weights[n_chain-1, :] = 0.
         jump_weights[n_chain-1, idx_prior_full] = 1.
@@ -51,6 +45,15 @@ class PriorManager(JumpManager):
     def record_config(self,config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+class PriorFullJump(AbstractJump):
+
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'Prior Full')
+
+    def __call__(self,sample_point,itrt):
+        return self.manager.like_obj.prior_proposal(sample_point)
 
 
 class PriorStrategyParameters():

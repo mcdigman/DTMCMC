@@ -3,21 +3,9 @@ Module to manage differential evoultion jumps"""
 import numpy as np
 from numba import njit
 
-from DTMCMC.jump_manager import JumpManager
+from DTMCMC.jump_manager import JumpManager,AbstractJump
 
-# dictionary of display names for the jumps
-JUMP_LABELS_DICT = {
-    'DE_STANDARD_FULL': 'DE scale full',
-    'DE_STANDARD_RANDOM_SUBSPACE': 'DE scale subspace',
-    'DE_BIG_FULL': 'DE big full',
-    'DE_BIG_RANDOM_SUBSPACE': 'de big subspace',
-}
-
-JUMP_NAMES = [
-    'DE_STANDARD_FULL',
-    'DE_STANDARD_RANDOM_SUBSPACE',
-    'DE_BIG_FULL',
-    'DE_BIG_RANDOM_SUBSPACE']
+# TODO apply a global default jump weight
 
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
@@ -30,7 +18,9 @@ class DEJumpManager(JumpManager):
         self.de_size = self.strategy_params.de_size
         self.de_subspace_frac = self.strategy_params.de_subspace_frac
 
-        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
+        jumps = [DEStandardFullJump(self),DEStandardRandomSubspaceJump(self),DEBigFullJump(self),DEBigRandomSubspaceJump(self)]
+
+        JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
         self.de_buffer = np.zeros((self.de_size, self.n_chain, self.n_par))
         initialize_de_helper(self.de_buffer, self.de_size, self.n_chain, self.like_obj)
@@ -51,19 +41,6 @@ class DEJumpManager(JumpManager):
         # wrap counter for whether to write
         if self.itrde_count >= self.de_thin:
             self.itrde_count = 0
-
-    def dispatch_jump(self, sample_point, itrt, choose):
-        """dispatch a differential evolution jump based on the idx selected"""
-        if choose == 0:
-            return self.apply_de_standard_full(sample_point, itrt)
-        elif choose == 1:
-            return self.apply_de_standard_random_subspace(sample_point, itrt)
-        elif choose == 2:
-            return self.apply_de_big_full(sample_point, itrt)
-        elif choose == 3:
-            return self.apply_de_big_random_subspace(sample_point, itrt)
-        else:
-            assert False
 
     def set_jump_weights(self):
         """set the conditional probabilities of the different jump types"""
@@ -87,19 +64,39 @@ class DEJumpManager(JumpManager):
         big_subspace_prob = big_de_prob*subspace_prob         # probability of doing a full length jump in a subspace
         big_full_prob = big_de_prob*de_full_frac              # probability of doing a full length jump in a subspace
 
-        name_map = self.name_to_idx
 
-        jump_weights[:n_cold, name_map['DE_STANDARD_FULL']] = cold_de_weight*standard_full_prob
-        jump_weights[n_cold:, name_map['DE_STANDARD_FULL']] = hot_de_weight*standard_full_prob
 
-        jump_weights[:n_cold, name_map['DE_STANDARD_RANDOM_SUBSPACE']] = cold_de_weight*standard_subspace_prob
-        jump_weights[n_cold:, name_map['DE_STANDARD_RANDOM_SUBSPACE']] = hot_de_weight*standard_subspace_prob
+        # get the indices of the jump types we need to assign probabilities for
+        de_standard_full_idx = -1
+        de_standard_subspace_idx = -1
+        de_big_full_idx = -1
+        de_big_subspace_idx = -1
+        for itrp,jump in enumerate(self.jumps):
+            if isinstance(jump,DEStandardFullJump):
+                de_standard_full_idx = itrp
+            if isinstance(jump,DEStandardRandomSubspaceJump):
+                de_standard_subspace_idx = itrp
+            if isinstance(jump,DEBigFullJump):
+                de_big_full_idx = itrp
+            if isinstance(jump,DEBigRandomSubspaceJump):
+                de_big_subspace_idx = itrp
 
-        jump_weights[:n_cold, name_map['DE_BIG_FULL']] = cold_de_weight*big_full_prob
-        jump_weights[n_cold:, name_map['DE_BIG_FULL']] = hot_de_weight*big_full_prob
+        assert de_standard_full_idx >= 0
+        assert de_standard_subspace_idx >= 0
+        assert de_big_full_idx >= 0
+        assert de_big_subspace_idx >= 0
 
-        jump_weights[:n_cold, name_map['DE_BIG_RANDOM_SUBSPACE']] = cold_de_weight*big_subspace_prob
-        jump_weights[n_cold:, name_map['DE_BIG_RANDOM_SUBSPACE']] = hot_de_weight*big_subspace_prob
+        jump_weights[:n_cold, de_standard_full_idx] = cold_de_weight*standard_full_prob
+        jump_weights[n_cold:, de_standard_full_idx] = hot_de_weight*standard_full_prob
+
+        jump_weights[:n_cold, de_standard_subspace_idx] = cold_de_weight*standard_subspace_prob
+        jump_weights[n_cold:, de_standard_subspace_idx] = hot_de_weight*standard_subspace_prob
+
+        jump_weights[:n_cold, de_big_full_idx] = cold_de_weight*big_full_prob
+        jump_weights[n_cold:, de_big_full_idx] = hot_de_weight*big_full_prob
+
+        jump_weights[:n_cold, de_big_subspace_idx] = cold_de_weight*big_subspace_prob
+        jump_weights[n_cold:, de_big_subspace_idx] = hot_de_weight*big_subspace_prob
 
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
@@ -109,34 +106,58 @@ class DEJumpManager(JumpManager):
         mainly intended to be used to write to differential evolution buffer"""
         self.write_de(samples)
 
-    def apply_de_standard_full(self, sample_point, itrt):
-        """apply a jump with standard random size in all dimensions
-        null proposals are marked as failures"""
-        sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, False, False)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
-
-    def apply_de_standard_random_subspace(self, sample_point, itrt):
-        """apply a jump with standard random size in a random subspace
-        null proposals are marked as failures"""
-        sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, True, False)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
-
-    def apply_de_big_full(self, sample_point, itrt):
-        """apply the full length differential evolution jump in all dimensions
-        null proposals are marked as failures"""
-        sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, False, True)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
-
-    def apply_de_big_random_subspace(self, sample_point, itrt):
-        """apply the full length differential evolution jump in a random subspace
-        null proposals are marked as failures"""
-        sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, True, True)
-        return sample_propose, 0., np.any(sample_point != sample_propose)
-
     def record_config(self, config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
+
+class DEStandardFullJump(AbstractJump):
+    """apply a jump with standard random size in all dimensions
+    null proposals are marked as failures"""
+
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'DE scale full')
+
+    def __call__(self,sample_point,itrt):
+        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
+        return sample_propose, 0., np.any(sample_point != sample_propose)
+
+class DEStandardRandomSubspaceJump(AbstractJump):
+    """apply a jump with standard random size in a random subspace
+    null proposals are marked as failures"""
+
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'DE scale subspace')
+
+    def __call__(self,sample_point,itrt):
+        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
+        return sample_propose, 0., np.any(sample_point != sample_propose)
+
+class DEBigFullJump(AbstractJump):
+    """apply the full length differential evolution jump in all dimensions
+    null proposals are marked as failures"""
+
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'DE big full')
+
+    def __call__(self,sample_point,itrt):
+        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
+        return sample_propose, 0., np.any(sample_point != sample_propose)
+
+class DEBigRandomSubspaceJump(AbstractJump):
+    """apply the full length differential evolution jump in a random subspace
+    null proposals are marked as failures"""
+
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'DE big subspace')
+
+    def __call__(self,sample_point,itrt):
+        sample_propose = apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
+        return sample_propose, 0., np.any(sample_point != sample_propose)
 
 @njit()
 def apply_de_helper(de_buffer, de_subspace_frac, itrt, sample_point, do_subspace, do_big):

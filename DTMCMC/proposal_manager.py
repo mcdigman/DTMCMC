@@ -30,23 +30,17 @@ class ProposalManager(JumpManager):
 
         self.exchange_manager = exchange_manager
 
-        jumps_need_temp = []
         jump_labels_temp = []
+        jumps_temp = []
         for itrm, manager in enumerate(self.managers):
-            jumps_need_loc = manager.get_jump_codes()
             jump_labels_loc = manager.get_jump_labels()
-            self.n_jumps_managers[itrm] = len(jumps_need_loc)
-            jumps_need_temp.append(jumps_need_loc)
+            self.n_jumps_managers[itrm] = len(manager.jumps)
             jump_labels_temp.append(jump_labels_loc)
+            jumps_temp.extend(manager.jumps)
 
-        self.jumps_need = np.hstack(jumps_need_temp)
+        self.jumps = jumps_temp
         self.jump_labels_array = np.hstack(jump_labels_temp)
         self.n_jump_types = np.sum(self.n_jumps_managers)
-
-        self.jump_labels_dict = {}
-        for itrp in range(self.jumps_need.size):
-            self.jump_labels_dict[self.jumps_need[itrp]] = self.jump_labels_array[itrp]
-
 
         self.choose_idx_modifiers = np.zeros(self.n_managers,dtype=np.int64)
         if self.n_managers>1:
@@ -54,7 +48,7 @@ class ProposalManager(JumpManager):
             for itrm in range(1,self.n_managers):
                 self.choose_idx_modifiers[itrm:] += self.n_jumps_managers[itrm-1]
 
-        print(self.jumps_need)
+        print(self.jumps)
         print(self.choose_idx_modifiers)
 
         #self.n_chain = self.T_ladder.n_chain
@@ -64,39 +58,21 @@ class ProposalManager(JumpManager):
 
         #self.set_jump_weights()
 
-        JumpManager.__init__(self, T_ladder, like_obj, self.jumps_need, self.jump_labels_dict)
+        JumpManager.__init__(self, T_ladder, like_obj, self.jumps)
 
-    def dispatch_jump(self, sample_point, itrt, choose=-1):
-        """generate a proposal"""
+        #for itrm in range(self.n_managers):
+        #    itrj2 = itrj1+self.n_jumps_managers[itrm]
+        #    if itrj1 <= choose < itrj2:
+        #        # found the correct manager, dispatch the jump
+        #        choose_loc = choose-self.choose_idx_modifiers[itrm]
+        #        new_point, density_fac, success = self.managers[itrm].dispatch_jump(sample_point, itrt, choose_loc)
+        #        found = True
+        #        break
+        #    itrj1 = itrj2
 
-        if choose == -1:
-            # choose the jump
-            choose_val = np.random.uniform(0., 1)
-            choose_sum = self.jump_probs[itrt][0]
-            choose = self.jump_probs[itrt].size-1
-            for itrp in range(1, self.jump_probs[itrt].size):
-                if choose_val < choose_sum:
-                    choose = itrp-1
-                    break
-                else:
-                    choose_sum += self.jump_probs[itrt][itrp]
+        #assert found  # make sure we actually tried a jump
 
-        found = False
-
-        itrj1 = 0
-        for itrm in range(self.n_managers):
-            itrj2 = itrj1+self.n_jumps_managers[itrm]
-            if itrj1 <= choose < itrj2:
-                # found the correct manager, dispatch the jump
-                choose_loc = choose-self.choose_idx_modifiers[itrm]
-                new_point, density_fac, success = self.managers[itrm].dispatch_jump(sample_point, itrt, choose_loc)
-                found = True
-                break
-            itrj1 = itrj2
-
-        assert found  # make sure we actually tried a jump
-
-        return new_point, density_fac, choose, success
+        #return new_point, density_fac, choose, success
 
     def get_jump_weights(self):
         """return the unnormalized jump weights for each jump type the manager knows"""
@@ -126,7 +102,7 @@ class ProposalManager(JumpManager):
         so assert that """
         super().set_jump_probs()
         # individual proposals can have temps where they do not suggest proposals
-        # but the overarching proposal manager must make proposals for all temps 
+        # but the overarching proposal manager must make proposals for all temps
         assert np.all(np.sum(self.jump_probs,axis=1)==1.)
 
     def post_step_update(self, samples):

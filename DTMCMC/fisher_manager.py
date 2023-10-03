@@ -3,16 +3,7 @@ module to store objects related to fisher matrix jumps"""
 import numpy as np
 
 from DTMCMC.lapack_wrappers import solve_triangular
-from DTMCMC.jump_manager import JumpManager
-
-# dictionary of display names for the jumps
-JUMP_LABELS_DICT = {
-    'FISHER_FULL': 'fisher full',
-    'SIGMA_FULL': 'std full',
-    'SIGMA_RANDOM_SUBSPACE': 'std subspace',
-}
-
-JUMP_NAMES = ['FISHER_FULL', 'SIGMA_FULL', 'SIGMA_RANDOM_SUBSPACE']
+from DTMCMC.jump_manager import JumpManager,AbstractJump
 
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
@@ -25,21 +16,11 @@ class FisherJumpManager(JumpManager):
         self.strategy_params = FisherStrategyParameters(config)
         self.sample_set = sample_set
 
-        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
+        jumps = [FisherFullJump(self),SigmaFullJump(self),SigmaRandomSubspaceJump(self)]
+
+        JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
         self.reset_fishers_from_point(self.sample_set)
-
-
-    def dispatch_jump(self, sample_point, itrt, choose):
-        """dispatch a fisher matrix jump based on the idx selected"""
-        if choose == 0:
-            return self.apply_fisher_full(sample_point, itrt)
-        elif choose == 1:
-            return self.apply_sigma_full(sample_point, itrt, do_subspace=False)
-        elif choose == 2:
-            return self.apply_sigma_full(sample_point, itrt, do_subspace=True)
-        else:
-            assert False
 
     def set_jump_weights(self):
         """set the relative probabilities of the different jump types"""
@@ -54,25 +35,40 @@ class FisherJumpManager(JumpManager):
         subspace_weight = 1.-self.strategy_params.fisher_full_d_frac
         full_weight = self.strategy_params.fisher_full_d_frac
 
-        name_map = self.name_to_idx
+        # get the indices of the jump types we need to assign probabilities for
+        sigma_full_idx = -1
+        sigma_random_idx = -1
+        fisher_full_idx = -1
+        for itrp,jump in enumerate(self.jumps):
+            if isinstance(jump,SigmaFullJump):
+                sigma_full_idx = itrp
+            if isinstance(jump,SigmaRandomSubspaceJump):
+                sigma_random_idx = itrp
+            if isinstance(jump,FisherFullJump):
+                fisher_full_idx = itrp
+
+        assert sigma_full_idx >= 0
+        assert sigma_random_idx >= 0
+        assert fisher_full_idx >= 0
+
 
         if self.strategy_params.use_chol_fishers:
-            jump_weights[:n_cold, name_map['SIGMA_FULL']] = 0.
-            jump_weights[:n_cold, name_map['SIGMA_RANDOM_SUBSPACE']] = 0.
-            jump_weights[:n_cold, name_map['FISHER_FULL']] = cold_weight
+            jump_weights[:n_cold, sigma_full_idx] = 0.
+            jump_weights[:n_cold, sigma_random_idx] = 0.
+            jump_weights[:n_cold, fisher_full_idx] = cold_weight
         else:
-            jump_weights[:n_cold, name_map['SIGMA_FULL']] = cold_weight*full_weight
-            jump_weights[:n_cold, name_map['SIGMA_RANDOM_SUBSPACE']] = cold_weight*subspace_weight
-            jump_weights[:n_cold, name_map['FISHER_FULL']] = 0.
+            jump_weights[:n_cold, sigma_full_idx] = cold_weight*full_weight
+            jump_weights[:n_cold, sigma_random_idx] = cold_weight*subspace_weight
+            jump_weights[:n_cold, fisher_full_idx] = 0.
 
         if self.strategy_params.use_chol_fishers:
-            jump_weights[n_cold:, name_map['FISHER_FULL']] = hot_weight
-            jump_weights[n_cold:, name_map['SIGMA_FULL']] = 0.
-            jump_weights[n_cold:, name_map['SIGMA_RANDOM_SUBSPACE']] = 0.
+            jump_weights[n_cold:, fisher_full_idx] = hot_weight
+            jump_weights[n_cold:, sigma_full_idx] = 0.
+            jump_weights[n_cold:, sigma_random_idx] = 0.
         else:
-            jump_weights[n_cold:, name_map['FISHER_FULL']] = 0.
-            jump_weights[n_cold:, name_map['SIGMA_FULL']] = hot_weight*full_weight
-            jump_weights[n_cold:, name_map['SIGMA_RANDOM_SUBSPACE']] = hot_weight*subspace_weight
+            jump_weights[n_cold:, fisher_full_idx] = 0.
+            jump_weights[n_cold:, sigma_full_idx] = hot_weight*full_weight
+            jump_weights[n_cold:, sigma_random_idx] = hot_weight*subspace_weight
 
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
@@ -81,36 +77,6 @@ class FisherJumpManager(JumpManager):
         """do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates"""
         return self.reset_fishers(itrn, block_size, samples, logLs)
-
-    def apply_fisher_full(self, sample_point, itrt):
-        """apply a fisher matrix jump"""
-        n_par = sample_point.size
-        new_point = sample_point + solve_triangular(
-            self.chol_fishers[itrt],
-            self.gamma_mults[itrt]*np.random.normal(0., 1., n_par),
-            trans_a=True
-        )
-        return new_point, 0., True
-
-    def apply_sigma_full(self, sample_point, itrt, do_subspace=False):
-        """apply a standard deviation jump"""
-        n_par = self.n_par
-        mult = np.random.normal(0., 1., n_par)
-        count = n_par
-        if do_subspace:
-            # ensure at least one random direction is protected so we aren't making null proposals
-            safe_itrp = np.random.randint(n_par)
-            for itrp in range(0, n_par):
-                if (
-                    np.random.uniform(0., 1.,) > self.strategy_params.fisher_subspace_frac
-                    and itrp != safe_itrp
-                ):
-                    mult[itrp] = 0.
-                    count -= 1
-            assert count > 0
-
-        new_point = sample_point+self.sigma_scales[itrt]*np.sqrt(n_par/count)*mult
-        return new_point, 0., True
 
     def reset_fishers_from_point(self, sample_set):
         """set the fisher matrix object at the specified point"""
@@ -135,6 +101,59 @@ class FisherJumpManager(JumpManager):
     def record_config(self, config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+
+class FisherFullJump(AbstractJump):
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'Fisher Full')
+
+    def __call__(self, sample_point, itrt):
+        """apply a fisher matrix jump"""
+        n_par = sample_point.size
+        new_point = sample_point + solve_triangular(
+            self.manager.chol_fishers[itrt],
+            self.manager.gamma_mults[itrt]*np.random.normal(0., 1., n_par),
+            trans_a=True
+        )
+        return new_point, 0., True
+
+class SigmaFullJump(AbstractJump):
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'Std Full')
+
+    def __call__(self, sample_point, itrt):
+        """apply a standard deviation jump"""
+        n_par = self.manager.n_par
+        mult = np.random.normal(0., 1., n_par)
+        new_point = sample_point+self.manager.sigma_scales[itrt]*mult
+        return new_point, 0., True
+
+class SigmaRandomSubspaceJump(AbstractJump):
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'Std Random Subspace')
+
+    def __call__(self,sample_point,itrt):
+        """Apply a standard deviation jump in random subspaces"""
+        n_par = self.manager.n_par
+        mult = np.random.normal(0., 1., n_par)
+        count = n_par
+        # average fraction of dimensions to use in subspace
+        subspace_frac = self.manager.strategy_params.fisher_subspace_frac
+
+        # ensure at least one random direction is protected so we aren't making null proposals
+        safe_itrp = np.random.randint(n_par)
+        for itrp in range(0, n_par):
+            if np.random.uniform(0., 1.,) > subspace_frac and itrp != safe_itrp:
+                mult[itrp] = 0.
+                count -= 1
+
+        assert count > 0
+
+        new_point = sample_point+self.manager.sigma_scales[itrt]*np.sqrt(n_par/count)*mult
+        return new_point, 0., True
 
 
 def set_fishers(sample_set, strategy_params, n_chain, like_obj):

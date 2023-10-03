@@ -7,8 +7,6 @@ import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.integrate import cumtrapz
 
-# TODO increase flexibility of temperatureladder
-
 
 class TemperatureLadder():
     """store a temperature ladder for parallel tempering"""

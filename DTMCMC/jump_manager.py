@@ -6,10 +6,42 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+# TODO update docs
+# TODO create abstract jump class
+
+class AbstractJump(ABC):
+    """An object that performs a single proposal from its __call__ method"""
+
+    def __init__(self,print_name):
+        """Create the jump object:
+            inputs:
+                print_name: a string to print as the formatted name of this jump"""
+        self.print_name = print_name
+
+    @abstractmethod
+    def __call__(self,sample_point,itrt):
+        """Perform and MCMC proposal
+            inputs:
+                sample_point: a numpy array with the current point
+                itrt: the index of the requested temperature chain
+            outputs:
+                new_point: a numpy array with the proposed new point
+                density_factor: a scalar float, proposal density factor
+                    if no proposal density factor is needed can just be set to 0.
+                success: a boolean, whether generating the proposal succeeded"""
+
+    def get_print_name(self):
+        """Retrieve the formatted name of the jump
+        Outputs:
+            print_name: a string to print as the formatted name of this jump"""
+        return self.print_name
+
+
+
 class JumpManager(ABC):
     """mcmc proposals should be dispatched from extensions of this class"""
 
-    def __init__(self, T_ladder, like_obj, jump_names, jump_labels_dict):
+    def __init__(self, T_ladder, like_obj, jumps):
         """Default constructor that handles all the common actions we expect to need"""
 
         self.T_ladder = T_ladder
@@ -17,33 +49,55 @@ class JumpManager(ABC):
         self.n_chain = self.T_ladder.n_chain
         self.n_par = self.like_obj.n_par
 
-        self.jump_names = jump_names
-        self.n_jump_types = len(jump_names)
+        #self.jump_names = jump_names
+        self.jumps = jumps
+        self.n_jump_types = len(jumps)
 
         self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
         self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
 
-        self.jump_labels_array = np.array([jump_labels_dict.get(name, name) for name in jump_names])
+        #self.jump_labels_array = np.array([jump_labels_dict.get(name, name) for name in jump_names])
+        self.jump_labels_array = np.array([jump.get_print_name() for jump in self.jumps])
 
         self.name_to_idx = {}
-        for itrm, name in enumerate(self.jump_names):
+        for itrm, name in enumerate(self.jump_labels_array):
             self.name_to_idx[name] = itrm
 
         self.set_jump_probs()
 
-    @abstractmethod
-    def dispatch_jump(self, sample_point, itrt, choose):
+    def dispatch_jump(self, sample_point, itrt, choose=-1):
         """dispatch the specified proposal
             inputs:
                 sample_point: 1D float array, the parameters of the current point
                 itrt: scalar integer, the index of the temperature chain for which to dispatch a proposal
-                choose: scalar int, an index that the dispatcher may use to select which proposal to try
+                choose: scalar int, optional, an index that the dispatcher may use to select which proposal to try
+                        if choose is not set, then try to jump according to the specified probability matrix
+
             returns:
                 new_point: 1D float array, the parameter of the new point
                 density_fac: a scalar float for the density factor of the proposal,
                                 will be added to the log likelihood to modify the acceptance probability
                 success: scalar boolean, whether or not generating the proposal succeeded
-                            (if not, the proposal will automatically be marked rejected)"""
+                            (if not, the proposal will automatically be marked rejected)
+                choose: scalar int, index of the chosen jump type"""
+
+        if choose == -1:
+            # choose the jump
+            choose_val = np.random.uniform(0., 1)
+            choose_sum = self.jump_probs[itrt][0]
+            choose = self.jump_probs[itrt].size-1
+            for itrp in range(1, self.jump_probs[itrt].size):
+                if choose_val < choose_sum:
+                    choose = itrp-1
+                    break
+                else:
+                    choose_sum += self.jump_probs[itrt][itrp]
+
+        if choose < self.n_jump_types:
+            new_point, density_fac, success = self.jumps[choose](sample_point,itrt)
+            return new_point, density_fac, success, choose
+        else:
+            raise ValueError('Unrecognized Option for Jump Type')
 
     @abstractmethod
     def set_jump_weights(self):
@@ -59,7 +113,7 @@ class JumpManager(ABC):
         """set the normalized probabilities of the jump subtypes
         as a function of temperature, relying on the set_jump_weights
         methods which must be provided in subclasses"""
-         
+
         #unnormalized jump weights must be provided for in a subclass
         self.set_jump_weights()
 
@@ -87,10 +141,9 @@ class JumpManager(ABC):
         """get text labels for the different jump types"""
         return self.jump_labels_array.copy()
 
-    def get_jump_codes(self):
-        """return the internal names the manager object uses
-        to reference its respective jump types"""
-        return self.jump_names.copy()
+    def get_jumps(self):
+        """return the list of available jumps"""
+        return self.jumps
 
     def post_step_update(self, samples):
         """do any needed internal processing after an individual step of all temperatures;
@@ -107,53 +160,4 @@ class JumpManager(ABC):
             block_size: int, the number of steps in this block
             samples: 3D float array of samples
             logLs: 2D float array of likelihoods"""
-        """do any needed internal processing after an individual block of size block_size:
-        ie, fisher matrix updates"""
         return
-
-
-#class DefaultJumpManager(JumpManager):
-#    """manage some common logistics for default jump types to avoid repetitive code"""
-#
-#
-#    def set_jump_probs(self):
-#        """set the normalized probabilities of the jump subtypes
-#        as a function of temperature, relying on the set_jump_weights
-#        methods which must be provided in subclasses"""
-#         
-#        #unnormalized jump weights must be provided for in a subclass
-#        self.set_jump_weights()
-#
-#        assert np.all(self.jump_weights >= 0.)
-#
-#        if np.any(self.jump_weights!=0.):
-#            # get the normalized conditional jump probabilities
-#            self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T
-#            self.jump_probs[~np.isfinite(self.jump_probs)] = 0.
-#        else:
-#            self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-#
-#        assert np.all(self.jump_probs >= 0.)
-#
-#    def get_jump_weights(self):
-#        """get the desired weights of this jump type as a function of temperature"""
-#        return self.jump_weights
-#
-#    def get_jump_labels(self):
-#        """get text labels for the different jump types"""
-#        return self.jump_labels_array.copy()
-#
-#    def get_jump_codes(self):
-#        """return the internal names the manager object uses
-#        to reference its respective jump types"""
-#        return self.jump_names.copy()
-#
-#    def post_step_update(self, samples):
-#        """do any needed internal processing after an individual step of all temperatures;
-#        mainly intended to be used to write to differential evolution buffer"""
-#        return
-#
-#    def post_block_update(self, itrn, block_size, samples, logLs):
-#        """do any needed internal processing after an individual block of size block_size:
-#        ie, fisher matrix updates"""
-#        return

@@ -3,12 +3,7 @@ blank manager to serve as template for adding more draw types"""
 
 import numpy as np
 
-from DTMCMC.jump_manager import JumpManager
-
-JUMP_NAMES = ["BLANK_JUMP"]
-
-# dictionary of display names for the jumps
-JUMP_LABELS_DICT = {"BLANK_JUMP": "blank jump"}
+from DTMCMC.jump_manager import JumpManager,AbstractJump
 
 class AuxilliaryJumpManager(JumpManager):
     """template manager for an extra jump type,
@@ -18,17 +13,9 @@ class AuxilliaryJumpManager(JumpManager):
         """a blank proposal as a template"""
         self.strategy_params = AuxilliaryStrategyParameters(config)
 
-        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
+        jumps = [BlankJump(self)]
 
-    def dispatch_jump(self, sample_point, itrt, choose):
-        """dispatch the auxilliary jumps"""
-        if choose == 0:
-            # A blank jump as an example, fill in your own jump here!
-            return sample_point.copy(), 0., True
-        else:
-            assert False
-
-        return sample_point.copy(), 0., True
+        JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
     def set_jump_weights(self):
         """set the relative probabilities of the different jump types"""
@@ -44,6 +31,17 @@ class AuxilliaryJumpManager(JumpManager):
     def record_config(self, config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+class BlankJump(AbstractJump):
+    """Template jump for future extensions"""
+    def __init__(self,manager):
+        self.manager = manager
+        AbstractJump.__init__(self,'Blank Jump')
+
+    def __call__(self,sample_point,itrt):
+        """Call the jump"""
+        return sample_point.copy(), 0., True
+
 
 
 class AuxilliaryStrategyParameters():

@@ -7,6 +7,8 @@ from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 
 from DTMCMC.tracker_manager import TrackerManager
 
+# TODO rename this module
+
 
 class PTMCMCChain():
     """object to manage the overall chain evolution"""
@@ -299,7 +301,7 @@ def advance_step_ptmcmc(
     betas = T_ladder.betas
 
     for itrt in range(0, n_chain):
-        new_point, density_fac, idx_jump, success = proposal_manager.dispatch_jump(samples[itrb-1, itrt], itrt)
+        new_point, density_fac, success, idx_jump = proposal_manager.dispatch_jump(samples[itrb-1, itrt], itrt)
 
         if success:
             # skip likelihood evaluation if proposal is marked as a failure
