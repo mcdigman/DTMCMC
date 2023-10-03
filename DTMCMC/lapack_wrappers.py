@@ -70,7 +70,6 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
     else:
         UPLO = np.array([ord('U')], np.int32)
 
-    # TODO why was this in place? added copy to mitigate, ensure nothing relied on that behavior
     B = y.T.copy().T
 
     # cannot do this operation in place if y is not contiguous, though could copy

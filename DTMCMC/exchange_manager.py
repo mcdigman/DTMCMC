@@ -11,25 +11,47 @@ NULL_TARGETS = 3        # do not do any exchanges
 
 
 class ExchangeManager():
-    """class to take a temperature ladder and state of a chain and define the strategy by which to propose exchanges"""
+    """class to take a temperature ladder and state of a chain
+    and define the strategy by which to propose exchanges"""
 
     def __init__(self, strategy=RANDOM_TARGETS, track_full_exchanges=True):
         """select the exchange targeting strategy"""
         self.strategy = strategy
         self.track_full_exchanges = track_full_exchanges
 
-    def do_ptmcmc_exchange(self, itrb, samples, logLs, T_ladder, exchange_tracker, chain_track):
+    def do_ptmcmc_exchange(
+            self, itrb, samples, logLs, T_ladder, exchange_tracker, chain_track
+    ):
         """do the exchange step"""
         assert self.is_exchange_step(itrb)
-        return do_ptmcmc_exchange(itrb-1, samples, logLs, T_ladder.n_chain, T_ladder.betas, exchange_tracker, chain_track, self.strategy, self.track_full_exchanges)
+        return do_ptmcmc_exchange(
+            itrb-1,
+            samples,
+            logLs,
+            T_ladder.n_chain,
+            T_ladder.betas,
+            exchange_tracker,
+            chain_track,
+            self.strategy,
+            self.track_full_exchanges,
+        )
 
     def is_exchange_step(self, itrb):
-        """check whether the step with the given index should be an exchange step, currently based on alternating even and odd"""
+        """check whether the step with the given index should be an exchange,
+        currently based on alternating even and odd"""
         return itrb % 2 == 0
 
 
 @njit()
-def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, targets, no_repeat, track_full_exchanges):
+def exchange_step_helper(
+    logLs_loc,
+    betas,
+    exchange_tracker,
+    exchange_order,
+    targets,
+    no_repeat,
+    track_full_exchanges
+):
     """actually execute the swaps for an exchange step"""
     n_chain = betas.shape[0]
 
@@ -38,7 +60,7 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
         itrt = exchange_order[idxt]
         itrt_target = targets[itrt]
         if no_repeat and itrt > itrt_target:
-            # prevent random targetting from undoing the exchange it just proposed
+            # prevent random targetting from undoing itself
             continue
         if itrt == itrt_target:
             # not a real proposal
@@ -51,7 +73,10 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
             assert itrs_fin[itrt] == itrt
 
         log_accept_prob_exchange = np.log(np.random.uniform(0., 1.))
-        log_mh_ratio_exchange = betas[itrt]*(logLs_loc[itrt_target]-logLs_loc[itrt])+betas[itrt_target]*(logLs_loc[itrt]-logLs_loc[itrt_target])
+        log_mh_ratio_exchange = (
+            betas[itrt]*(logLs_loc[itrt_target] - logLs_loc[itrt]) +
+            betas[itrt_target]*(logLs_loc[itrt] - logLs_loc[itrt_target])
+        )
         if log_mh_ratio_exchange > log_accept_prob_exchange:
             logLs_hold = logLs_loc[itrt_target]
             logLs_loc[itrt_target] = logLs_loc[itrt]
@@ -69,7 +94,7 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
                 exchange_tracker[0, 0, itrt] += 1
                 exchange_tracker[0, 0, itrt_target] += 1
                 # track nn exchanges
-                if itrt_target == itrt+1 or itrt_target==itrt-1:
+                if itrt_target == itrt+1 or itrt_target == itrt-1:
                     exchange_tracker[1, 0, itrt] += 1
                     exchange_tracker[1, 0, itrt_target] += 1
         else:
@@ -81,7 +106,7 @@ def exchange_step_helper(logLs_loc, betas, exchange_tracker, exchange_order, tar
                 exchange_tracker[0, 1, itrt] += 1
                 exchange_tracker[0, 1, itrt_target] += 1
                 # track nn exchanges
-                if itrt_target == itrt+1 or itrt_target==itrt-1:
+                if itrt_target == itrt+1 or itrt_target == itrt-1:
                     exchange_tracker[1, 1, itrt] += 1
                     exchange_tracker[1, 1, itrt_target] += 1
 
@@ -103,9 +128,12 @@ def random_pair_generate(n_chain):
 
 @njit()
 def offset_pair_generate(n_chain, offset):
-    """pairs are generated as [(0,offset+1),(2,offset+3),...(n_chain-2,offset+n_chain-1)]%n_chain, e.g.,
-       offset = 0 corresponds to pairs [(0,1),(2,3),...(n_chain-2,n_chain-1)]
-       offset = -1 corresponds to       [(n_chain-1,0),(1,2),...(n_chain-3,n_chain-1)]"""
+    """pairs are generated as
+    [(0,offset+1),(2,offset+3),...(n_chain-2,offset+n_chain-1)]%n_chain,
+    e.g.,
+    offset = 0 corresponds to pairs [(0,1),(2,3),...(n_chain-2,n_chain-1)]
+    offset = -1 corresponds to       [(n_chain-1,0),(1,2),...(n_chain-3,n_chain-1)]
+    """
     # can only handle offset pairs for integer divisors
     if offset >= 0:
         assert n_chain % (offset+1) == 0
@@ -132,7 +160,17 @@ def offset_pair_generate(n_chain, offset):
 
 
 @njit()
-def do_ptmcmc_exchange(itrb, samples, logLs, n_chain, betas, exchange_tracker, chain_track, target_select, track_full_exchanges):
+def do_ptmcmc_exchange(
+    itrb,
+    samples,
+    logLs,
+    n_chain,
+    betas,
+    exchange_tracker,
+    chain_track,
+    target_select,
+    track_full_exchanges,
+):
     """chose and exchange strategy and do the exchange step"""
 
     no_repeat = True
@@ -161,7 +199,15 @@ def do_ptmcmc_exchange(itrb, samples, logLs, n_chain, betas, exchange_tracker, c
     logLs_cur = np.zeros(n_chain)
     logLs_cur[:] = logLs[itrb]
 
-    itrs_fin = exchange_step_helper(logLs_cur, betas, exchange_tracker, exchange_order, targets, no_repeat, track_full_exchanges)
+    itrs_fin = exchange_step_helper(
+        logLs_cur,
+        betas,
+        exchange_tracker,
+        exchange_order,
+        targets,
+        no_repeat,
+        track_full_exchanges
+    )
 
     for itrt in range(0, n_chain):
         logLs[itrb+1, itrt] = logLs[itrb, itrs_fin[itrt]]

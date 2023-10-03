@@ -5,52 +5,39 @@ from numba import njit
 
 from DTMCMC.jump_manager import JumpManager
 
-DE_STANDARD_FULL = 210
-DE_STANDARD_RANDOM_SUBSPACE = 211
-DE_BIG_FULL = 220
-DE_BIG_RANDOM_SUBSPACE = 221
-
-DE_JUMPS = np.array([DE_STANDARD_FULL, DE_STANDARD_RANDOM_SUBSPACE, DE_BIG_FULL, DE_BIG_RANDOM_SUBSPACE])
-
 # dictionary of display names for the jumps
-JUMP_LABELS = {DE_STANDARD_FULL: 'DE scale full', DE_STANDARD_RANDOM_SUBSPACE: 'DE scale subspace',
-               DE_BIG_FULL: 'DE big full', DE_BIG_RANDOM_SUBSPACE: 'de big subspace'}
-JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in DE_JUMPS])
+JUMP_LABELS_DICT = {
+    'DE_STANDARD_FULL': 'DE scale full',
+    'DE_STANDARD_RANDOM_SUBSPACE': 'DE scale subspace',
+    'DE_BIG_FULL': 'DE big full',
+    'DE_BIG_RANDOM_SUBSPACE': 'de big subspace',
+}
 
+JUMP_NAMES = [
+    'DE_STANDARD_FULL',
+    'DE_STANDARD_RANDOM_SUBSPACE',
+    'DE_BIG_FULL',
+    'DE_BIG_RANDOM_SUBSPACE']
 
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
     def __init__(self, T_ladder, like_obj, config):
         """create the manager object"""
-        self.n_chain = T_ladder.n_chain
         self.strategy_params = DEStrategyParameters(config)
+
         self.de_thin = self.strategy_params.de_thin
         self.de_size = self.strategy_params.de_size
-        self.like_obj = like_obj
-        self.n_par = self.like_obj.n_par
-        self.T_ladder = T_ladder
-
         self.de_subspace_frac = self.strategy_params.de_subspace_frac
+
+        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
 
         self.de_buffer = np.zeros((self.de_size, self.n_chain, self.n_par))
         initialize_de_helper(self.de_buffer, self.de_size, self.n_chain, self.like_obj)
 
-        self.n_jump_types = DE_JUMPS.size
-        self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-        self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
-        self.jumps_need = DE_JUMPS.copy()
-        self.jump_labels_array = JUMP_LABELS_ARRAY.copy()
-
-        # map the codes that exist to indices in jumps_need
-        self.code_to_idx = np.zeros(self.jumps_need.max()+1, dtype=np.int64)-1
-        for idx, code in enumerate(self.jumps_need):
-            self.code_to_idx[code] = idx
-
         self.itrde_write = 1
         self.itrde_count = 1
 
-        self.set_jump_weights()
 
     def write_de(self, samples):
         """write to the differential evolution buffer"""
@@ -65,15 +52,15 @@ class DEJumpManager(JumpManager):
         if self.itrde_count >= self.de_thin:
             self.itrde_count = 0
 
-    def dispatch_jump(self, sample_point, itrt, choose_code):
-        """dispatch a differential evolution jump based on the code selected"""
-        if choose_code == DE_STANDARD_FULL:
+    def dispatch_jump(self, sample_point, itrt, choose):
+        """dispatch a differential evolution jump based on the idx selected"""
+        if choose == 0:
             return self.apply_de_standard_full(sample_point, itrt)
-        elif choose_code == DE_STANDARD_RANDOM_SUBSPACE:
+        elif choose == 1:
             return self.apply_de_standard_random_subspace(sample_point, itrt)
-        elif choose_code == DE_BIG_FULL:
+        elif choose == 2:
             return self.apply_de_big_full(sample_point, itrt)
-        elif choose_code == DE_BIG_RANDOM_SUBSPACE:
+        elif choose == 3:
             return self.apply_de_big_random_subspace(sample_point, itrt)
         else:
             assert False
@@ -83,63 +70,44 @@ class DEJumpManager(JumpManager):
         n_chain = self.T_ladder.n_chain
         n_cold = self.T_ladder.n_cold
 
-        cold_de_weight = self.strategy_params.cold_de_weight           # weight of de in cold proposals
-        hot_de_weight = self.strategy_params.hot_de_weight             # weight of de in hot proposals
-        de_full_frac = self.strategy_params.de_subspace_override_frac  # fraction of time not to do a subspace jump
-        big_de_prob = self.strategy_params.big_de_prob                 # probability of doing a full length de jump
+        cold_de_weight = self.strategy_params.cold_de_weight  # weight of de in cold proposals
+        hot_de_weight = self.strategy_params.hot_de_weight    # weight of de in hot proposals
+        de_full_frac = self.strategy_params.de_full_d_frac    # fraction of time not to do a subspace jump
+        big_de_prob = self.strategy_params.big_de_prob        # probability of doing a full length de jump
 
         jump_weights = np.zeros((n_chain, self.n_jump_types))
-        jump_weights[:] = 1./3.                                        # just a default equal weight
+        jump_weights[:] = 1./3.                               # just a default equal weight
 
-        standard_prob = 1-self.strategy_params.big_de_prob             # probability of doing a standard jump
-        subspace_prob = 1.-de_full_frac                                # probability of doing a subspace jump
+        standard_prob = 1-self.strategy_params.big_de_prob    # probability of doing a standard jump
+        subspace_prob = 1.-de_full_frac                       # probability of doing a subspace jump
 
-        standard_full_prob = standard_prob*de_full_frac                # probability of doing a standard full jump
-        standard_subspace_prob = standard_prob*subspace_prob           # probability of doing a standard subspace jump
+        standard_full_prob = standard_prob*de_full_frac       # probability of doing a standard full jump
+        standard_subspace_prob = standard_prob*subspace_prob  # probability of doing a standard subspace jump
 
-        big_subspace_prob = big_de_prob*subspace_prob                  # probability of doing a full length jump in a subspace
-        big_full_prob = big_de_prob*de_full_frac                      # probability of doing a full length jump in a subspace
+        big_subspace_prob = big_de_prob*subspace_prob         # probability of doing a full length jump in a subspace
+        big_full_prob = big_de_prob*de_full_frac              # probability of doing a full length jump in a subspace
 
-        jump_weights[:n_cold, self.code_to_idx[DE_STANDARD_FULL]] = cold_de_weight*standard_full_prob
-        jump_weights[n_cold:, self.code_to_idx[DE_STANDARD_FULL]] = hot_de_weight*standard_full_prob
+        name_map = self.name_to_idx
 
-        jump_weights[:n_cold, self.code_to_idx[DE_STANDARD_RANDOM_SUBSPACE]] = cold_de_weight*standard_subspace_prob
-        jump_weights[n_cold:, self.code_to_idx[DE_STANDARD_RANDOM_SUBSPACE]] = hot_de_weight*standard_subspace_prob
+        jump_weights[:n_cold, name_map['DE_STANDARD_FULL']] = cold_de_weight*standard_full_prob
+        jump_weights[n_cold:, name_map['DE_STANDARD_FULL']] = hot_de_weight*standard_full_prob
 
-        jump_weights[:n_cold, self.code_to_idx[DE_BIG_FULL]] = cold_de_weight*big_full_prob
-        jump_weights[n_cold:, self.code_to_idx[DE_BIG_FULL]] = hot_de_weight*big_full_prob
+        jump_weights[:n_cold, name_map['DE_STANDARD_RANDOM_SUBSPACE']] = cold_de_weight*standard_subspace_prob
+        jump_weights[n_cold:, name_map['DE_STANDARD_RANDOM_SUBSPACE']] = hot_de_weight*standard_subspace_prob
 
-        jump_weights[:n_cold, self.code_to_idx[DE_BIG_RANDOM_SUBSPACE]] = cold_de_weight*big_subspace_prob
-        jump_weights[n_cold:, self.code_to_idx[DE_BIG_RANDOM_SUBSPACE]] = hot_de_weight*big_subspace_prob
+        jump_weights[:n_cold, name_map['DE_BIG_FULL']] = cold_de_weight*big_full_prob
+        jump_weights[n_cold:, name_map['DE_BIG_FULL']] = hot_de_weight*big_full_prob
+
+        jump_weights[:n_cold, name_map['DE_BIG_RANDOM_SUBSPACE']] = cold_de_weight*big_subspace_prob
+        jump_weights[n_cold:, name_map['DE_BIG_RANDOM_SUBSPACE']] = hot_de_weight*big_subspace_prob
 
         self.jump_weights = jump_weights
-        # get the normalized conditional jump probabilities
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  
-        self.jump_probs[~np.isfinite(self.jump_probs)]=0.
-
-        assert np.all(self.jump_weights>=0.)
-
-    def get_jump_weights(self):
-        """get the desired weights of this jump type as a function of temperature"""
-        return self.jump_weights
-
-    def get_jump_codes(self):
-        """return the internal codes the manager object uses to index its respective jump types"""
-        return DE_JUMPS.copy()
-
-    def get_jump_labels(self):
-        """get text labels for the different jump types"""
-        return self.jump_labels_array.copy()
+        assert np.all(self.jump_weights >= 0.)
 
     def post_step_update(self, samples):
         """do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer"""
         self.write_de(samples)
-
-    def post_block_update(self, itrn, block_size, samples, logLs):
-        """do any needed internal processing after an individual block of size block_size:
-        ie, fisher matrix updates"""
-        return
 
     def apply_de_standard_full(self, sample_point, itrt):
         """apply a jump with standard random size in all dimensions
@@ -165,7 +133,7 @@ class DEJumpManager(JumpManager):
         sample_propose = apply_de_helper(self.de_buffer, self.de_subspace_frac, itrt, sample_point, True, True)
         return sample_propose, 0., np.any(sample_point != sample_propose)
 
-    def record_config(self,config_in):
+    def record_config(self, config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
@@ -210,48 +178,43 @@ def write_de_helper(itrde_count, itrde_write, de_buffer, samples):
     if itrde_count == 0:
         de_buffer[itrde_write, :] = samples
 
+
 class DEStrategyParameters():
     """container to store some parameters related to the strategy of differential evolution proposal generation"""
 
-    def __init__(self,config):
-                 #cold_de_weight=1./3.,              # how often to do de draws in the cold chains
-                 #hot_de_weight=1./3.,               # how often to do de draws in the hottest finite temperature chain
-                 #big_de_prob=0.5,                   # how often to do the big differential evolution jump
-                 #de_subspace_frac=1.,               # what fraction of dimensions to include in de subspace jumps
-                 #de_subspace_override_frac=1.,      # how often to not do subspace jumps when doing a de jump
-                 #de_size=1000,                      # size of differential evolution buffer
-                 #de_thin=1):                        # how much to thin the differential evolution buffer by
+    def __init__(self, config):
         """initialize the object with the prescribed parameters"""
         self.config = config
+        config_de = self.config['DEJumpManager']
 
-        #self.cold_de_weight = cold_de_weight
-        #self.hot_de_weight = hot_de_weight
-        #self.big_de_prob = big_de_prob
-        #self.de_subspace_frac = de_subspace_frac
-        #self.de_subspace_override_frac = de_subspace_override_frac
-        #self.de_size = de_size
-        #self.de_thin = de_thin
-
-        self.cold_de_weight = config['DEJumpManager'].getfloat('cold_de_weight',0.333)
-        self.hot_de_weight = config['DEJumpManager'].getfloat('hot_de_weight',0.333)
-        self.big_de_prob = config['DEJumpManager'].getfloat('big_de_prob',0.5)
-        self.de_subspace_frac = config['DEJumpManager'].getfloat('de_subspace_frac',1.)
-        self.de_subspace_override_frac = config['DEJumpManager'].getfloat('de_subspace_override_frac',1.)
-        self.de_size = config['DEJumpManager'].getint('de_size',1000)
-        self.de_thin = config['DEJumpManager'].getint('de_thin',1)
+        # how often to do de draws in the cold chains
+        self.cold_de_weight = config_de.getfloat('cold_de_weight', 0.333)
+        # how often to do de draws in the hottest finite temperature chain
+        self.hot_de_weight = config_de.getfloat('hot_de_weight', 0.333)
+        # how often to do the big differential evolution jump
+        self.big_de_prob = config_de.getfloat('big_de_prob', 0.5)
+        # what fraction of dimensions to include in de subspace jumps
+        self.de_subspace_frac = config_de.getfloat('de_subspace_frac', 1.)
+        # how often to not do subspace jumps when doing a de jump
+        self.de_full_d_frac = config_de.getfloat('de_full_d_frac', 1.)
+        # size of differential evolution buffer
+        self.de_size = config_de.getint('de_size', 1000)
+        # how much to thin the differential evolution buffer by
+        self.de_thin = config_de.getint('de_thin', 1)
 
     def copy(self):
         """copy the object"""
         return DEStrategyParameters(self.config)
 
-    def record_config(self,config_in):
-        """record the current configuration to the requested configuration object 
+    def record_config(self, config_in):
+        """record the current configuration to the requested configuration object
             inputs:
                 config_in: ConfigParser object"""
-        config_in['DEJumpManager']['cold_de_weight'] = str(self.cold_de_weight)
-        config_in['DEJumpManager']['hot_de_weight'] = str(self.hot_de_weight)
-        config_in['DEJumpManager']['big_de_prob'] = str(self.big_de_prob)
-        config_in['DEJumpManager']['de_subspace_frac'] = str(self.de_subspace_frac)
-        config_in['DEJumpManager']['de_subspace_override_frac'] = str(self.de_subspace_override_frac)
-        config_in['DEJumpManager']['de_size'] = str(self.de_size)
-        config_in['DEJumpManager']['de_thin'] = str(self.de_thin)
+        config_de = config_in['DEJumpManager']
+        config_de['cold_de_weight'] = str(self.cold_de_weight)
+        config_de['hot_de_weight'] = str(self.hot_de_weight)
+        config_de['big_de_prob'] = str(self.big_de_prob)
+        config_de['de_subspace_frac'] = str(self.de_subspace_frac)
+        config_de['de_full_d_frac'] = str(self.de_full_d_frac)
+        config_de['de_size'] = str(self.de_size)
+        config_de['de_thin'] = str(self.de_thin)

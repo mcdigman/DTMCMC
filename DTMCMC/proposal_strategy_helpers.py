@@ -1,14 +1,5 @@
 """C 2023 Matthew C. Digman
 hold some helpers to help determine the proposal strategy"""
-import numpy as np
-
-import configparser
-
-import DTMCMC.fisher_manager as fm
-import DTMCMC.de_manager as dm
-import DTMCMC.prior_manager as pm
-
-# TODO make proposal strategy hierarchical
 
 class ProposalStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""

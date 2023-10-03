@@ -12,7 +12,6 @@ import DTMCMC.auxilliary_manager as am
 import DTMCMC.exchange_manager as em
 
 from DTMCMC.proposal_manager import ProposalManager
-from DTMCMC.proposal_strategy_helpers import ProposalStrategyParameters
 
 
 def get_default_proposal_manager(T_ladder, like_obj, starting_samples=None, config=None,
@@ -49,5 +48,5 @@ def get_default_proposal_manager(T_ladder, like_obj, starting_samples=None, conf
         exchange_manager_loc = em.ExchangeManager(em.SEQUENTIAL_TARGETS,track_full_exchanges=False)
 
     managers = (fisher_manager_loc, de_manager_loc, auxilliary_manager_loc, prior_manager_loc)
-    proposal_manager = ProposalManager(T_ladder, managers, exchange_manager_loc, config)
+    proposal_manager = ProposalManager(T_ladder, like_obj, managers, exchange_manager_loc, config)
     return proposal_manager

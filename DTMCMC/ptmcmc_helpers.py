@@ -60,7 +60,14 @@ class PTMCMCChain():
         """initialize the various trackers like acceptance rate and cycle times"""
         if self.tracker_manager is None:
             track_full_exchanges = self.proposal_manager.exchange_manager.track_full_exchanges
-            self.tracker_manager = TrackerManager(self.n_cold, self.n_chain, self.block_size, self.n_par, track_full_exchanges, self.proposal_manager.n_jump_types)
+            self.tracker_manager = TrackerManager(
+                self.n_cold,
+                self.n_chain,
+                self.block_size,
+                self.n_par,
+                track_full_exchanges,
+                self.proposal_manager.n_jump_types,
+            )
         self.logL_means = []
         self.logL_vars = []
 
@@ -92,8 +99,18 @@ class PTMCMCChain():
             self.logLs[0, itrt] = self.like_obj.get_loglike(self.samples[0, itrt, :])
 
         # initialize the storage with just the first element
-        self.store_idx, self.store_counter = store_sample_helper(self.samples_store, self.logLs_store, self.samples, self.logLs,
-                                                                 self.store_idx, self.store_counter, self.n_record, 1, self.store_thin, 0)
+        self.store_idx, self.store_counter = store_sample_helper(
+            self.samples_store,
+            self.logLs_store,
+            self.samples,
+            self.logLs,
+            self.store_idx,
+            self.store_counter,
+            self.n_record,
+            1,
+            self.store_thin,
+            0,
+        )
 
     def get_stored_flattened(self, n_burnin, n_chain_out=-1, thin=1):
         """get the stored samples flattened, with additional thinning if desired and only the first n_chain_out chains"""
@@ -109,8 +126,18 @@ class PTMCMCChain():
 
     def store_samples(self):
         """store the samples from the current block in the memory block"""
-        self.store_idx, self.store_counter = store_sample_helper(self.samples_store, self.logLs_store, self.samples, self.logLs,
-                                                                 self.store_idx, self.store_counter, self.n_record, self.block_size, self.store_thin, 1)
+        self.store_idx, self.store_counter = store_sample_helper(
+            self.samples_store,
+            self.logLs_store,
+            self.samples,
+            self.logLs,
+            self.store_idx,
+            self.store_counter,
+            self.n_record,
+            self.block_size,
+            self.store_thin,
+            1,
+        )
 
     def reset_block(self):
         """blank all but the first sample"""
@@ -119,7 +146,8 @@ class PTMCMCChain():
         self.chain_track[1:, :] = 0
 
     def loop_block(self):
-        """loop the final values of the previous block back to the next block's starting parameters"""
+        """loop the final values of the previous block back to
+        the next block's starting parameters"""
         self.samples[0, :, :] = self.samples[self.block_size, :, :]
         self.logLs[0, :] = self.logLs[self.block_size, :]
         self.chain_track[0, :] = self.chain_track[self.block_size, :]
@@ -130,10 +158,19 @@ class PTMCMCChain():
 
     def block_main(self):
         """the main body of the block with the mcmc step"""
-        advance_block_ptmcmc(self.T_ladder, self.logLs, self.samples, self.chain_track, self.proposal_manager, self.like_obj, self.tracker_manager)
+        advance_block_ptmcmc(
+            self.T_ladder,
+            self.logLs,
+            self.samples,
+            self.chain_track,
+            self.proposal_manager,
+            self.like_obj,
+            self.tracker_manager,
+        )
 
     def block_end(self):
-        """things to execute after the main mcmc body of the block, like clean up recalculating fisher matrices, and storing results
+        """things to execute after the main mcmc body of the block,
+        like clean up recalculating fisher matrices, and storing results
         as well as perhaps non-legal burn in steps"""
         self.store_samples()
         self.proposal_manager.post_block_update(self.itrn, self.block_size, self.samples, self.logLs)
@@ -182,13 +219,24 @@ class PTMCMCChain():
 
 
 @njit()
-def store_sample_helper(samples_store, logLs_store, samples_block, logLs_block, store_idx_in, store_counter_in, n_record, block_size, store_thin, read_offset):
+def store_sample_helper(
+    samples_store,
+    logLs_store,
+    samples_block,
+    logLs_block,
+    store_idx_in,
+    store_counter_in,
+    n_record,
+    block_size,
+    store_thin,
+    read_offset):
     """write the samples from n_record chains to be stored using store_thin thinning,
-    store_idx and store_counter are counters for the index to write into and the thinning respectively
-    read offset needs to be zero for first write and 1 otherwise to prevent duplicate writes due to wrapping"""
+    store_idx and store_counter are counters for the index to write into and
+    the thinning respectively read offset needs to be zero for first write
+    and 1 otherwise to prevent duplicate writes due to wrapping"""
     store_idx = store_idx_in
     store_counter = store_counter_in
-    for itrk in range(read_offset, block_size+read_offset):
+    for itrk in range(read_offset, block_size + read_offset):
         if store_counter == 0:
             # write the sample if the thinning counter is 0
             samples_store[store_idx, :n_record, :] = samples_block[itrk, :n_record, :]
@@ -206,25 +254,46 @@ def store_sample_helper(samples_store, logLs_store, samples_block, logLs_block, 
     return store_idx, store_counter
 
 
-def advance_block_ptmcmc(T_ladder, logLs, samples, chain_track, proposal_manager, like_obj, tracker_manager):
+def advance_block_ptmcmc(
+    T_ladder, logLs, samples, chain_track, proposal_manager, like_obj, tracker_manager
+):
     """advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
     block_size = samples.shape[0]-1
 
     for itrb in range(1, block_size+1):
         if proposal_manager.exchange_manager.is_exchange_step(itrb):
             # if the index requests an exchange, do that
-            proposal_manager.exchange_manager.do_ptmcmc_exchange(itrb, samples, logLs, T_ladder, tracker_manager.exchange_tracker, chain_track)
+            proposal_manager.exchange_manager.do_ptmcmc_exchange(
+                itrb,
+                samples,
+                logLs,
+                T_ladder,
+                tracker_manager.exchange_tracker,
+                chain_track,
+            )
         else:
             # if the index is a normal jump
-            advance_step_ptmcmc(itrb, samples, logLs, T_ladder, tracker_manager.accept_record, proposal_manager, like_obj)
-            chain_track[itrb, :] = chain_track[itrb-1, :]         # track the indexes of the chains, which only change on exchange steps
+            advance_step_ptmcmc(
+                itrb,
+                samples,
+                logLs,
+                T_ladder,
+                tracker_manager.accept_record,
+                proposal_manager,
+                like_obj,
+            )
+            # track the indexes of the chains, which only change on exchange steps
+            chain_track[itrb, :] = chain_track[itrb-1, :]
 
-        proposal_manager.post_step_update(samples[itrb])        # record differential evolution buffer
+        # record the differential evolution buffer
+        proposal_manager.post_step_update(samples[itrb])
 
     return samples
 
 
-def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
+def advance_step_ptmcmc(
+    itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj
+):
     """advance a single step step in the ptmcmc chain"""
     n_chain = T_ladder.n_chain
     betas = T_ladder.betas
@@ -234,16 +303,21 @@ def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_
 
         if success:
             # skip likelihood evaluation if proposal is marked as a failure
-            new_point = like_obj.correct_bounds(new_point)   # make sure the point is legal if possible
-            success = like_obj.check_bounds(new_point)       # check that the point was correctly made legal
+            # try to make the point legal and fail if unsuccesful
+            new_point = like_obj.correct_bounds(new_point)
+            success = like_obj.check_bounds(new_point)
 
         if success:
             # if the point passes, get the likelihood
-            logL_new = like_obj.get_loglike(new_point)       # get the likelihood
+            logL_new = like_obj.get_loglike(new_point)
         else:
-            logL_new = -np.inf                               # if the point failed, just set the likelihood to negative infinity so it won't be accepted
+            # Failed, ensure the point will not be accepted
+            logL_new = -np.inf
 
-        test = np.log(np.random.uniform(0., 1.))             # get the test draw to determine if we accept the point
+        # draw to determine if we will accept
+        test = np.log(np.random.uniform(0., 1.))
+
+        # process acceptance or rejection
         if betas[itrt]*(logL_new-logLs[itrb-1, itrt])+density_fac > test:
             # the draw was accepted, assign its parameters
             samples[itrb, itrt] = new_point

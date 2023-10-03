@@ -5,17 +5,14 @@ import numpy as np
 from DTMCMC.lapack_wrappers import solve_triangular
 from DTMCMC.jump_manager import JumpManager
 
-# define unique codes for each jump type
-FISHER_FULL = 110
-SIGMA_FULL = 120
-SIGMA_RANDOM_SUBSPACE = 121
-
-FISHER_JUMPS = np.array([FISHER_FULL, SIGMA_FULL, SIGMA_RANDOM_SUBSPACE])
-
 # dictionary of display names for the jumps
-JUMP_LABELS = {FISHER_FULL: 'fisher full', SIGMA_FULL: 'std full', SIGMA_RANDOM_SUBSPACE: 'std subspace'}
-JUMP_LABELS_ARRAY = np.array([JUMP_LABELS[code] for code in FISHER_JUMPS])
+JUMP_LABELS_DICT = {
+    'FISHER_FULL': 'fisher full',
+    'SIGMA_FULL': 'std full',
+    'SIGMA_RANDOM_SUBSPACE': 'std subspace',
+}
 
+JUMP_NAMES = ['FISHER_FULL', 'SIGMA_FULL', 'SIGMA_RANDOM_SUBSPACE']
 
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
@@ -23,37 +20,23 @@ class FisherJumpManager(JumpManager):
     def __init__(self, T_ladder, like_obj, sample_set, config):
         """create the object"""
 
-        self.n_chain = T_ladder.n_chain
-        self.n_par = sample_set.shape[1]
+        self.betas = T_ladder.betas
 
-        self.T_ladder = T_ladder
         self.strategy_params = FisherStrategyParameters(config)
         self.sample_set = sample_set
-        self.betas = T_ladder.betas
-        self.like_obj = like_obj
+
+        JumpManager.__init__(self, T_ladder, like_obj, JUMP_NAMES, JUMP_LABELS_DICT)
 
         self.reset_fishers_from_point(self.sample_set)
 
-        self.n_jump_types = FISHER_JUMPS.size
-        self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-        self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
-        self.jumps_need = FISHER_JUMPS.copy()
-        self.jump_labels_array = JUMP_LABELS_ARRAY.copy()
 
-        # map the codes that exist to indices in jumps_need
-        self.code_to_idx = np.zeros(self.jumps_need.max()+1, dtype=np.int64)-1
-        for idx, code in enumerate(self.jumps_need):
-            self.code_to_idx[code] = idx
-
-        self.set_jump_weights()
-
-    def dispatch_jump(self, sample_point, itrt, choose_code):
-        """dispatch a fisher matrix jump based on the code selected"""
-        if choose_code == FISHER_FULL:
+    def dispatch_jump(self, sample_point, itrt, choose):
+        """dispatch a fisher matrix jump based on the idx selected"""
+        if choose == 0:
             return self.apply_fisher_full(sample_point, itrt)
-        elif choose_code == SIGMA_FULL:
+        elif choose == 1:
             return self.apply_sigma_full(sample_point, itrt, do_subspace=False)
-        elif choose_code == SIGMA_RANDOM_SUBSPACE:
+        elif choose == 2:
             return self.apply_sigma_full(sample_point, itrt, do_subspace=True)
         else:
             assert False
@@ -68,50 +51,31 @@ class FisherJumpManager(JumpManager):
         cold_weight = self.strategy_params.cold_fisher_weight
         hot_weight = self.strategy_params.hot_fisher_weight
 
-        subspace_weight = 1.-self.strategy_params.fisher_subspace_override_frac
-        full_weight = self.strategy_params.fisher_subspace_override_frac
+        subspace_weight = 1.-self.strategy_params.fisher_full_d_frac
+        full_weight = self.strategy_params.fisher_full_d_frac
+
+        name_map = self.name_to_idx
 
         if self.strategy_params.use_chol_fishers:
-            jump_weights[:n_cold, self.code_to_idx[SIGMA_FULL]] = 0.
-            jump_weights[:n_cold, self.code_to_idx[SIGMA_RANDOM_SUBSPACE]] = 0.
-            jump_weights[:n_cold, self.code_to_idx[FISHER_FULL]] = cold_weight
+            jump_weights[:n_cold, name_map['SIGMA_FULL']] = 0.
+            jump_weights[:n_cold, name_map['SIGMA_RANDOM_SUBSPACE']] = 0.
+            jump_weights[:n_cold, name_map['FISHER_FULL']] = cold_weight
         else:
-            jump_weights[:n_cold, self.code_to_idx[SIGMA_FULL]] = cold_weight*full_weight
-            jump_weights[:n_cold, self.code_to_idx[SIGMA_RANDOM_SUBSPACE]] = cold_weight*subspace_weight
-            jump_weights[:n_cold, self.code_to_idx[FISHER_FULL]] = 0.
+            jump_weights[:n_cold, name_map['SIGMA_FULL']] = cold_weight*full_weight
+            jump_weights[:n_cold, name_map['SIGMA_RANDOM_SUBSPACE']] = cold_weight*subspace_weight
+            jump_weights[:n_cold, name_map['FISHER_FULL']] = 0.
 
         if self.strategy_params.use_chol_fishers:
-            jump_weights[n_cold:, self.code_to_idx[FISHER_FULL]] = hot_weight
-            jump_weights[n_cold:, self.code_to_idx[SIGMA_FULL]] = 0.
-            jump_weights[n_cold:, self.code_to_idx[SIGMA_RANDOM_SUBSPACE]] = 0.
+            jump_weights[n_cold:, name_map['FISHER_FULL']] = hot_weight
+            jump_weights[n_cold:, name_map['SIGMA_FULL']] = 0.
+            jump_weights[n_cold:, name_map['SIGMA_RANDOM_SUBSPACE']] = 0.
         else:
-            jump_weights[n_cold:, self.code_to_idx[FISHER_FULL]] = 0.
-            jump_weights[n_cold:, self.code_to_idx[SIGMA_FULL]] = hot_weight*full_weight
-            jump_weights[n_cold:, self.code_to_idx[SIGMA_RANDOM_SUBSPACE]] = hot_weight*subspace_weight
+            jump_weights[n_cold:, name_map['FISHER_FULL']] = 0.
+            jump_weights[n_cold:, name_map['SIGMA_FULL']] = hot_weight*full_weight
+            jump_weights[n_cold:, name_map['SIGMA_RANDOM_SUBSPACE']] = hot_weight*subspace_weight
 
         self.jump_weights = jump_weights
-        # get the normalized conditional jump probabilities
-        self.jump_probs = (self.jump_weights.T/self.jump_weights.sum(axis=1)).T  
-        self.jump_probs[~np.isfinite(self.jump_probs)]=0.
-
-        assert np.all(self.jump_weights>=0.)
-
-    def get_jump_weights(self):
-        """get the desired weights of this jump type as a function of temperature"""
-        return self.jump_weights
-
-    def get_jump_codes(self):
-        """return the internal codes the manager object uses to index its respective jump types"""
-        return FISHER_JUMPS.copy()
-
-    def get_jump_labels(self):
-        """get text labels for the different jump types"""
-        return self.jump_labels_array.copy()
-
-    def post_step_update(self, samples):
-        """do any needed internal processing after an individual step of all temperatures;
-        mainly intended to be used to write to differential evolution buffer"""
-        return
+        assert np.all(self.jump_weights >= 0.)
 
     def post_block_update(self, itrn, block_size, samples, logLs):
         """do any needed internal processing after an individual block of size block_size:
@@ -121,7 +85,11 @@ class FisherJumpManager(JumpManager):
     def apply_fisher_full(self, sample_point, itrt):
         """apply a fisher matrix jump"""
         n_par = sample_point.size
-        new_point = sample_point+solve_triangular(self.chol_fishers[itrt], self.gamma_mults[itrt]*np.random.normal(0., 1., n_par), trans_a=True)
+        new_point = sample_point + solve_triangular(
+            self.chol_fishers[itrt],
+            self.gamma_mults[itrt]*np.random.normal(0., 1., n_par),
+            trans_a=True
+        )
         return new_point, 0., True
 
     def apply_sigma_full(self, sample_point, itrt, do_subspace=False):
@@ -133,7 +101,10 @@ class FisherJumpManager(JumpManager):
             # ensure at least one random direction is protected so we aren't making null proposals
             safe_itrp = np.random.randint(n_par)
             for itrp in range(0, n_par):
-                if np.random.uniform(0., 1.,) > self.strategy_params.fisher_subspace_frac and itrp != safe_itrp:
+                if (
+                    np.random.uniform(0., 1.,) > self.strategy_params.fisher_subspace_frac
+                    and itrp != safe_itrp
+                ):
                     mult[itrp] = 0.
                     count -= 1
             assert count > 0
@@ -143,7 +114,9 @@ class FisherJumpManager(JumpManager):
 
     def reset_fishers_from_point(self, sample_set):
         """set the fisher matrix object at the specified point"""
-        self.sigma_diags, self.fishers, self.chol_fishers = set_fishers(sample_set, self.strategy_params, self.n_chain, self.like_obj)
+        self.sigma_diags, self.fishers, self.chol_fishers = set_fishers(
+            sample_set, self.strategy_params, self.n_chain, self.like_obj
+        )
         self.sigma_scales, self.gamma_mults = set_scales(self.n_par, self.T_ladder, self.sigma_diags)
 
     def reset_fishers(self, itrn, block_size, samples, logLs):
@@ -152,12 +125,14 @@ class FisherJumpManager(JumpManager):
             samples_fisher = np.zeros((self.n_chain, self.n_par))
             print("fisher update", itrn)
             for itrt in range(self.n_chain):
-                # TODO fishers should not all be the same, but try making them so for now because of fisher calculation instability
-                samples_fisher[itrt] = samples[np.unravel_index(np.argmax(logLs[:, :]), logLs.shape)]
-                # samples_fisher[itrt] = samples[np.random.randint(0,self.block_size+1),np.random.randint(0,self.n_cold),:]
+                # TODO fishers should not all be the same,
+                # but try making them so for now because of fisher calculation instability
+                index_select = np.unravel_index(np.argmax(logLs[:, :]), logLs.shape)
+                # index_select = (np.random.randint(0,self.block_size+1),np.random.randint(0,self.n_cold))
+                samples_fisher[itrt] = samples[index_select]
             self.reset_fishers_from_point(samples_fisher)
 
-    def record_config(self,config_in):
+    def record_config(self, config_in):
         """record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
@@ -244,7 +219,11 @@ def set_fishers(sample_set, strategy_params, n_chain, like_obj):
                     fishers[itrt, itrp2, itrp1] = fishers[itrt, itrp1, itrp2]
 
             det_fisher = np.linalg.det(fishers[itrt])
-            if not np.isfinite(det_fisher) or det_fisher <= 0. or np.any(np.linalg.eigh(fishers[itrt])[0] <= 0.):
+            if (
+                not np.isfinite(det_fisher) or
+                det_fisher <= 0. or
+                np.any(np.linalg.eigh(fishers[itrt])[0] <= 0.)
+            ):
                 for itrp1 in range(n_par):
                     for itrp2 in range(itrp1+1, n_par):
                         fishers[itrt, itrp1, itrp2] = 0.
@@ -263,7 +242,8 @@ def set_scales(n_par, T_ladder, sigma_diags):
     gamma_mults = np.zeros(n_chain)
 
     if np.any((betas > 0.) & (np.isfinite(betas))):
-        small_default = np.min(betas[betas > 0.])  # use the smallest postive beta if beta is 0 or non-finite for scaling
+        # use the smallest postive beta if beta is 0 or non-finite for scaling
+        small_default = np.min(betas[betas > 0.])
     else:
         small_default = 1.
 
@@ -279,47 +259,48 @@ def set_scales(n_par, T_ladder, sigma_diags):
             sigma_scales[itrj, itrp] = 2.38*(sigma_diags[itrj, itrp]/np.sqrt(beta_loc)/np.sqrt(n_par))
     return sigma_scales, gamma_mults
 
-class FisherStrategyParameters():
-    """container to store some parameters related to the strategy of fisher matrix proposal generation"""
 
-    def __init__(self,config):
-#                 use_chol_fishers=False,            # whether to do fisher jumps using the cholesky decomposition
-#                 cold_fisher_weight=0.333,          # how often to do fisher draws in the cold chains
-#                 hot_fisher_weight=0.333,           # how often to do fisher draws in the hottest finite temperature chain
-#                 fisher_subspace_frac=1.,           # what fraction of dimensions to include in fisher subspace jumps
-#                 fisher_subspace_override_frac=1.,  # how often to not do subspace jumps when doing a fisher jump
-#                 fisher_downsample=1,               # how many blocks to skip between fisher matrix updates
-#                 sigma_default=0.25,                # default sigma for fisher matrix jumps
-#                 max_fisher_el=np.inf):              # maximum element of fisher matrix
+class FisherStrategyParameters():
+    """container to store some parameters related to the strategy of
+    fisher matrix proposal generation"""
+
+    def __init__(self, config):
         """initialize the object with the prescribed parameters"""
         self.config = config
 
-        self.use_chol_fishers = config['FisherJumpManager'].getboolean('use_chol_fishers',False)
-        self.cold_fisher_weight = config['FisherJumpManager'].getfloat('cold_fisher_weight',0.333)
-        self.hot_fisher_weight = config['FisherJumpManager'].getfloat('hot_fisher_weight',0.333)
-        self.fisher_subspace_frac = config['FisherJumpManager'].getfloat('fisher_subspace_frac',1.)
-        self.fisher_subspace_override_frac = config['FisherJumpManager'].getfloat('fisher_subspace_override_frac',1.)
-        self.fisher_downsample = config['FisherJumpManager'].getint('fisher_downsample',1)
-        self.sigma_default = config['FisherJumpManager'].getfloat('sigma_default',100.)
-        self.max_fisher_el = config['FisherJumpManager'].getfloat('max_fisher_el',np.inf)
+        config_f = self.config['FisherJumpManager']
 
-
+        # whether to do fisher jumps using the cholesky decomposition
+        self.use_chol_fishers = config_f.getboolean('use_chol_fishers', False)
+        # how often to do fisher draws in the cold chains
+        self.cold_fisher_weight = config_f.getfloat('cold_fisher_weight', 0.333)
+        # how often to do fisher draws in the hottest finite temperature chain
+        self.hot_fisher_weight = config_f.getfloat('hot_fisher_weight', 0.333)
+        # what fraction of dimensions to include in fisher subspace jumps
+        self.fisher_subspace_frac = config_f.getfloat('fisher_subspace_frac', 1.)
+        # how often to not do subspace jumps when doing a fisher jump
+        self.fisher_full_d_frac = config_f.getfloat('fisher_full_d_frac', 1.)
+        # how many blocks to skip between fisher matrix updates
+        self.fisher_downsample = config_f.getint('fisher_downsample', 1)
+        # default sigma for fisher matrix jumps
+        self.sigma_default = config_f.getfloat('sigma_default', 100.)
+        # maximum element of fisher matrix
+        self.max_fisher_el = config_f.getfloat('max_fisher_el', np.inf)
 
     def copy(self):
         """copy the object"""
         return FisherStrategyParameters(self.config)
 
-    def record_config(self,config_in):
-        """record the current configuration to the requested configuration object 
+    def record_config(self, config_in):
+        """record the current configuration to the requested configuration object
             inputs:
                 config_in: ConfigParser object"""
-        config_in['FisherJumpManager']['use_chol_fishers'] = str(self.use_chol_fishers)
-        config_in['FisherJumpManager']['cold_fisher_weight'] = str(self.cold_fisher_weight)
-        config_in['FisherJumpManager']['hot_fisher_weight'] = str(self.hot_fisher_weight)
-        config_in['FisherJumpManager']['fisher_subspace_frac'] = str(self.fisher_subspace_frac)
-        config_in['FisherJumpManager']['fisher_subspace_override_frac'] = str(self.fisher_subspace_override_frac)
-        config_in['FisherJumpManager']['fisher_downsample'] = str(self.fisher_downsample)
-        config_in['FisherJumpManager']['sigma_default'] = str(self.sigma_default)
-        config_in['FisherJumpManager']['max_fisher_el'] = str(self.max_fisher_el)
-
-
+        config_f = config_in['FisherJumpManager']
+        config_f['use_chol_fishers'] = str(self.use_chol_fishers)
+        config_f['cold_fisher_weight'] = str(self.cold_fisher_weight)
+        config_f['hot_fisher_weight'] = str(self.hot_fisher_weight)
+        config_f['fisher_subspace_frac'] = str(self.fisher_subspace_frac)
+        config_f['fisher_full_d_frac'] = str(self.fisher_full_d_frac)
+        config_f['fisher_downsample'] = str(self.fisher_downsample)
+        config_f['sigma_default'] = str(self.sigma_default)
+        config_f['max_fisher_el'] = str(self.max_fisher_el)

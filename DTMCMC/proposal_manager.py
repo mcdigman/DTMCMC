@@ -8,7 +8,7 @@ import DTMCMC.prior_manager as ph
 class ProposalManager(JumpManager):
     """manage generation of proposals, handles all dispatching of jumps"""
 
-    def __init__(self, T_ladder, managers, exchange_manager, config):
+    def __init__(self, T_ladder, like_obj, managers, exchange_manager, config):
         """create the core proposal manager object, subclass of DTMCMC.jump_manager.JumpManager
             inputs:
                 T_ladder: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
@@ -22,7 +22,7 @@ class ProposalManager(JumpManager):
 
         self.only_prior_hot = config['ProposalManager'].getboolean('only_prior_hot',True)
 
-        self.T_ladder = T_ladder
+        #self.T_ladder = T_ladder
 
         self.managers = managers
         self.n_managers = len(self.managers)
@@ -35,62 +35,61 @@ class ProposalManager(JumpManager):
         for itrm, manager in enumerate(self.managers):
             jumps_need_loc = manager.get_jump_codes()
             jump_labels_loc = manager.get_jump_labels()
-            self.n_jumps_managers[itrm] = jumps_need_loc.size
+            self.n_jumps_managers[itrm] = len(jumps_need_loc)
             jumps_need_temp.append(jumps_need_loc)
             jump_labels_temp.append(jump_labels_loc)
 
         self.jumps_need = np.hstack(jumps_need_temp)
         self.jump_labels_array = np.hstack(jump_labels_temp)
-        self.n_jump_types = self.jumps_need.size
-        
-        self.choose_idx_modifiers = np.cumsum(self.n_jumps_managers)
+        self.n_jump_types = np.sum(self.n_jumps_managers)
+
+        self.jump_labels_dict = {}
+        for itrp in range(self.jumps_need.size):
+            self.jump_labels_dict[self.jumps_need[itrp]] = self.jump_labels_array[itrp]
+
+
+        self.choose_idx_modifiers = np.zeros(self.n_managers,dtype=np.int64)
+        if self.n_managers>1:
+            # If there is more than one manager we will need to adjust the jump indexes when dispatching
+            for itrm in range(1,self.n_managers):
+                self.choose_idx_modifiers[itrm:] += self.n_jumps_managers[itrm-1]
 
         print(self.jumps_need)
         print(self.choose_idx_modifiers)
 
-        # map the codes that exist to indices in jumps_need
-        self.code_to_idx = np.zeros(self.jumps_need.max()+1, dtype=np.int64)-1
-        for idx, code in enumerate(self.jumps_need):
-            self.code_to_idx[code] = idx
+        #self.n_chain = self.T_ladder.n_chain
 
-        self.n_chain = self.T_ladder.n_chain
+        #self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
+        #self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
 
-        self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-        self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
+        #self.set_jump_weights()
 
-        self.set_jump_weights()
+        JumpManager.__init__(self, T_ladder, like_obj, self.jumps_need, self.jump_labels_dict)
 
-    def dispatch_jump(self, sample_point, itrt, choose_code=-1):
+    def dispatch_jump(self, sample_point, itrt, choose=-1):
         """generate a proposal"""
 
-        # choose the jump
-        choose_val = np.random.uniform(0., 1)
-        choose_sum = self.jump_probs[itrt][0]
-        choose = self.jump_probs[itrt].size-1
-        for itrp in range(1, self.jump_probs[itrt].size):
-            if choose_val < choose_sum:
-                choose = itrp-1
-                break
-            else:
-                choose_sum += self.jump_probs[itrt][itrp]
-
-        # default in case fail to find
-        #new_point = sample_point.copy()
-        #density_fac = 0.
-        #success = False
+        if choose == -1:
+            # choose the jump
+            choose_val = np.random.uniform(0., 1)
+            choose_sum = self.jump_probs[itrt][0]
+            choose = self.jump_probs[itrt].size-1
+            for itrp in range(1, self.jump_probs[itrt].size):
+                if choose_val < choose_sum:
+                    choose = itrp-1
+                    break
+                else:
+                    choose_sum += self.jump_probs[itrt][itrp]
 
         found = False
-
-        # figure out which jump we chose and dispatch it
-        if choose_code == -1:
-            choose_code = self.jumps_need[choose]
 
         itrj1 = 0
         for itrm in range(self.n_managers):
             itrj2 = itrj1+self.n_jumps_managers[itrm]
             if itrj1 <= choose < itrj2:
                 # found the correct manager, dispatch the jump
-                new_point, density_fac, success = self.managers[itrm].dispatch_jump(sample_point, itrt, choose_code)
+                choose_loc = choose-self.choose_idx_modifiers[itrm]
+                new_point, density_fac, success = self.managers[itrm].dispatch_jump(sample_point, itrt, choose_loc)
                 found = True
                 break
             itrj1 = itrj2
@@ -113,26 +112,22 @@ class ProposalManager(JumpManager):
             itrj2 = itrj1+self.n_jumps_managers[itrm]
             jump_weights[:, itrj1:itrj2] = self.managers[itrm].get_jump_weights()
             if self.only_prior_hot and not isinstance(self.managers[itrm], ph.PriorManager):
-                # override specified weights and only allow prior-type draws to contribute to the last chain
-                # TODO make this an option
+                # override and only allow prior-type draws to contribute to the last chain
                 jump_weights[n_chain-1, itrj1:itrj2] = 0.
             itrj1 = itrj2
 
-        jump_probs = (jump_weights.T/jump_weights.sum(axis=1)).T
-        jump_probs[~np.isfinite(jump_probs)] = 0.
-
         self.jump_weights = jump_weights
-        self.jump_probs = jump_probs
-
         assert np.all(self.jump_weights >= 0.)
 
-    def get_jump_codes(self):
-        """return the internal codes the manager object uses to index its respective jump types"""
-        return self.jumps_need.copy()
-
-    def get_jump_labels(self):
-        """get text labels for the different jump types"""
-        return self.jump_labels_array.copy()
+    def set_jump_probs(self):
+        """set the normalized probabilities of the jump subtypes
+        as a function of temperature, relying on set_jump_weights.
+        The overall manager cannot have any rows with 0 total probability,
+        so assert that """
+        super().set_jump_probs()
+        # individual proposals can have temps where they do not suggest proposals
+        # but the overarching proposal manager must make proposals for all temps 
+        assert np.all(np.sum(self.jump_probs,axis=1)==1.)
 
     def post_step_update(self, samples):
         """do any needed internal processing after an individual step of all temperatures;

@@ -7,11 +7,11 @@ import DTMCMC.temperature_ladder_helpers as th
 
 def print_diagnostic_commentary(mcc):
     print('==========Descriptive Summary===========')
-    print('Sampler has %5d chains, of which %5d are cold'%(mcc.n_chain,mcc.n_cold)) 
+    print('Sampler has %5d chains, of which %5d are cold'%(mcc.n_chain,mcc.n_cold))
     print('Sampler reports having run for %10d iterations'%(mcc.itrn))
     print('Temperature ladder is of type ',type(mcc.T_ladder))
     print('Likelihood has %5d dimensions and is of type '%(mcc.n_par),type(mcc.like_obj))
-    
+
 
     print('==========Qualitative Comments==========')
 
@@ -27,25 +27,25 @@ def print_diagnostic_commentary(mcc):
 
     # The maximum likelihood currently available indicates how search is going
     print('Maximum likelihood stored=%+.9e'%(max_logL_found))
-    
+
     # If the cold chain is not near the maximum at end, that may be suspicious
     off_max = logL_means[:,0:mcc.n_cold] < max_logL_found-mcc.n_par-5*np.sqrt(logL_vars[:,0:mcc.n_cold])
     if np.any(off_max[-1]):
         print('Cold chains may be off maximum at end')
-        print('Note: if cold chain is substantially off-maximum, it may be a sign of drifting') 
+        print('Note: if cold chain is substantially off-maximum, it may be a sign of drifting')
 
 
     print('Cold chains have %6d potentially off max blocks out of %6d total'%(np.sum(off_max),off_max.size))
     if np.sum(off_max)>off_max.size//2:
         print('Note: if many blocks are off maximum, it may be a sign of drifting or non-convergence')
 
-    # may indicate limit on earliest time burned in 
+    # may indicate limit on earliest time burned in
     if np.any(off_max):
-        print('Last potentially off max block in cold chain is at block %6d'%(np.argmax(off_max,axis=1))) 
+        print('Last potentially off max block in cold chain is at block %6d'%(np.argmax(off_max,axis=1)))
         if np.argmax(off_max,axis=1)>off_max.shape[0]//2:
             print('Note: if off max blocks continue very late in evolution, it may be a sign of inadequate burn in')
 
-    #TODO improve variance and burn in estimates 
+    #TODO improve variance and burn in estimates
 
     df_predict = np.var(-2*mcc.logLs_store*mcc.betas,axis=0)/2
     df_mean = np.mean(df_predict[0:mcc.n_cold])
@@ -53,7 +53,7 @@ def print_diagnostic_commentary(mcc):
     print('Cold likelihood distribution estimate %8.5f effective dimensions (best fit: %8.5f): %5d expected if all dimensions are gaussian'%(df_mean,df_res,mcc.n_par))
 
     print('Effective dimension hottest two chains: %8.5f %8.5f'%(df_predict[-2],df_predict[-1]))
-    
+
     # Look for potential disconnections based on direct log-likelihood diagnostics
     print('=========Mean likelihood analysis==========')
 
@@ -76,7 +76,7 @@ def print_diagnostic_commentary(mcc):
         print('Note: disconnects can indicate that the sampler is inefficient')
 
 
-    print('Searching for imbalances between pairs of adjacent chains') 
+    print('Searching for imbalances between pairs of adjacent chains')
 
     imbalance = np.zeros(mcc.n_chain,dtype=np.bool_)
     for itrt in range(1,mcc.n_chain-1):
@@ -102,7 +102,7 @@ def print_diagnostic_commentary(mcc):
         print('Nearest neighbor exchange rate looks inhomogeneous, with %5d chains showing discrepant exchange rates'%(np.sum(exchange_variance)))
         print('Note: inhomeogenous nearest-neighbor exchange rates can be a sign of sub-optimal chain spacing or disconnects')
     else:
-        print('Nearest neighbor exchange rate looks fairly homogeneous') 
+        print('Nearest neighbor exchange rate looks fairly homogeneous')
 
     low_exchange = nn_exchanges<0.1
     if np.any(low_exchange):
