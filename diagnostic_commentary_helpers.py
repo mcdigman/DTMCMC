@@ -41,15 +41,15 @@ def print_diagnostic_commentary(mcc):
 
     # may indicate limit on earliest time burned in
     if np.any(off_max):
-        print('Last potentially off max block in cold chain is at block %6d'%(np.argmax(off_max,axis=1)))
-        if np.argmax(off_max,axis=1)>off_max.shape[0]//2:
+        print('Last potentially off max block in cold chain is at block %6d'%(np.max(np.argmax(off_max,axis=1))))
+        if np.max(np.argmax(off_max,axis=1))>off_max.shape[0]//2:
             print('Note: if off max blocks continue very late in evolution, it may be a sign of inadequate burn in')
 
     #TODO improve variance and burn in estimates
 
-    df_predict = np.var(-2*mcc.logLs_store*mcc.betas,axis=0)/2
-    df_mean = np.mean(df_predict[0:mcc.n_cold])
-    df_res,loc_res,scale_res = scipy.stats.chi2.fit(2*max_logL_found-2*mcc.logLs_store[mcc.logLs_store.shape[0]//2:,0:mcc.n_cold],df_mean)
+    df_predict = np.var(-2*mcc.logLs_store[mcc.logLs_store.shape[0]//2:]*mcc.betas,axis=0)/2
+    df_mean = np.var(-2*mcc.logLs_store[mcc.logLs_store.shape[0]//2:,:mcc.n_cold]*mcc.betas[:mcc.n_cold])/2
+    df_res,loc_res,scale_res = scipy.stats.chi2.fit(2*max_logL_found-2*mcc.logLs_store[mcc.logLs_store.shape[0]//2:,0:mcc.n_cold].flatten(),df_mean)
     print('Cold likelihood distribution estimate %8.5f effective dimensions (best fit: %8.5f): %5d expected if all dimensions are gaussian'%(df_mean,df_res,mcc.n_par))
 
     print('Effective dimension hottest two chains: %8.5f %8.5f'%(df_predict[-2],df_predict[-1]))
@@ -92,7 +92,8 @@ def print_diagnostic_commentary(mcc):
         print('Note: imbalances can be a sign of sub-optimal chain spacing')
 
     print('=========Exchange Rate Analysis==========')
-    nn_exchanges = mcc.tracker_manager.get_nn_exchange_rate(0)[0]
+    #TODO could also check left and right exchanges separately
+    nn_exchanges = mcc.tracker_manager.get_exchange_rate_summary(0)[1]
     nn_exchange_var = np.var(nn_exchanges)
     nn_exchange_mean = np.mean(nn_exchanges)
     print('Mean nearest neighbor exchange rate is %.5f'%nn_exchange_mean)
@@ -138,3 +139,5 @@ def print_diagnostic_commentary(mcc):
                 higher_T = np.min(mcc.Ts[mcc.Ts>=maxima_Ts[itrp]])
             print('Possible C=%+.9e phase transition with prominence=%.9e near T=%+.9e'%(maxima_vals[itrp],prominences[itrp],maxima_Ts[itrp]))
             print('Nearest chains: %5d at T=%+.9e and %5d at T=%.9e'%(np.argmax(mcc.Ts==lower_T),lower_T,np.argmax(mcc.Ts==higher_T),higher_T))
+
+    #TODO add a commentary comparing the cycle lengths to the DE buffer

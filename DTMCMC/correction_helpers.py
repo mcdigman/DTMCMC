@@ -3,12 +3,18 @@ helpers for correcting parameters"""
 from numba import njit
 import numpy as np
 
+#TODO check handling of low infinities and equal low and high
 
 @njit()
 def reflect_into_range(x, x_low, x_high):
     """reflect an arbitrary parameter into a nominal range"""
     # ensure always returns something in range (i.e. do an arbitrary number of reflections) similar to reflect_cosines but does not need to track angles
     x_range = x_high-x_low
+
+    # handle the case where the range is a single point
+    if x_range == 0.:
+        return x_low
+
     res = x
     if res < x_low:
         res = x_low+(-(res-x_low)) % (2*x_range)      # 2*x_low - x

@@ -67,7 +67,20 @@ class AbstractLikelihood(ABC):
         otherwise just return zeros"""
         return np.zeros(self.n_par)
 
-#TODO make epsilons a configurable object
+    def get_labels(self):
+        """Get formatted axis labels for corner plots"""
+        labels = []
+        for itrp in range(self.n_par):
+            labels.append(r"$v_"+str(itrp)+"$")
+        return labels
+
+    def format_samples_output(self, samples_store, params_fid):
+        """Purely a convenience function for making corner plots: 
+        if we desire to do any adjustments to input samples to make corner plots
+        look nice, for example converting some dimension the raw parameter 
+        to Delta that parameter, or changing the units, we can do that here"""
+        return samples_store.copy(), params_fid.copy()
+
 
 class RectangularLikelihood(AbstractLikelihood):
     """Handle a likelihood with rectangular bounds
@@ -115,10 +128,12 @@ def prior_draw_rectangular(n_par, low_lims, high_lims):
 
     return draw
 
+
+#TODO handle trivial bounds correctly
 @njit()
 def check_bounds_rectangular(v,low_lims,high_lims):
     """check if a sample is within the prior range"""
     for itrp in range(v.size):
-        if not low_lims[itrp] < v[itrp] < high_lims[itrp]:
+        if not low_lims[itrp] <= v[itrp] <= high_lims[itrp]:
             return False
     return True

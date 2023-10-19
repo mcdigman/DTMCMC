@@ -11,7 +11,7 @@ from DTMCMC.tracker_manager import TrackerManager
 # TODO add any necessary handlers for block length
 
 
-class PTMCMCChain():
+class DTMCMCSampler():
     """object to manage the overall chain evolution"""
 
     def __init__(self, T_ladder_in, like_obj, block_size, store_size,
@@ -70,8 +70,12 @@ class PTMCMCChain():
                 self.n_par,
                 track_full_exchanges,
                 self.proposal_manager.n_jump_types,
+                max(self.store_size//self.block_size,1),
             )
         self.logL_means = []
+        self.logL2_means = []
+        self.logL3_means = []
+        self.logL4_means = []
         self.logL_vars = []
 
     def initialize_iterators(self):
@@ -177,10 +181,17 @@ class PTMCMCChain():
         as well as perhaps non-legal burn in steps"""
         self.store_samples()
         self.proposal_manager.post_block_update(self.itrn, self.block_size, self.samples, self.logLs)
-        self.tracker_manager.process_chain_cycles(self.itrn, self.chain_track)
+        self.tracker_manager.post_block_update(self.itrn, self.chain_track)
         # track the block mean and std of the likelihoods by chain
         self.logL_means.append(self.logLs[1:].mean(axis=0))
         self.logL_vars.append(self.logLs[1:].var(axis=0))
+        # also track some higher powers of the likelihood distribution
+        # storing them directly as powers allows moments to be calculated later
+        # averaging over an arbitrarily long window in a stable way
+
+        self.logL2_means.append((self.logLs[1:]**2).mean(axis=0))
+        self.logL3_means.append((self.logLs[1:]**3).mean(axis=0))
+        self.logL4_means.append((self.logLs[1:]**4).mean(axis=0))
         self.loop_block()
 
     def block_advance_iterators(self):

@@ -379,6 +379,9 @@ def entropy_ladder_fromfile(
     Ts_in = np.load(T_file_in)
     logL_vars_in = np.load(logL_var_file_in)
 
+    #logL_vars_in = logL_vars_in[Ts_in>=1.]
+    #Ts_in = Ts_in[Ts_in>=1.]
+
     assert np.all(logL_vars_in >= 0.)
     assert np.all(Ts_in >= 0.)
     assert Ts_in.size == logL_vars_in.size
