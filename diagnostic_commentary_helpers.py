@@ -141,3 +141,34 @@ def print_diagnostic_commentary(mcc):
             print('Nearest chains: %5d at T=%+.9e and %5d at T=%.9e'%(np.argmax(mcc.Ts==lower_T),lower_T,np.argmax(mcc.Ts==higher_T),higher_T))
 
     #TODO add a commentary comparing the cycle lengths to the DE buffer
+
+
+    print('===========Cycle Analysis=========')
+    n_cycles = mcc.tracker_manager.get_n_cycles()
+    n_cycles_tot = np.sum(n_cycles)
+    if n_cycles_tot > 0:
+        print('The sampler executed %8d total hot->cold->hot temperature cycles'%(n_cycles_tot))
+        print('Cycle-based chain correlation length %.9f '%(mcc.itrn/n_cycles_tot))
+        # expected number of iterations for all chains to complete a cycle per the coupon collector problem
+        memory_length = mcc.itrn/n_cycles_tot*mcc.n_chain*np.sum(1./np.arange(1,mcc.n_chain+1))
+        print('Estimated # iterations to completely forget previous sampler state: %.13f'%(memory_length))
+        if np.min(n_cycles) > 0:
+            memory_length2 = mcc.itrn/n_cycles.min()
+            print('Alternative estimate # iterations to forget previous sampler state: %.13f'%(memory_length2))
+            if memory_length2 > 5.*memory_length or memory_length > 5.*memory_length2:
+                print('Estimates of number of iterations to forget state vary significantly; may indicate poor burn in')
+            if np.min(n_cycles) >= 5:
+                cycle_deviations = (n_cycles-np.mean(n_cycles))/np.std(n_cycles)
+                if np.any(np.abs(cycle_deviations)>3.):
+                    print('Some chains have significantly different numbers of cycles: may indicate poor burn in') 
+            else:
+                print('Some chains have few cycles: running for more iterations would improve estimates of cycle length')
+        else:
+            print('Some chains have no cycles: running for more iterations would improve estimate of cycle length')
+
+        print('Ideally, differential evolution buffer length de_size*de_thin would be longer than number of iterations to forget previous state')
+        print('Number of burn in samples discarded should also ideally be longer than memory length')
+        print('Chain with minimum # of cycles %8d, maximum # cycles %8d mean # cycles %.8f, std # cycles %.8f'%(n_cycles.min(),n_cycles.max(),n_cycles.mean(),np.std(n_cycles)))
+    else:
+        print('Sampler executed no hot->cold->hot cycles, cannot estimate correlation length; consider running for longer, or adjusting parameters')
+        print('Sampler may not be ergodic if full cycles are not possible')

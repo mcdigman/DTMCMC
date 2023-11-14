@@ -18,7 +18,8 @@ class TemperatureLadder():
                 Ts_in: array float, override everything else and replace Ts with
                     this if it is not None"""
 
-        self.Ts = Ts_in
+        # TODO handle mis-ordered Ts robustly
+        self.Ts = np.sort(Ts_in)
         self.betas = Ts_to_betas(self.Ts)
 
         self.n_chain = Ts_in.size

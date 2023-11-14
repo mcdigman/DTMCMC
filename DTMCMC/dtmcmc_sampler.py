@@ -76,6 +76,11 @@ class DTMCMCSampler():
         self.logL2_means = []
         self.logL3_means = []
         self.logL4_means = []
+        self.logL5_means = []
+        self.logL6_means = []
+        self.logL_prod11_means = []
+        self.logL_prod21_means = []
+        self.logL_prod12_means = []
         self.logL_vars = []
 
     def initialize_iterators(self):
@@ -192,6 +197,11 @@ class DTMCMCSampler():
         self.logL2_means.append((self.logLs[1:]**2).mean(axis=0))
         self.logL3_means.append((self.logLs[1:]**3).mean(axis=0))
         self.logL4_means.append((self.logLs[1:]**4).mean(axis=0))
+        self.logL5_means.append((self.logLs[1:]**5).mean(axis=0))
+        self.logL6_means.append((self.logLs[1:]**6).mean(axis=0))
+        self.logL_prod11_means.append((self.logLs[1:,:self.n_chain-1]*self.logLs[1:,1:self.n_chain]).mean(axis=0))
+        self.logL_prod21_means.append((self.logLs[1:,:self.n_chain-1]**2*self.logLs[1:,1:self.n_chain]).mean(axis=0))
+        self.logL_prod12_means.append((self.logLs[1:,:self.n_chain-1]*self.logLs[1:,1:self.n_chain]**2).mean(axis=0))
         self.loop_block()
 
     def block_advance_iterators(self):

@@ -175,6 +175,7 @@ class TrackerManager():
             print("overall exchange rate, no cold exchange rate, no cold nearest neighbor exchange rate", exchange_overall, exchange_overall_no_cold, np.mean(exchange_nn_no_cold))
 
 
+#TODO fix cycle and exchange tracking if not sorted
 @njit()
 def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold):
     """process whether the sampler has undergone any partial cold-hot cycles"""
