@@ -65,7 +65,7 @@ if __name__ == '__main__':
         starting_samples[itrt] = like_obj.prior_draw()
 
     # create the overarching proposal manager object
-    exchange_manager = eh.ExchangeManager(strategy=eh.ALTERNATE_SEQUENTIAL_TARGETS,track_full_exchanges=True)
+    exchange_manager = eh.ExchangeManager(strategy=eh.RANDOM_TARGETS,track_full_exchanges=True)
     proposal_manager = get_default_proposal_manager(T_ladder, like_obj, starting_samples,exchange_manager_loc=exchange_manager)
 
     print('Chain parameters', n_cold, n_chain, n_burnin, block_size, store_size, T_max)
@@ -595,19 +595,37 @@ sys.exit()
 
 
 import integ_box_filt as ibf
+from scipy.interpolate import InterpolatedUnivariateSpline
 
-rs_stack = np.hstack(rs_save)[600000:]
+rs_stack = np.hstack(rs_save)[n_burnin:]
 
-counts,bins,_ = plt.hist(rs_stack,1000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
+counts,bins,_ = plt.hist(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
 
 plt.plot(ibf.rs,ibf.get_density_pred(1.))
+plt.show()
+
+integ_true = cumtrapz(ibf.get_density_pred(1.)[::-1],ibf.rs[::-1],initial=0.)[::-1]+1
+integ_loc = cumtrapz(counts[::-1],bins[::-1][1:],initial=0.)[::-1]+1
+interp_true = InterpolatedUnivariateSpline(ibf.rs,integ_true,k=3,ext=2)(bins[:bins.size-1])
+print(np.max(interp_true-integ_loc),np.min(interp_true-integ_loc))
+
+plt.plot(ibf.rs,integ_true)
+plt.plot(bins[:bins.size-1],integ_loc)
+plt.show()
+
+plt.plot(bins[:bins.size-1],integ_loc-interp_true)
 plt.show()
 
 n_use = rs_stack.size
 
 rs_mean = np.mean(rs_stack)
 autocorr_rs = scipy.signal.correlate(rs_stack-rs_mean,rs_stack-rs_mean, mode='full')
-autocorr_rs_lim = np.hstack([autocorr_rs[n_use-1],autocorr_rs[n_use:2*n_use-2:2]+autocorr_rs[n_use+1:2*n_use-1:2]])
+avg_len = 16
+autocorr_rs_lim = np.hstack([autocorr_rs[n_use-1],autocorr_rs[n_use:2*n_use-avg_len:avg_len]])
+for itrb in range(1,avg_len):
+    autocorr_rs_lim[1:] +=autocorr_rs[n_use+itrb:2*n_use-avg_len+itrb:avg_len]
+
+autocorr_rs_lim[1:] /= avg_len
 
 plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
 plt.show()
