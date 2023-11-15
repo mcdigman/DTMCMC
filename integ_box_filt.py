@@ -4,7 +4,35 @@ from scipy.integrate import cumtrapz
 from scipy.interpolate import InterpolatedUnivariateSpline
 from cake_likelihood import get_loglike
 from moment_helpers import get_cumulants
-from DTMCMC.temperature_ladder_helpers import Ts_to_betas
+from DTMCMC.temperature_ladder_helpers import Ts_to_betas,entropy_spaced_betas,geometric_spaced_betas,betas_to_Ts
+
+def cumulants_from_Ts(Ts):
+    betas = Ts_to_betas(Ts)
+    n_t = betas.size
+    cumulants = np.zeros((6,n_t))
+
+    for itrt in range(n_t):
+        beta = betas[itrt]
+        
+        density_res = get_density_pred(beta)
+
+        logL_powers = np.zeros(6)
+        for itrp in range(logL_powers.size):
+            logL_powers[itrp] = np.trapz(loglikes**(itrp+1)*density_res,rs)
+
+        cumulants[:,itrt] = get_cumulants(logL_powers)
+    return cumulants
+
+def get_density_pred(beta):
+    density0 = np.trapz(density_final*np.exp(beta*(loglikes-loglikes[0])),rs)
+
+    loglikes_correct = beta*(loglikes-loglikes[0])-np.log(density0)
+
+    density1 = np.trapz(density_final*np.exp(loglikes_correct),rs)
+    assert np.isclose(density1,1.,atol=1.e-14,rtol=1.e-12)
+
+    density_res = density_final*np.exp(loglikes_correct)
+    return density_res
 
 n_dim = 5
 
@@ -37,7 +65,6 @@ density_final = integ_stitch.copy()
 assert np.isclose(np.trapz(density_final,rs),(2*10)**5,atol=1.e-14,rtol=1.e-12)
 
 
-import matplotlib.pyplot as plt
 
 loglikes = np.zeros(rs.size) 
 point_loc = np.zeros(n_dim)
@@ -45,61 +72,88 @@ for itrr in range(rs.size):
     point_loc[0] = rs[itrr] 
     loglikes[itrr] = get_loglike(point_loc)
 
-
 loglikes = loglikes
 
-Ts = np.load('Ts_cake_alternate1.npy')
-betas = Ts_to_betas(Ts)
-n_t = betas.size
-cumulants = np.zeros((6,n_t))
 
-for itrt in range(n_t):
-    beta = betas[itrt]
+do_recalc = False
+if do_recalc:
+    import matplotlib.pyplot as plt
+    Ts_in = np.load('Ts_cake_alternate1.npy')
+    betas_in = Ts_to_betas(Ts_in)
+    cumulants = cumulants_from_Ts(Ts_in)
 
-    density0 = np.trapz(density_final*np.exp(beta*(loglikes-loglikes[0])),rs)
+#betas_geo, Ts_geo = geometric_spaced_betas(8192, 0, 1, 1.e-1, 1.e12, use_inf_final=True)
+    betas_geo = np.linspace(1.3,0,8192)
+    Ts_geo = betas_to_Ts(betas_geo)
+#Ts_geo = np.hstack([np.linspace(0.8,1.e5,8191),np.inf])
+#betas_geo = Ts_to_betas(Ts_geo)
+    cumulants_geo = cumulants_from_Ts(Ts_geo)
 
-    loglikes_correct = beta*(loglikes-loglikes[0])-np.log(density0)
+    Ts_log = [Ts_geo]
 
-    density1 = np.trapz(density_final*np.exp(loglikes_correct),rs)
-    assert np.isclose(density1,1.,atol=1.e-14,rtol=1.e-12)
+    Ts_combine = Ts_geo.copy()
+    cumulants_combine = cumulants_geo.copy()
+    betas_combine = Ts_to_betas(Ts_combine)
 
-    logL_powers = np.zeros(6)
-    for itrp in range(logL_powers.size):
-        logL_powers[itrp] = np.trapz(loglikes**(itrp+1)*density_final*np.exp(loglikes_correct),rs)
-
-    cumulants[:,itrt] = get_cumulants(logL_powers)
-
-print(cumulants)
-cumulants_load = np.load('cumulants_cake_sequential1.npy')
-
-plt.plot(cumulants[0]*betas**1)
-plt.plot(cumulants_load[0]*betas**1)
-plt.show()
-
-plt.plot(cumulants[1]*betas**2)
-plt.plot(cumulants_load[1]*betas**2)
-plt.show()
+    for itrb in range(0,3):
+        betas_recalc, Ts_recalc = entropy_spaced_betas(8192,0,Ts_combine,cumulants_combine[1],use_inf_final=True,T_cold=1.,correct_last=True)
+        Ts_log.append(Ts_recalc)
+        cumulants_recalc = cumulants_from_Ts(Ts_recalc)
+        Ts_combine = np.hstack([Ts_recalc,Ts_combine])
+        cumulants_combine = np.hstack([cumulants_recalc,cumulants_combine])
+        Ts_combine, argTs_combine = np.unique(Ts_combine,return_index=True)
+        cumulants_combine = cumulants_combine[:,argTs_combine]
+        betas_combine = Ts_to_betas(Ts_combine)
 
 
-plt.plot(cumulants[2]*betas**3)
-plt.plot(cumulants_load[2]*betas**3)
-plt.show()
+    Ts_combine = np.hstack([Ts_in,Ts_combine])
+    cumulants_combine = np.hstack([cumulants,cumulants_combine])
+    Ts_combine, argTs_combine = np.unique(Ts_combine,return_index=True)
+    cumulants_combine = cumulants_combine[:,argTs_combine]
+    betas_combine = Ts_to_betas(Ts_combine)
 
-plt.plot(cumulants[3]*betas**4)
-plt.plot(cumulants_load[3]*betas**4)
-plt.show()
+    cumulants_load = np.load('cumulants_cake_sequential1.npy')
 
-plt.plot(cumulants[4]*betas**5)
-plt.plot(cumulants_load[4]*betas**5)
-plt.show()
+    for itrb in range(len(Ts_log)):
+        plt.semilogy(Ts_log[itrb])
 
-plt.plot(cumulants[5]*betas**6)
-plt.plot(cumulants_load[5]*betas**6)
-plt.show()
+    plt.show()
 
-entropy1 = np.trapz(cumulants[1]*betas,betas)
-entropy2 = np.trapz(cumulants_load[1]*betas,betas)
-print('entropy res',entropy1,entropy2,entropy2-entropy1,entropy2/entropy1-1.)
+    plt.semilogx(Ts_in,cumulants[0]*betas_in**1)
+    plt.semilogx(Ts_combine,cumulants_combine[0]*betas_combine**1)
+    plt.semilogx(Ts_in,cumulants_load[0]*betas_in**1)
+    plt.show()
+
+    plt.semilogx(Ts_in,cumulants[1]*betas_in**2)
+    plt.semilogx(Ts_combine,cumulants_combine[1]*betas_combine**2)
+    plt.semilogx(Ts_in,cumulants_load[1]*betas_in**2)
+    plt.show()
+
+    plt.semilogx(Ts_in,cumtrapz(cumulants[1][::-1]*betas_in[::-1],betas_in[::-1],initial=0.)[::-1])
+    plt.semilogx(Ts_combine,cumtrapz(cumulants_combine[1][::-1]*betas_combine[::-1],betas_combine[::-1],initial=0.)[::-1])
+    plt.semilogx(Ts_in,cumtrapz(cumulants_load[1][::-1]*betas_in[::-1],betas_in[::-1],initial=0.)[::-1])
+    plt.show()
+
+
+    plt.semilogx(Ts_in,cumulants[2]*betas_in**3)
+    plt.semilogx(Ts_in,cumulants_load[2]*betas_in**3)
+    plt.show()
+
+    plt.semilogx(Ts_in,cumulants[3]*betas_in**4)
+    plt.semilogx(Ts_in,cumulants_load[3]*betas_in**4)
+    plt.show()
+
+    plt.semilogx(Ts_in,cumulants[4]*betas_in**5)
+    plt.semilogx(Ts_in,cumulants_load[4]*betas_in**5)
+    plt.show()
+
+    plt.semilogx(Ts_in,cumulants[5]*betas_in**6)
+    plt.semilogx(Ts_in,cumulants_load[5]*betas_in**6)
+    plt.show()
+
+    entropy1 = np.trapz(cumulants[1]*betas_in,betas_in)
+    entropy2 = np.trapz(cumulants_load[1]*betas_in,betas_in)
+    print('entropy res',entropy1,entropy2,entropy2-entropy1,entropy2/entropy1-1.)
 
 
 
@@ -118,3 +172,33 @@ if do_interpolant_quality_plots:
     plt.plot(integrand_norm[rs<10.][1:]-vals_derive_norm[rs[1:]<10.])
     plt.plot(integ_stitch[rs<10.][1:]-vals_derive_norm[rs[1:]<10.])
     plt.show()
+
+
+do_save = False
+if do_save:
+    cumulants1 = np.load('cumulants_cake_gold1.npy')
+    Ts1 = np.load('Ts_cake_gold1.npy')
+
+    cumulants2 = np.load('cumulants_cake_gold2.npy')
+    Ts2 = np.load('Ts_cake_gold2.npy')
+
+    cumulants3 = np.load('cumulants_cake_gold3.npy')
+    Ts3 = np.load('Ts_cake_gold3.npy')
+
+    cumulants4 = np.load('cumulants_cake_gold4.npy')
+    Ts4 = np.load('Ts_cake_gold4.npy')
+
+    Ts_full = np.hstack([Ts1,Ts2,Ts3,Ts4])
+    cumulants_full = np.hstack([cumulants1,cumulants2,cumulants3,cumulants4])
+    Ts_full, argTs_full = np.unique(Ts_full,return_index=True)
+    cumulants_full = cumulants_full[:,argTs_full]
+    betas_full = Ts_to_betas(Ts_full)
+    betas_full, argbetas_full = np.unique(betas_full,return_index=True)
+    betas_full = betas_full[::-1]
+    argbetas_full = argbetas_full[::-1]
+    Ts_full = Ts_full[argbetas_full]
+    cumulants_full = cumulants_full[:,argbetas_full]
+
+
+    np.save('cumulants_cake_gold.npy',cumulants_full)
+    np.save('Ts_cake_gold.npy',Ts_full)

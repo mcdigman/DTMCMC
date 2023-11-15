@@ -42,7 +42,7 @@ if __name__ == '__main__':
     n_cold = 1                         # number of T=1 chains for parallel tempering
     n_burnin = 5000                    # number of iterations to discard as burn in
     block_size = 10000                  # number of iterations per block when advancing the chain state
-    store_size = 50000                # number of samples to store total
+    store_size = 200000                # number of samples to store total
     N_blocks = store_size//block_size  # number of blocks the sampler must iterate through
     n_par = 5
 
@@ -53,7 +53,7 @@ if __name__ == '__main__':
     # create needed objects
     #T_ladder = GeometricTemperatureLadder(n_chain, n_cold=n_cold, T_max=T_max,T_min=80.,T_cold=80.)  # get the temperature ladder object
     #T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_combo2.npy','vars_cake_combo2.npy',use_inf_final=True,T_cold=1.,correct_last=False)
-    T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_interpolate_cake_alternate1.npy','vars_interpolate_cake_alternate1.npy',use_inf_final=True,T_cold=1.,correct_last=False)
+    T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_gold.npy','vars_cake_gold.npy',use_inf_final=True,T_cold=1.,correct_last=False)
 
     like_obj = trial_likelihood.CakeLikelihood(n_par)
     params_true = like_obj.correct_bounds(params_true)                 # make sure the conventions on the parameters match
@@ -79,10 +79,12 @@ if __name__ == '__main__':
     t_advance_begin = perf_counter()
 
     argT_1 = np.argmax(T_ladder.Ts==T_ladder.T_cold)
+    rs_save = []
 
     # the main loop which actually advances the MCMC state
     for itrb in range(5):
-        mcc.advance_N_blocks(4*N_blocks)
+        mcc.advance_N_blocks(N_blocks)
+        rs_save.append(np.sqrt(np.sum(mcc.samples_store[:,argT_1,:]**2,axis=1))[1:])
     #mcc.advance_N_blocks(N_blocks)
     #mcc.advance_N_blocks(N_blocks)
     #mcc.advance_N_blocks(N_blocks)
@@ -262,8 +264,10 @@ plt.plot(T_ladder.betas[1:],accept_exchange_nn_left[1:])
 plt.plot(T_ladder.betas,accept_exchange_nn)
 plt.show()
 
-Ts_old = np.load('Ts_cake_combo2.npy')
-vars_old = np.load('vars_cake_combo2.npy')
+#Ts_old = np.load('Ts_cake_combo2.npy')
+#vars_old = np.load('vars_cake_combo2.npy')
+Ts_old = np.load('Ts_cake_gold.npy')
+vars_old = np.load('vars_cake_gold.npy')
 plt.loglog(Ts_old,vars_old)
 plt.loglog(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs])
 plt.show()
@@ -345,38 +349,49 @@ plt.show()
 import sys
 sys.exit()
 
+cumulants_gold = np.load('cumulants_cake_gold.npy')
+Ts_gold = np.load('Ts_cake_gold.npy')
+betas_gold = th.Ts_to_betas(Ts_gold) 
+
 cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_means(mcc,len(mcc.logL_means)-block_burnin,cut=block_burnin)))[:,0]
 
-plt.plot((cumtrapz(cumulants[1],mcc.betas,initial=0.)+cumulants[0][0])*mcc.betas**1)
-plt.plot(cumulants[0]*mcc.betas**1)
+#plt.semilogx(mcc.Ts,(cumtrapz(cumulants[1],mcc.betas,initial=0.)+cumulants[0][0])*mcc.betas**1)
+plt.semilogx(mcc.Ts,cumulants[0]*mcc.betas**1)
+plt.semilogx(Ts_gold,cumulants_gold[0]*betas_gold**1)
 plt.show()
 
-plt.plot(np.gradient(cumulants[0],mcc.betas)*mcc.betas**2)
-plt.plot((cumtrapz(cumulants[2],mcc.betas,initial=0.)+cumulants[1][0])*mcc.betas**2)
-plt.plot(cumulants[1]*mcc.betas**2)
+#plt.semilogx(mcc.Ts,np.gradient(cumulants[0],mcc.betas)*mcc.betas**2)
+#plt.semilogx(mcc.Ts,(cumtrapz(cumulants[2],mcc.betas,initial=0.)+cumulants[1][0])*mcc.betas**2)
+plt.semilogx(mcc.Ts,cumulants[1]*mcc.betas**2)
+plt.semilogx(Ts_gold,cumulants_gold[1]*betas_gold**2)
 plt.show()
 
 
-plt.plot(np.gradient(cumulants[1],mcc.betas)*mcc.betas**3)
-plt.plot((cumtrapz(cumulants[3],mcc.betas,initial=0.)+cumulants[2][0])*mcc.betas**3)
-plt.plot(cumulants[2]*mcc.betas**3)
+#plt.semilogx(mcc.Ts,np.gradient(cumulants[1],mcc.betas)*mcc.betas**3)
+#plt.semilogx(mcc.Ts,(cumtrapz(cumulants[3],mcc.betas,initial=0.)+cumulants[2][0])*mcc.betas**3)
+plt.semilogx(mcc.Ts,cumulants[2]*mcc.betas**3)
+plt.semilogx(Ts_gold,cumulants_gold[2]*betas_gold**3)
 plt.show()
 
-plt.plot(np.gradient(cumulants[2],mcc.betas)*mcc.betas**4)
-plt.plot((cumtrapz(cumulants[4],mcc.betas,initial=0.)+cumulants[3][0])*mcc.betas**4)
-plt.plot(cumulants[3]*mcc.betas**4)
+#plt.semilogx(mcc.Ts,np.gradient(cumulants[2],mcc.betas)*mcc.betas**4)
+#plt.semilogx(mcc.Ts,(cumtrapz(cumulants[4],mcc.betas,initial=0.)+cumulants[3][0])*mcc.betas**4)
+plt.semilogx(mcc.Ts,cumulants[3]*mcc.betas**4)
+plt.semilogx(Ts_gold,cumulants_gold[3]*betas_gold**4)
 plt.show()
 
-plt.plot(np.gradient(cumulants[3],mcc.betas)*mcc.betas**5)
-plt.plot((cumtrapz(cumulants[5],mcc.betas,initial=0.)+cumulants[4][0])*mcc.betas**5)
-plt.plot(cumulants[4]*mcc.betas**5)
+#plt.semilogx(mcc.Ts,np.gradient(cumulants[3],mcc.betas)*mcc.betas**5)
+#plt.semilogx(mcc.Ts,(cumtrapz(cumulants[5],mcc.betas,initial=0.)+cumulants[4][0])*mcc.betas**5)
+plt.semilogx(mcc.Ts,cumulants[4]*mcc.betas**5)
+plt.semilogx(Ts_gold,cumulants_gold[4]*betas_gold**5)
 plt.show()
 
-plt.plot(np.gradient(cumulants[4],mcc.betas)*mcc.betas**6)
-plt.plot(cumulants[5]*mcc.betas**6)
+#plt.semilogx(mcc.Ts,np.gradient(cumulants[4],mcc.betas)*mcc.betas**6)
+plt.semilogx(mcc.Ts,cumulants[5]*mcc.betas**6)
+plt.semilogx(Ts_gold,cumulants_gold[5]*betas_gold**6)
 plt.show()
 
-plt.plot(np.gradient(cumulants[5],mcc.betas)*mcc.betas**7)
+plt.semilogx(mcc.Ts,np.gradient(cumulants[5],mcc.betas)*mcc.betas**7)
+plt.semilogx(Ts_gold,np.gradient(cumulants_gold[5],betas_gold)*betas_gold**7)
 plt.show()
 
 import sys
@@ -533,10 +548,6 @@ plt.plot(T_ladder.betas,accept_exchange_nn)
 plt.show()
 
 
-plt.plot(T_ladder.betas,accept_exchange_nn)
-plt.plot(T_ladder.betas,accept_exchange_nn_old)
-plt.show()
-
 cycle_count = np.array([np.sum((mcc.tracker_manager.cycle_archive[itrb][2]+mcc.tracker_manager.cycle_archive[itrb][3])/2) for itrb in range(0,len(mcc.tracker_manager.itrn_archive))])
 new_cycles = np.hstack([cycle_count[0],np.diff(cycle_count)])
 new_iterations = np.hstack([mcc.tracker_manager.itrn_archive[0],np.diff(np.array(mcc.tracker_manager.itrn_archive))])
@@ -571,4 +582,32 @@ plt.imshow(corr_means-np.eye(n_chain))
 plt.show()
 
 plt.plot(np.sum(cov_means,axis=0)/var_means)
+plt.show()
+
+
+
+
+
+
+
+import sys
+sys.exit()
+
+
+import integ_box_filt as ibf
+
+rs_stack = np.hstack(rs_save)[600000:]
+
+counts,bins,_ = plt.hist(rs_stack,1000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
+
+plt.plot(ibf.rs,ibf.get_density_pred(1.))
+plt.show()
+
+n_use = rs_stack.size
+
+rs_mean = np.mean(rs_stack)
+autocorr_rs = scipy.signal.correlate(rs_stack-rs_mean,rs_stack-rs_mean, mode='full')
+autocorr_rs_lim = np.hstack([autocorr_rs[n_use-1],autocorr_rs[n_use:2*n_use-2:2]+autocorr_rs[n_use+1:2*n_use-1:2]])
+
+plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
 plt.show()

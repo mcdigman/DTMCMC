@@ -9,6 +9,8 @@ RANDOM_TARGETS = 0      # uniform random exchange targetting
 SEQUENTIAL_TARGETS = 1  # target sequentially from back to front
 ADJACENT_TARGETS = 2    # target alternating +/- 1 positions
 NULL_TARGETS = 3        # do not do any exchanges
+REVERSE_SEQUENTIAL_TARGETS = 4        # target sequentially from front to back
+ALTERNATE_SEQUENTIAL_TARGETS = 5        # target sequentially from front to back and back to front alternating
 
 
 class ExchangeManager():
@@ -194,6 +196,22 @@ def do_ptmcmc_exchange(
         # do not actually propose any exchanges
         targets = np.arange(0, n_chain)
         exchange_order = np.arange(0, n_chain)
+    elif target_select == REVERSE_SEQUENTIAL_TARGETS:
+        # target from front to back, results in repeated exchanges
+        targets = np.arange(1, n_chain+1)
+        exchange_order = np.arange(0, n_chain)
+        targets[n_chain-1] = n_chain-1
+        no_repeat = False
+    elif target_select == ALTERNATE_SEQUENTIAL_TARGETS:
+        if itrb % 4 == 1:
+            targets = np.arange(1, n_chain+1)
+            exchange_order = np.arange(0, n_chain)
+            targets[n_chain-1] = n_chain-1
+        else:
+            targets = np.arange(-1, n_chain-1)
+            exchange_order = np.arange(n_chain-1, -1, -1)
+            targets[0] = 0
+        no_repeat = False
     else:
         assert False
 

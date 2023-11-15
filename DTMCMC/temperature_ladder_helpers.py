@@ -20,6 +20,7 @@ class TemperatureLadder():
 
         # TODO handle mis-ordered Ts robustly
         self.Ts = np.sort(Ts_in)
+        #self.Ts = Ts_in
         self.betas = Ts_to_betas(self.Ts)
 
         self.n_chain = Ts_in.size
@@ -203,7 +204,23 @@ def entropy_spaced_betas(
 
     # TODO add option to do include cold spacing adaptively or not
     if n_cold > 0:
-        Ts_got[0] = T_cold
+        # shift the generated value that is closest to the original cold value
+        # need special handling if the 'cold' temperature is infinity
+        if ~np.isfinite(T_cold):
+            if Ts_got.size > 1:
+                if (use_inf_final or ~np.isfinite(Ts_got[-1])):
+                    arg_cold = Ts_got.size - 2
+                else:
+                    arg_cold = Ts_got.size - 1 
+            else: 
+                arg_cold = 0
+        else:
+            arg_cold = np.argmin(np.abs(Ts_got-T_cold))
+
+        Ts_got[arg_cold] = T_cold
+        if arg_cold != 0:
+            # put cold values first for now
+            Ts_got = np.hstack([Ts_got[arg_cold],Ts_got[:arg_cold],Ts_got[arg_cold+1:]])
 
     if n_cold > 1:
         Ts_got = np.hstack([np.full(n_cold-1, T_cold), Ts_got])
@@ -266,6 +283,7 @@ def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
     else:
         space_heat_need = heat_capacity_integ[-1]/(n_chain_need-1)
 
+
     heat_grid_need = np.arange(0, n_chain_need)*space_heat_need
 
     # TODO cubic splines or log interpolation might work better in some cases,
@@ -302,27 +320,32 @@ def get_heat_capacity_integrated(logL_vars_use, betas_use, correct_last):
     # cannot handle non finite beta case correctly
     heat_capacity_integrand[~np.isfinite(heat_capacity_integrand)] = 0.
 
-    heat_capacity_integ = cumtrapz(heat_capacity_integrand, betas_use, initial=0.)
+    heat_capacity_integ = cumtrapz(heat_capacity_integrand[::-1], betas_use[::-1], initial=0.)[::-1]
 
     if correct_last and betas_use[-1] == 0. and betas_use.size > 1:
         # this should be a more accurate approximation of the integrand
         # from the last finite temperature to infinite temperature,
         # assuming the last finite temperature was already sufficiently high
-        heat_capacity_integ[-1] += betas_use[-2]**2/2*logL_vars_use[-1]
+        heat_capacity_integ[:heat_capacity_integ.size-1] -= betas_use[-2]**2/2*logL_vars_use[-1]
+
+    heat_capacity_integ -= heat_capacity_integ[0]
 
     # We need to enforce that the heat capacity integral is strictly increasing
     # Integral is strictly increasing if we add tiny increments
     # each time we see two identical values
 
     # Handle if first value is zero
-    if heat_capacity_integ[0] == 0.:
-        if np.any(heat_capacity_integ > 0.):
-            heat_capacity_integ[0] = 1.e-14*np.min(heat_capacity_integ)
-        else:
-            heat_capacity_integ[0] = 1.e-15
+    #if heat_capacity_integ[0] == 0.:
+    #    if np.any(heat_capacity_integ > 0.):
+    #        heat_capacity_integ[0] = 1.e-14*np.min(heat_capacity_integ)
+    #    else:
+    #        heat_capacity_integ[0] = 1.e-15
 
     for itrn in range(1, heat_capacity_integ.size):
-        if heat_capacity_integ[itrn] == heat_capacity_integ[itrn-1]:
+        if heat_capacity_integ[itrn] < heat_capacity_integ[itrn-1]:
+            heat_capacity_integ[itrn:] += heat_capacity_integ[itrn-1] - heat_capacity_integ[itrn]
+
+        if heat_capacity_integ[itrn] <= heat_capacity_integ[itrn-1]:
             if heat_capacity_integ[itrn-1] == 0.:
                 heat_capacity_integ[itrn:] += 1.e-15
             else:
