@@ -158,7 +158,7 @@ def restrict_n_burnin(mcc, n_burnin):
 
 def autocorr_helper(mcc, itrp, n_burnin_thin):
     """helper to get the autocorrleation functions for a particular parameter"""
-    n_use = mcc.store_size+1-n_burnin_thin
+    n_use = mcc.store_size-n_burnin_thin
     autocorr_sum = np.zeros((n_use-1)*2+1)
     get_autocorr_sum(n_burnin_thin, mcc, itrp, autocorr_sum)
     autocorr_lim = np.hstack([autocorr_sum[n_use-1:n_use], autocorr_sum[n_use:2*n_use-2:2]+autocorr_sum[n_use+1:2*n_use-1:2]])

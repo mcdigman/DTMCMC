@@ -93,8 +93,9 @@ class DTMCMCSampler():
         self.samples = np.zeros((self.block_size+1, self.n_chain, self.n_par))
         self.chain_track = np.zeros((self.block_size+1, self.n_chain), dtype=np.int64)
         self.chain_track[0] = np.arange(0, self.n_chain)
-        self.samples_store = np.zeros((self.store_size+1, self.n_record, self.n_par))
-        self.logLs_store = np.zeros((self.store_size+1, self.n_record))
+        # TODO fix non-required plus one
+        self.samples_store = np.zeros((self.store_size, self.n_record, self.n_par))
+        self.logLs_store = np.zeros((self.store_size, self.n_record))
 
     def initialize_jumps(self):
         """anything that needs to be done to initialize the various jumps"""
@@ -103,26 +104,35 @@ class DTMCMCSampler():
 
     def initialize_state(self):
         """initialize the samples"""
+        if self.starting_samples is None:
+            self.starting_samples = np.zeros((self.n_chain,self.n_par))
+            for itrt in range(self.n_chain):
+                self.starting_samples[itrt,:] = self.like_obj.prior_draw()
+
+        self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
-            if self.starting_samples is None:
-                self.samples[0, itrt, :] = self.like_obj.prior_draw()
-            else:
-                self.samples[0, itrt, :] = self.starting_samples[itrt]
-            self.logLs[0, itrt] = self.like_obj.get_loglike(self.samples[0, itrt, :])
+            self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt,:])
+
+        for itrt in range(self.n_chain):
+            self.samples[0, itrt, :] = self.starting_samples[itrt,:]
+            self.logLs[0, itrt] = self.starting_logLs[itrt]
 
         # initialize the storage with just the first element
-        self.store_idx, self.store_counter = store_sample_helper(
-            self.samples_store,
-            self.logLs_store,
-            self.samples,
-            self.logLs,
-            self.store_idx,
-            self.store_counter,
-            self.n_record,
-            1,
-            self.store_thin,
-            0,
-        )
+        # TODO initialize storage without breaking first block
+        self.store_idx = 0
+        self.store_counter = 0
+        #self.store_idx, self.store_counter = store_sample_helper(
+        #    self.samples_store,
+        #    self.logLs_store,
+        #    self.samples,
+        #    self.logLs,
+        #    self.store_idx,
+        #    self.store_counter,
+        #    self.n_record,
+        #    1,
+        #    self.store_thin,
+        #    0,
+        #)
 
     def get_stored_flattened(self, n_burnin, n_chain_out=-1, thin=1):
         """get the stored samples flattened, with additional thinning if desired and only the first n_chain_out chains"""
@@ -138,6 +148,7 @@ class DTMCMCSampler():
 
     def store_samples(self):
         """store the samples from the current block in the memory block"""
+        # make sure the very first value gets written to storage correctly
         self.store_idx, self.store_counter = store_sample_helper(
             self.samples_store,
             self.logLs_store,

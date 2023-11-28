@@ -31,6 +31,9 @@ from entropy_process import unit_normal_battery
 import diagnostic_commentary_helpers as dch
 import moment_helpers
 from scipy.integrate import cumtrapz
+import integ_box_filt as ibf
+from scipy.interpolate import InterpolatedUnivariateSpline
+import scipy.signal
 
 # TODO reduce exposure of block_size parameter
 
@@ -40,9 +43,9 @@ if __name__ == '__main__':
     # starting variables
     n_chain = 16                       # number of total chains for parallel tempering
     n_cold = 1                         # number of T=1 chains for parallel tempering
-    n_burnin = 5000                    # number of iterations to discard as burn in
+    n_burnin = 0                    # number of iterations to discard as burn in
     block_size = 10000                  # number of iterations per block when advancing the chain state
-    store_size = 200000                # number of samples to store total
+    store_size = 50000                # number of samples to store total
     N_blocks = store_size//block_size  # number of blocks the sampler must iterate through
     n_par = 5
 
@@ -65,7 +68,7 @@ if __name__ == '__main__':
         starting_samples[itrt] = like_obj.prior_draw()
 
     # create the overarching proposal manager object
-    exchange_manager = eh.ExchangeManager(strategy=eh.RANDOM_TARGETS,track_full_exchanges=True)
+    exchange_manager = eh.ExchangeManager(strategy=eh.SEQUENTIAL_TARGETS,track_full_exchanges=True)
     proposal_manager = get_default_proposal_manager(T_ladder, like_obj, starting_samples,exchange_manager_loc=exchange_manager)
 
     print('Chain parameters', n_cold, n_chain, n_burnin, block_size, store_size, T_max)
@@ -82,9 +85,9 @@ if __name__ == '__main__':
     rs_save = []
 
     # the main loop which actually advances the MCMC state
-    for itrb in range(5):
+    for itrb in range(1080):
         mcc.advance_N_blocks(N_blocks)
-        rs_save.append(np.sqrt(np.sum(mcc.samples_store[:,argT_1,:]**2,axis=1))[1:])
+        rs_save.append(np.sqrt(np.sum(mcc.samples_store[:,argT_1,:]**2,axis=1)))
     #mcc.advance_N_blocks(N_blocks)
     #mcc.advance_N_blocks(N_blocks)
     #mcc.advance_N_blocks(N_blocks)
@@ -109,38 +112,24 @@ if __name__ == '__main__':
     corr_sum.final_prints(mcc, n_burnin)
 
     # get flattened samples for plotting
-    samples_flattened, logLs_flattened = mcc.get_stored_flattened(corr_sum.restrict_n_burnin(mcc, n_burnin),n_chain_out=n_cold)
+    #samples_flattened, logLs_flattened = mcc.get_stored_flattened(corr_sum.restrict_n_burnin(mcc, n_burnin),n_chain_out=n_cold)
 
     tf = perf_counter()
 
     print('full search time ', str(tf-t0)+'s')
 
-do_sigma_plot = True
-if do_sigma_plot:
-    #samples_got = mcc.samples_store[n_burnin:]
-    #samples_post = trial_likelihood.drawposterior(store_size-n_burnin,mcc.Ts,n_par,like_obj.cutoff)
-    #sigma_got = np.std(samples_got,axis=(0,2))
-    #sigma_post = np.std(samples_post,axis=(0,2))
-    #import matplotlib.pyplot as plt
-    #plt.plot(mcc.Ts,sigma_got)
-    #plt.plot(mcc.Ts,sigma_post)
-    #plt.plot(mcc.Ts,np.sqrt(mcc.Ts))
-    #plt.show()
-
-    #plt.semilogx(mcc.Ts,1-sigma_got/sigma_post)
-
-    #plt.show()
-
-    #print(unit_normal_battery(np.reshape(samples_post[:,0],samples_post[:,0].size),do_assert=False))
-    #print(unit_normal_battery(np.reshape(samples_got[:,0],samples_got[:,0].size),do_assert=False))
-    dch.print_diagnostic_commentary(mcc)
 
 argT_1 = np.argmax(T_ladder.Ts==T_ladder.T_cold)
 
-do_corner_plot = True
+block_burnin = min(60,len(mcc.logL_means)//2)
+
+argTs = np.argsort(T_ladder.Ts)
+
+import matplotlib.pyplot as plt
+
+do_corner_plot = False
 if do_corner_plot:
     # generate a corner plot
-    import matplotlib.pyplot as plt
     import corner
 
     # reformat the samples to make the plots look nicer
@@ -163,67 +152,48 @@ if do_corner_plot:
         ax.tick_params(which='both', direction='in', bottom=True, top=True, left=True, right=True, labelsize=6)
     plt.show()
 
-rs_got = np.sqrt(np.sum(mcc.samples_store[n_burnin:,argT_1,:]**2,axis=1))
-rs_got = rs_got[rs_got<10.]
-counts,bins,_ = plt.hist(rs_got,1000,density=True)
-bins_match = np.unique(np.hstack([np.linspace(0.,1.,100),bins,np.array([10.])]))
-bin_likes = np.zeros(len(bins_match))
-for itrb in range(bin_likes.size):
-    bin_likes[itrb] = like_obj.get_loglike(np.array([bins_match[itrb],0.,0.,0.,0.]))
+#plt.semilogx(T_ladder.Ts[argTs],np.gradient(np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)[argTs],T_ladder.betas[argTs])*T_ladder.betas[argTs]**2)
+#plt.semilogx(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs]*T_ladder.betas[argTs]**2)
+##plt.semilogx(T_ladder.Ts[argTs],np.var(mcc.logLs_store[n_burnin:],axis=0)[argTs]*T_ladder.betas[argTs]**2)
+#plt.show()
+
+do_corr_plots = False
+if do_corr_plots:
+    n_use = mcc.store_size+1
+    for itrt in range(max(0,argT_1-5),min(n_chain,argT_1+5)):
+        logL_diff = mcc.logLs_store[:,itrt]-np.mean(mcc.logLs_store[:,itrt])
+        autocorr_logL = scipy.signal.correlate(logL_diff,logL_diff, mode='full')
+        autocorr_logL_lim = np.hstack([autocorr_logL[n_use-1:n_use], autocorr_logL[n_use:2*n_use-2:2]+autocorr_logL[n_use+1:2*n_use-1:2]])
+        plt.plot(autocorr_logL_lim/autocorr_logL_lim[0])
 
 
-dens_pred = np.exp(T_ladder.betas[argT_1]*bin_likes)*bins_match**4*2*np.pi
-dens_pred /= np.trapz(dens_pred,bins_match)
-
-plt.plot(bins_match,dens_pred)
-plt.show()
-
-block_burnin = 60
-
-argTs = np.argsort(T_ladder.Ts)
-#plt.semilogx(T_ladder.Ts[argTs],np.gradient(np.mean(mcc.logLs_store[n_burnin:],axis=0)[argTs],T_ladder.betas[argTs])*T_ladder.betas[argTs]**2)
-plt.semilogx(T_ladder.Ts[argTs],np.gradient(np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)[argTs],T_ladder.betas[argTs])*T_ladder.betas[argTs]**2)
-plt.semilogx(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs]*T_ladder.betas[argTs]**2)
-#plt.semilogx(T_ladder.Ts[argTs],np.var(mcc.logLs_store[n_burnin:],axis=0)[argTs]*T_ladder.betas[argTs]**2)
-plt.show()
-
-import scipy.signal
-
-n_use = mcc.store_size+1
-for itrt in range(max(0,argT_1-5),min(n_chain,argT_1+5)):
-    logL_diff = mcc.logLs_store[:,itrt]-np.mean(mcc.logLs_store[:,itrt])
-    autocorr_logL = scipy.signal.correlate(logL_diff,logL_diff, mode='full')
-    autocorr_logL_lim = np.hstack([autocorr_logL[n_use-1:n_use], autocorr_logL[n_use:2*n_use-2:2]+autocorr_logL[n_use+1:2*n_use-1:2]])
-    plt.plot(autocorr_logL_lim/autocorr_logL_lim[0])
+    plt.show()
 
 
-plt.show()
+    logL_means_store = np.array(mcc.logL_means[block_burnin:])
 
-
-logL_means_store = np.array(mcc.logL_means[block_burnin:])
-
-n_use = logL_means_store.shape[0]+1
-for itrt in  range(max(0,argT_1-10),min(n_chain,argT_1+10)):
-    logL_diff = logL_means_store[:,itrt]-np.mean(logL_means_store[:,itrt])
-    autocorr_logL = scipy.signal.correlate(logL_diff,logL_diff, mode='full')
-    plt.plot(autocorr_logL[n_use-2:2*n_use-1]/autocorr_logL[n_use-2])
+    n_use = logL_means_store.shape[0]+1
+    for itrt in  range(max(0,argT_1-10),min(n_chain,argT_1+10)):
+        logL_diff = logL_means_store[:,itrt]-np.mean(logL_means_store[:,itrt])
+        autocorr_logL = scipy.signal.correlate(logL_diff,logL_diff, mode='full')
+        plt.plot(autocorr_logL[n_use-2:2*n_use-1]/autocorr_logL[n_use-2])
 
 
 
-plt.show()
+    plt.show()
 
-logL_means_store = np.array(mcc.logL_means[block_burnin:])
-logL_diff0 = logL_means_store[:,argT_1]-np.mean(logL_means_store[:,argT_1])
+    logL_means_store = np.array(mcc.logL_means[block_burnin:])
+    logL_diff0 = logL_means_store[:,argT_1]-np.mean(logL_means_store[:,argT_1])
 
-n_use = logL_means_store.shape[0]+1
-for itrt in  range(max(0,argT_1-20),min(n_chain,argT_1+20)):
-    logL_diff = logL_means_store[:,itrt]-np.mean(logL_means_store[:,itrt])
-    crosscorr_logL = scipy.signal.correlate(logL_diff,logL_diff0, mode='full')
-    plt.plot(crosscorr_logL[n_use-2:2*n_use-1])
+    n_use = logL_means_store.shape[0]+1
+    for itrt in  range(max(0,argT_1-20),min(n_chain,argT_1+20)):
+        logL_diff = logL_means_store[:,itrt]-np.mean(logL_means_store[:,itrt])
+        crosscorr_logL = scipy.signal.correlate(logL_diff,logL_diff0, mode='full')
+        plt.plot(crosscorr_logL[n_use-2:2*n_use-1])
 
 
 
-plt.show()
+    plt.show()
 
 logL_diff0 = mcc.logLs_store[:,argT_1]-np.mean(mcc.logLs_store[:,argT_1])
 
@@ -238,11 +208,145 @@ for itrt in  range(max(0,argT_1-10),min(n_chain,argT_1)):
 
 
 #plt.xlim(-1,500)
-plt.show()
+    plt.show()
+
+#argT_sort = np.argsort(T_ladder.Ts)
+#a_ex_yes = (mcc.tracker_manager.exchange_tracker[0]+mcc.tracker_manager.exchange_tracker[0].T)[argT_sort,:][:,argT_sort]
+#a_ex_no = (mcc.tracker_manager.exchange_tracker[1]+mcc.tracker_manager.exchange_tracker[1].T)[argT_sort,:][:,argT_sort]
+#
+#accept_exchange = a_ex_yes/(a_ex_yes+a_ex_no)
+#accept_exchange_nn_left = np.zeros(n_chain)
+#accept_exchange_nn_right = np.zeros(n_chain)
+#accept_exchange_nn = np.zeros(n_chain)
+#accept_exchange_nn_left[n_chain-1] = accept_exchange[n_chain-2,n_chain-1]
+#accept_exchange_nn_right[0] = accept_exchange[0,1]
+#
+#accept_exchange_nn[n_chain-1] = accept_exchange[n_chain-2,n_chain-1]
+#accept_exchange_nn[0] = accept_exchange[0,1]
+#for itrt in range(1,n_chain-1):
+#    accept_exchange_nn_right[itrt] = accept_exchange[itrt,itrt+1]
+#    accept_exchange_nn_left[itrt] = accept_exchange[itrt,itrt-1]
+#    accept_exchange_nn[itrt] =  (a_ex_yes[itrt,itrt+1]+a_ex_yes[itrt,itrt-1])/(a_ex_yes[itrt,itrt+1]+a_ex_no[itrt,itrt+1]+a_ex_yes[itrt,itrt-1]+a_ex_no[itrt,itrt-1])
+#
+#
+#plt.plot(T_ladder.betas[:n_chain-1],accept_exchange_nn_right[:n_chain-1])
+#plt.plot(T_ladder.betas[1:],accept_exchange_nn_left[1:])
+#plt.plot(T_ladder.betas,accept_exchange_nn)
+#plt.show()
+
+do_heat_plot_gold = False
+if do_heat_plot_gold:
+#Ts_old = np.load('Ts_cake_combo2.npy')
+#vars_old = np.load('vars_cake_combo2.npy')
+    Ts_old = np.load('Ts_cake_gold.npy')
+    vars_old = np.load('vars_cake_gold.npy')
+    plt.loglog(Ts_old,vars_old)
+    plt.loglog(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs])
+    plt.show()
+
+#plt.semilogx(Ts_old,vars_old/Ts_old**2)
+#plt.semilogx(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs]*T_ladder.betas[argTs]**2)
+#plt.show()
+
+
+####
+
+n_burnin = min(mcc.itrn//2,4000000)
+
+block_burnin = min(n_burnin//block_size,len(mcc.logL_means)//2)
+
+cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_means(mcc,len(mcc.logL_means)-block_burnin,cut=block_burnin)))[:,0]
+
+
+rs_stack = np.hstack(rs_save)[n_burnin:]
+
+
+counts,bins = np.histogram(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
+
+integ_true = cumtrapz(ibf.get_density_pred(1.)[::-1],ibf.rs[::-1],initial=0.)[::-1]+1
+integ_loc = cumtrapz(counts[::-1],bins[::-1][1:],initial=0.)[::-1]+1
+interp_true = InterpolatedUnivariateSpline(ibf.rs,integ_true,k=3,ext=2)(bins[:bins.size-1])
+
+
+n_use = rs_stack.size
+
+rs_mean = np.mean(rs_stack)
+r2s_mean = np.mean(rs_stack**2)
+autocorr_rs = scipy.signal.correlate(rs_stack-rs_mean,rs_stack-rs_mean, mode='full')
+avg_len = 32
+autocorr_rs_lim = np.hstack([autocorr_rs[n_use-1],autocorr_rs[n_use:2*n_use-avg_len:avg_len]])
+for itrb in range(1,avg_len):
+    autocorr_rs_lim[1:] +=autocorr_rs[n_use+itrb:2*n_use-avg_len+itrb:avg_len]
+
+autocorr_rs_lim[1:] /= avg_len
+
+
+arg_cut_r = np.argmax(autocorr_rs_lim/autocorr_rs_lim[0]<0.)
+
+autocorr_len_inferred = 1+avg_len*np.sum(autocorr_rs_lim[1:arg_cut_r]/autocorr_rs_lim[0])
+
+integ_entropy = -cumtrapz(cumulants[1][::-1]*mcc.betas[::-1],mcc.betas[::-1],initial=0.)[::-1]
+
+arg_cut_r = np.argmax(autocorr_rs_lim/autocorr_rs_lim[0]<0.)
+
+res_even,binsx,binsy = np.histogram2d(rs_stack[0:rs_stack.size-1:2],np.diff(rs_stack)[::2],100,range=[[0,6.3],[-6.3,6.3]])
+res_odd,binsx,binsy = np.histogram2d(rs_stack[1:rs_stack.size-1:2],np.diff(rs_stack)[1::2],100,range=[[0,6.3],[-6.3,6.3]])
+
+res_shuffle = np.zeros_like(res_even)
+
+
+means_shuffle_100 = []
+
+empty_log = []
+
+rs_shuffle = rs_stack.copy()
+
+for itrb in range(0,10):
+    np.random.shuffle(rs_shuffle)
+    res_shuffle_loc,binsx,binsy = np.histogram2d(rs_shuffle[0:rs_shuffle.size-1:],np.diff(rs_shuffle),100,range=[[0,6.3],[-6.3,6.3]])
+    res_shuffle += res_shuffle_loc
+    empty_log.append(np.sum(res_shuffle==0.))
+    means_shuffle_100.append(np.mean(rs_shuffle.reshape((rs_shuffle.size//100,100)),axis=1))
+
+
+@njit()
+def get_block_mean(n_block_in,block_length,rs_stack):
+    means_got = np.zeros(n_block_in)
+    for itrb in range(n_block_in):
+        start1 =  np.random.randint(0, rs_stack.size-block_length)
+        means_got[itrb] = np.mean(rs_stack[start1:start1+block_length])
+    return means_got
+
+
+means_stack_100 = get_block_mean(10*rs_stack.size//100,100,rs_stack)
+means_stack_1k = get_block_mean(10*rs_stack.size//1000,1000,rs_stack)
+means_stack_10k = get_block_mean(100*rs_stack.size//10000,10000,rs_stack)
+means_stack_100k = get_block_mean(1000*rs_stack.size//100000,100000,rs_stack)
+means_stack_1m = get_block_mean(1000*rs_stack.size//1000000,1000000,rs_stack)
+
+var_shuffle_100 = np.var(means_shuffle_100)
+var_shuffle_1k = var_shuffle_100/10
+var_shuffle_10k = var_shuffle_100/100
+var_shuffle_100k = var_shuffle_100/1000
+var_shuffle_1m = var_shuffle_100/10000
+
+autocorr_len_100 = np.var(means_stack_100)/var_shuffle_100
+autocorr_len_1k = np.var(means_stack_1k)/var_shuffle_1k
+autocorr_len_10k = np.var(means_stack_10k)/var_shuffle_10k
+autocorr_len_100k = np.var(means_stack_100k)/var_shuffle_100k
+autocorr_len_1m = np.var(means_stack_1m)/var_shuffle_1m
+
+
+
+
+cycle_burn_index = np.argmax(np.array(mcc.tracker_manager.itrn_archive)==n_burnin)
+
+
+tracker_archive = mcc.tracker_manager.exchange_archive[cycle_burn_index]
 
 argT_sort = np.argsort(T_ladder.Ts)
-a_ex_yes = (mcc.tracker_manager.exchange_tracker[0]+mcc.tracker_manager.exchange_tracker[0].T)[argT_sort,:][:,argT_sort]
-a_ex_no = (mcc.tracker_manager.exchange_tracker[1]+mcc.tracker_manager.exchange_tracker[1].T)[argT_sort,:][:,argT_sort]
+a_ex_yes = (mcc.tracker_manager.exchange_tracker[0]-tracker_archive[0])[argT_sort,:][:,argT_sort]
+a_ex_no =  (mcc.tracker_manager.exchange_tracker[1]-tracker_archive[1])[argT_sort,:][:,argT_sort]
 
 accept_exchange = a_ex_yes/(a_ex_yes+a_ex_no)
 accept_exchange_nn_left = np.zeros(n_chain)
@@ -258,22 +362,119 @@ for itrt in range(1,n_chain-1):
     accept_exchange_nn_left[itrt] = accept_exchange[itrt,itrt-1]
     accept_exchange_nn[itrt] =  (a_ex_yes[itrt,itrt+1]+a_ex_yes[itrt,itrt-1])/(a_ex_yes[itrt,itrt+1]+a_ex_no[itrt,itrt+1]+a_ex_yes[itrt,itrt-1]+a_ex_no[itrt,itrt-1])
 
+accept_record = mcc.tracker_manager.accept_record-mcc.tracker_manager.accept_archive[cycle_burn_index]
+accept = accept_record[0]/(accept_record[0]+accept_record[1])
 
-plt.plot(T_ladder.betas[:n_chain-1],accept_exchange_nn_right[:n_chain-1])
-plt.plot(T_ladder.betas[1:],accept_exchange_nn_left[1:])
-plt.plot(T_ladder.betas,accept_exchange_nn)
+n_cycles = mcc.tracker_manager.get_n_cycles()
+
+cycle_min_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+cycle_zero_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+diff_ext_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+cycle_archive_old = np.zeros_like(mcc.tracker_manager.cycle_archive[0])
+
+for itri in range(0,len(mcc.tracker_manager.cycle_archive),1):
+    cycle_archive = mcc.tracker_manager.cycle_archive[itri]
+    new_cycles = np.min(cycle_archive[2:4,:]-cycle_archive_old[2:4,:],axis=0)
+    diff_cycles = mcc.tracker_manager.itrn_archive[itri]-np.min(cycle_archive[0:2,:],axis=0)
+    cycle_min_log[itri] = np.min(new_cycles)
+    diff_ext_log[itri] = np.max(diff_cycles)
+    cycle_zero_log[itri] = np.sum(new_cycles==0)
+    cycle_archive_old = cycle_archive
+
+
+
+print(np.sum(n_cycles),np.min(n_cycles),np.max(n_cycles),np.std(n_cycles))
+print(cumulants[:,argT_1])
+print(cumulants[:,-1])
+print(np.max(interp_true-integ_loc),np.min(interp_true-integ_loc))
+print(rs_mean,r2s_mean-rs_mean**2)
+print(arg_cut_r*16+1,autocorr_len_inferred)
+
+print(autocorr_len_100,autocorr_len_1k,autocorr_len_10k,autocorr_len_100k,autocorr_len_1m)
+
+print(accept_exchange_nn[argT_1],accept_exchange_nn[1],np.mean(accept_exchange_nn[1:n_chain-1]))
+print(accept[argT_1][[1,2,3,4,5,6,8]])
+
+print(integ_entropy[argT_1])
+
+
+print((np.mean(np.diff(rs_stack)[1::2]**2*np.diff(rs_stack)[2::2]**2)-np.mean(np.diff(rs_stack)[1::2]**2)*np.mean(np.diff(rs_stack)[2::2]**2))/np.sqrt(np.var(np.diff(rs_stack)[1::2]**2)*np.var(np.diff(rs_stack)[2::2]**2)))
+
+print((np.mean(np.diff(rs_stack)[0::2]*rs_stack[0::2])- np.mean(np.diff(rs_stack)[0::2])*np.mean(rs_stack[0::2]))/np.sqrt(np.var(np.diff(rs_stack)[0::2])*np.var(rs_stack[0::2])))
+
+print((np.mean(np.diff(rs_stack)[1::2]*rs_stack[1:rs_stack.size-1:2])- np.mean(np.diff(rs_stack)[1::2])*np.mean(rs_stack[1:rs_stack.size-1:2]))/np.sqrt(np.var(np.diff(rs_stack)[1::2])*np.var(rs_stack[1:rs_stack.size-1:2])))
+
+print((np.mean(np.diff(rs_stack)[0::2]**2*rs_stack[0::2])- np.mean(np.diff(rs_stack)[0::2]**2)*np.mean(rs_stack[0::2]))/np.sqrt(np.var(np.diff(rs_stack)[0::2]**2)*np.var(rs_stack[0::2])))
+
+print((np.mean(np.diff(rs_stack)[1::2]**2*rs_stack[1:rs_stack.size-1:2])- np.mean(np.diff(rs_stack)[1::2]**2)*np.mean(rs_stack[1:rs_stack.size-1:2]))/np.sqrt(np.var(np.diff(rs_stack)[1::2]**2)*np.var(rs_stack[1:rs_stack.size-1:2])))
+
+print(np.min(diff_ext_log[cycle_burn_index:]),np.max(diff_ext_log[cycle_burn_index:]),np.median(diff_ext_log[cycle_burn_index:]),np.mean(diff_ext_log[cycle_burn_index:]),np.std(diff_ext_log[cycle_burn_index:]))
+print(np.min(cycle_zero_log[cycle_burn_index:]),np.max(cycle_zero_log[cycle_burn_index:]),np.median(cycle_zero_log[cycle_burn_index:]),np.mean(cycle_zero_log[cycle_burn_index:]),np.std(cycle_zero_log[cycle_burn_index:]))
+print(np.max(cycle_min_log[cycle_burn_index:]),np.median(cycle_min_log[cycle_burn_index:]),np.mean(cycle_min_log[cycle_burn_index:]),np.std(cycle_min_log[cycle_burn_index:]))
+
+
+dch.print_diagnostic_commentary(mcc)
+
+
+counts,bins,_ = plt.hist(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
+plt.plot(ibf.rs,ibf.get_density_pred(1.))
 plt.show()
 
-#Ts_old = np.load('Ts_cake_combo2.npy')
-#vars_old = np.load('vars_cake_combo2.npy')
-Ts_old = np.load('Ts_cake_gold.npy')
-vars_old = np.load('vars_cake_gold.npy')
-plt.loglog(Ts_old,vars_old)
-plt.loglog(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs])
+plt.plot(ibf.rs,integ_true)
+plt.plot(bins[:bins.size-1],integ_loc)
 plt.show()
 
-plt.semilogx(Ts_old,vars_old/Ts_old**2)
-plt.semilogx(T_ladder.Ts[argTs],(np.mean(np.array(mcc.logL2_means[block_burnin:]),axis=0)-np.mean(np.array(mcc.logL_means[block_burnin:]),axis=0)**2)[argTs]*T_ladder.betas[argTs]**2)
+plt.plot(bins[:bins.size-1],integ_loc-interp_true)
+plt.show()
+
+plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
+plt.show()
+
+plt.plot(bins[:bins.size-1],integ_loc-interp_true)
+plt.show()
+
+plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
+plt.show()
+
+    
+
+#res_shuffle /= res_shuffle.sum()
+#res_even /= res_even.sum()
+#res_odd /= res_odd.sum()
+
+plt.imshow(np.rot90(np.log(res_shuffle)))
+plt.show()
+
+plt.imshow(np.rot90((res_even)/np.sqrt(res_even)))
+plt.show()
+
+plt.imshow(np.rot90((res_odd)/np.sqrt(res_odd)))
+plt.show()
+
+plt.imshow(np.rot90((res_even-res_odd)/np.sqrt(res_even+res_odd)))
+plt.show()
+
+
+
+import sys
+sys.exit()
+
+unique_rs,args_forward,count_rs = np.unique(rs_stack,return_index=True,return_counts=True)
+unique_rs_reverse,args_reverse = np.unique(rs_stack[::-1],return_index=True)
+assert np.all(unique_rs==unique_rs_reverse)
+args_reverse = rs_stack.size-1-args_reverse
+recurr_lengths = args_reverse-args_forward+1
+assert np.all(recurr_lengths>=1)
+
+recurr_lengths_mask = (recurr_lengths >= 2)
+
+plt.hist(np.log10(recurr_lengths[recurr_lengths_mask]),100)
+plt.show()
+
+plt.scatter(unique_rs[recurr_lengths_mask],np.log10(recurr_lengths[recurr_lengths_mask]),s=0.1,alpha=1.,color='black')
+plt.show()
+
+plt.scatter(unique_rs[recurr_lengths_mask],count_rs[recurr_lengths_mask],s=0.1,alpha=1.,color='black')
 plt.show()
 
 import sys
@@ -521,6 +722,7 @@ sys.exit()
 
 cycle_burn_index = np.argmax(np.array(mcc.tracker_manager.itrn_archive)==2000000)
 
+
 tracker_archive = mcc.tracker_manager.exchange_archive[cycle_burn_index]
 
 argT_sort = np.argsort(T_ladder.Ts)
@@ -540,6 +742,11 @@ for itrt in range(1,n_chain-1):
     accept_exchange_nn_right[itrt] = accept_exchange[itrt,itrt+1]
     accept_exchange_nn_left[itrt] = accept_exchange[itrt,itrt-1]
     accept_exchange_nn[itrt] =  (a_ex_yes[itrt,itrt+1]+a_ex_yes[itrt,itrt-1])/(a_ex_yes[itrt,itrt+1]+a_ex_no[itrt,itrt+1]+a_ex_yes[itrt,itrt-1]+a_ex_no[itrt,itrt-1])
+
+accept_record = mcc.tracker_manager.accept_record-mcc.tracker_manager.accept_archive[cycle_burn_index]
+accept = accept_record[0]/(accept_record[0]+accept_record[1])
+print(accept_exchange_nn[argT_1],np.mean(accept_exchange_nn[1:n_chain-1]))
+print(accept[argT_1][[1,3,4,5,6,8]])
 
 
 plt.plot(T_ladder.betas[:n_chain-1],accept_exchange_nn_right[:n_chain-1])
@@ -561,6 +768,13 @@ plt.show()
 
 cycle_record = mcc.tracker_manager.cycle_archive[-1][2:]-mcc.tracker_manager.cycle_archive[cycle_burn_index][2:]
 cycle_rate = np.vstack([cycle_record,np.sum(cycle_record,axis=0)/(2*iterations_postburn)])
+
+
+
+accept_record = mcc.tracker_manager.accept_record-mcc.tracker_manager.accept_archive[cycle_burn_index]
+accept = accept_record[0]/(accept_record[0]+accept_record[1])
+print(accept_exchange_nn[argT_1],np.mean(accept_exchange_nn[1:n_chain-1]))
+print(accept[argT_1][[3,5,8]])
 
 
 import sys
@@ -597,6 +811,7 @@ sys.exit()
 import integ_box_filt as ibf
 from scipy.interpolate import InterpolatedUnivariateSpline
 
+
 rs_stack = np.hstack(rs_save)[n_burnin:]
 
 counts,bins,_ = plt.hist(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
@@ -607,7 +822,6 @@ plt.show()
 integ_true = cumtrapz(ibf.get_density_pred(1.)[::-1],ibf.rs[::-1],initial=0.)[::-1]+1
 integ_loc = cumtrapz(counts[::-1],bins[::-1][1:],initial=0.)[::-1]+1
 interp_true = InterpolatedUnivariateSpline(ibf.rs,integ_true,k=3,ext=2)(bins[:bins.size-1])
-print(np.max(interp_true-integ_loc),np.min(interp_true-integ_loc))
 
 plt.plot(ibf.rs,integ_true)
 plt.plot(bins[:bins.size-1],integ_loc)
@@ -619,8 +833,9 @@ plt.show()
 n_use = rs_stack.size
 
 rs_mean = np.mean(rs_stack)
+r2s_mean = np.mean(rs_stack**2)
 autocorr_rs = scipy.signal.correlate(rs_stack-rs_mean,rs_stack-rs_mean, mode='full')
-avg_len = 16
+avg_len = 32
 autocorr_rs_lim = np.hstack([autocorr_rs[n_use-1],autocorr_rs[n_use:2*n_use-avg_len:avg_len]])
 for itrb in range(1,avg_len):
     autocorr_rs_lim[1:] +=autocorr_rs[n_use+itrb:2*n_use-avg_len+itrb:avg_len]
@@ -629,3 +844,97 @@ autocorr_rs_lim[1:] /= avg_len
 
 plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
 plt.show()
+
+arg_cut_r = np.argmax(autocorr_rs_lim/autocorr_rs_lim[0]<0.)
+
+autocorr_len_inferred = 1+avg_len*np.sum(autocorr_rs_lim[1:arg_cut_r]/autocorr_rs_lim[0])
+print(np.max(interp_true-integ_loc),np.min(interp_true-integ_loc))
+print(rs_mean,r2s_mean-rs_mean**2)
+print(arg_cut_r*16+1,autocorr_len_inferred,(arg_cut_r*16+1)/autocorr_len_inferred)
+
+integ_entropy = -cumtrapz(cumulants[1][::-1]*mcc.betas[::-1],mcc.betas[::-1],initial=0.)[::-1]
+print(integ_entropy[argT_1])
+
+shuffle_length = 1000
+rs_shuffle = rs_stack.copy()
+np.random.shuffle(rs_shuffle)
+means_shuffle = np.mean(rs_shuffle.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+means_stack = np.mean(rs_stack.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+autocorr_len_1k = np.var(means_stack)/np.var(means_shuffle)
+
+shuffle_length = 10000
+rs_shuffle = rs_stack.copy()
+np.random.shuffle(rs_shuffle)
+means_shuffle = np.mean(rs_shuffle.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+means_stack = np.mean(rs_stack.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+autocorr_len_10k = np.var(means_stack)/np.var(means_shuffle)
+
+shuffle_length = 100000
+rs_shuffle = rs_stack.copy()
+np.random.shuffle(rs_shuffle)
+means_shuffle = np.mean(rs_shuffle.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+means_stack = np.mean(rs_stack.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+autocorr_len_100k = np.var(means_stack)/np.var(means_shuffle)
+
+shuffle_length = 1000000
+rs_shuffle = rs_stack.copy()
+np.random.shuffle(rs_shuffle)
+means_shuffle = np.mean(rs_shuffle.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+means_stack = np.mean(rs_stack.reshape((rs_shuffle.size//shuffle_length,shuffle_length)),axis=1)
+autocorr_len_1m = np.var(means_stack)/np.var(means_shuffle)
+
+print(autocorr_len_1k,autocorr_len_10k,autocorr_len_100k,autocorr_len_1m)
+
+
+import sys
+sys.exit()
+
+
+
+first_exchange_accept_log = np.zeros(len(mcc.tracker_manager.exchange_archive))
+acceptance_log = np.zeros((len(mcc.tracker_manager.exchange_archive),n_chain,mcc.tracker_manager.accept_archive[0].shape[2]))
+tracker_archive_old = np.zeros_like(mcc.tracker_manager.exchange_archive[0])
+accept_archive_old = np.zeros_like(mcc.tracker_manager.accept_archive[0])
+
+for itri in range(0,len(mcc.tracker_manager.exchange_archive),1):
+    tracker_archive = mcc.tracker_manager.exchange_archive[itri]
+    accept_archive = mcc.tracker_manager.accept_archive[itri]
+    a_ex_yes_loc = (tracker_archive[0]-tracker_archive_old[0])[argT_sort,:][:,argT_sort]
+    a_ex_no_loc =  (tracker_archive[1]-tracker_archive_old[1])[argT_sort,:][:,argT_sort]
+    first_exchange_accept_log[itri] = a_ex_yes_loc[1,0]/(a_ex_yes_loc[1,0]+a_ex_no_loc[1,0])
+    tracker_archive_old = tracker_archive
+    a_yes_loc = (accept_archive[0]-accept_archive_old[0])
+    a_no_loc = (accept_archive[1]-accept_archive_old[1])
+    acceptance_log[itri] = a_yes_loc/(a_yes_loc+a_no_loc) 
+    accept_archive_old = accept_archive
+
+
+
+import sys
+sys.exit()
+
+
+
+
+
+
+
+#acceptance_log = np.zeros((len(mcc.tracker_manager.cycle_archive),n_chain,mcc.tracker_manager.accept_archive[0].shape[2]))
+cycle_min_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+cycle_zero_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+diff_ext_log = np.zeros((len(mcc.tracker_manager.cycle_archive)))
+cycle_archive_old = np.zeros_like(mcc.tracker_manager.cycle_archive[0])
+
+for itri in range(0,len(mcc.tracker_manager.cycle_archive),1):
+    cycle_archive = mcc.tracker_manager.cycle_archive[itri]
+    new_cycles = np.min(cycle_archive[2:4,:]-cycle_archive_old[2:4,:],axis=0)
+    diff_cycles = mcc.tracker_manager.itrn_archive[itri]-np.min(cycle_archive[0:2,:],axis=0)
+    cycle_min_log[itri] = np.min(new_cycles)
+    diff_ext_log[itri] = np.max(diff_cycles)
+    cycle_zero_log[itri] = np.sum(new_cycles==0)
+    cycle_archive_old = cycle_archive
+
+
+print(np.min(diff_ext_log[cycle_burn_index:]),np.max(diff_ext_log[cycle_burn_index:]),np.median(diff_ext_log[cycle_burn_index:]),np.mean(diff_ext_log[cycle_burn_index:]),np.std(diff_ext_log[cycle_burn_index:]))
+print(np.min(cycle_zero_log[cycle_burn_index:]),np.max(cycle_zero_log[cycle_burn_index:]),np.median(cycle_zero_log[cycle_burn_index:]),np.mean(cycle_zero_log[cycle_burn_index:]),np.std(cycle_zero_log[cycle_burn_index:]))
+print(np.max(cycle_min_log[cycle_burn_index:]),np.median(cycle_min_log[cycle_burn_index:]),np.mean(cycle_min_log[cycle_burn_index:]),np.std(cycle_min_log[cycle_burn_index:]))

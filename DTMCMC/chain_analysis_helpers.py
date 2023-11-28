@@ -12,6 +12,7 @@ def get_blockwise_vars(N_blocks, n_burnin, samples_store, block_size, itrr, itrp
         start1 = np.random.randint(n_burnin, samples_store.shape[0]-block_size)
         blockwise_vars[itrr, itrp, itrb] = np.var(samples_store[start1:start1+block_size, :, itrp])
         blockwise_means[itrr, itrp, itrb] = np.mean(samples_store[start1:start1+block_size, :, itrp])
+    return blockwise_vars, blockwise_means
 
 
 @njit()
@@ -28,6 +29,7 @@ def get_blockwise_vars_scramble(N_blocks, n_cold, n_burnin, samples_store, block
 
         blockwise_vars_scramble[itrr, itrp, itrb] = np.var(sample_block_loc)
         blockwise_means_scramble[itrr, itrp, itrb] = np.mean(sample_block_loc)
+    return blockwise_vars_scramble, blockwise_means_scramble
 
 
 def get_autocorr_sum(n_burnin, mcc, itrp, autocorr_sum):
