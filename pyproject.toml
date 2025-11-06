@@ -1,0 +1,22 @@
+[project]
+name = "DTMCMC"
+version = "0.0.1"
+description = "Differential Tempering Markov Chain Monte Carlo"
+readme = "README.md"
+authors = [
+  { name="Matthew C. Digman", email="matthew.digman@vanderbilt.edu" }
+]
+license = { file = "LICENSE" }
+dependencies = [
+    "numpy>2.0.0",
+    "scipy",
+    "numba",
+    "pytest",
+    "h5py"
+]
+requires-python = ">=3.12"
+
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
