@@ -83,11 +83,11 @@ def NNEntropyK(samples1,samples2):
     see eq. 7 of https://hal.archives-ouvertes.fr/hal-02774953/document"""
     n_par1 = samples1.shape[1]
     n_par2 = samples2.shape[1]
-    assert n_par1==n_par2
+    assert n_par1 == n_par2
     assert n_par1 <= n_par_max
     e1s = NNEntropy1(samples1)
     e2s = NNEntropy2(samples1,samples2)
-    return e1s-e2s,e1s,e2s
+    return e1s-e2s, e1s, e2s
 
 def unit_normal_battery(signal,mult=1.,sig_thresh=5.,A2_cut=2.28,do_assert=True):
     """battery of tests for checking if signal is unit normal white noise"""

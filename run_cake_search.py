@@ -260,16 +260,13 @@ cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_me
 
 rs_stack = np.hstack(rs_save)[n_burnin:]
 
-
 counts,bins = np.histogram(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
 
 integ_true = cumtrapz(ibf.get_density_pred(1.)[::-1],ibf.rs[::-1],initial=0.)[::-1]+1
 integ_loc = cumtrapz(counts[::-1],bins[::-1][1:],initial=0.)[::-1]+1
 interp_true = InterpolatedUnivariateSpline(ibf.rs,integ_true,k=3,ext=2)(bins[:bins.size-1])
 
-
 n_use = rs_stack.size
-
 rs_mean = np.mean(rs_stack)
 r2s_mean = np.mean(rs_stack**2)
 autocorr_rs = scipy.signal.correlate(rs_stack-rs_mean,rs_stack-rs_mean, mode='full')
@@ -279,6 +276,8 @@ for itrb in range(1,avg_len):
     autocorr_rs_lim[1:] +=autocorr_rs[n_use+itrb:2*n_use-avg_len+itrb:avg_len]
 
 autocorr_rs_lim[1:] /= avg_len
+
+autocorr_rs = None
 
 
 arg_cut_r = np.argmax(autocorr_rs_lim/autocorr_rs_lim[0]<0.)
@@ -309,6 +308,8 @@ for itrb in range(0,10):
     means_shuffle_100.append(np.mean(rs_shuffle.reshape((rs_shuffle.size//100,100)),axis=1))
 
 
+rs_shuffle = None
+
 @njit()
 def get_block_mean(n_block_in,block_length,rs_stack):
     means_got = np.zeros(n_block_in)
@@ -336,11 +337,7 @@ autocorr_len_10k = np.var(means_stack_10k)/var_shuffle_10k
 autocorr_len_100k = np.var(means_stack_100k)/var_shuffle_100k
 autocorr_len_1m = np.var(means_stack_1m)/var_shuffle_1m
 
-
-
-
 cycle_burn_index = np.argmax(np.array(mcc.tracker_manager.itrn_archive)==n_burnin)
-
 
 tracker_archive = mcc.tracker_manager.exchange_archive[cycle_burn_index]
 
@@ -361,6 +358,7 @@ for itrt in range(1,n_chain-1):
     accept_exchange_nn_right[itrt] = accept_exchange[itrt,itrt+1]
     accept_exchange_nn_left[itrt] = accept_exchange[itrt,itrt-1]
     accept_exchange_nn[itrt] =  (a_ex_yes[itrt,itrt+1]+a_ex_yes[itrt,itrt-1])/(a_ex_yes[itrt,itrt+1]+a_ex_no[itrt,itrt+1]+a_ex_yes[itrt,itrt-1]+a_ex_no[itrt,itrt-1])
+
 
 accept_record = mcc.tracker_manager.accept_record-mcc.tracker_manager.accept_archive[cycle_burn_index]
 accept = accept_record[0]/(accept_record[0]+accept_record[1])
@@ -397,16 +395,36 @@ print(accept[argT_1][[1,2,3,4,5,6,8]])
 
 print(integ_entropy[argT_1])
 
+var_od2 = np.var(np.diff(rs_stack)[1::2]**2)
+var_ed2 = np.var(np.diff(rs_stack)[2::2]**2)
 
-print((np.mean(np.diff(rs_stack)[1::2]**2*np.diff(rs_stack)[2::2]**2)-np.mean(np.diff(rs_stack)[1::2]**2)*np.mean(np.diff(rs_stack)[2::2]**2))/np.sqrt(np.var(np.diff(rs_stack)[1::2]**2)*np.var(np.diff(rs_stack)[2::2]**2)))
+var_ed1 = np.var(np.diff(rs_stack)[0::2])
+var_ev1 = np.var(rs_stack[0::2])
 
-print((np.mean(np.diff(rs_stack)[0::2]*rs_stack[0::2])- np.mean(np.diff(rs_stack)[0::2])*np.mean(rs_stack[0::2]))/np.sqrt(np.var(np.diff(rs_stack)[0::2])*np.var(rs_stack[0::2])))
+var_ov1 = np.var(rs_stack[1:rs_stack.size-1:2])
+var_od1 = np.var(np.diff(rs_stack)[1::2])
 
-print((np.mean(np.diff(rs_stack)[1::2]*rs_stack[1:rs_stack.size-1:2])- np.mean(np.diff(rs_stack)[1::2])*np.mean(rs_stack[1:rs_stack.size-1:2]))/np.sqrt(np.var(np.diff(rs_stack)[1::2])*np.var(rs_stack[1:rs_stack.size-1:2])))
+mean_od2 = np.mean(np.diff(rs_stack)[1::2]**2)
+mean_ed2 = np.mean(np.diff(rs_stack)[2::2]**2)
 
-print((np.mean(np.diff(rs_stack)[0::2]**2*rs_stack[0::2])- np.mean(np.diff(rs_stack)[0::2]**2)*np.mean(rs_stack[0::2]))/np.sqrt(np.var(np.diff(rs_stack)[0::2]**2)*np.var(rs_stack[0::2])))
+mean_ed1 = np.mean(np.diff(rs_stack)[0::2])
+mean_ev1 = np.mean(rs_stack[0::2])
 
-print((np.mean(np.diff(rs_stack)[1::2]**2*rs_stack[1:rs_stack.size-1:2])- np.mean(np.diff(rs_stack)[1::2]**2)*np.mean(rs_stack[1:rs_stack.size-1:2]))/np.sqrt(np.var(np.diff(rs_stack)[1::2]**2)*np.var(rs_stack[1:rs_stack.size-1:2])))
+mean_ov1 = np.mean(rs_stack[1:rs_stack.size-1:2])
+mean_od1 = np.mean(np.diff(rs_stack)[1::2])
+
+mean_od2_ed2 = np.mean(np.diff(rs_stack)[1::2]**2*np.diff(rs_stack)[2::2]**2)
+mean_ed1_ev1 = np.mean(np.diff(rs_stack)[0::2]*rs_stack[0::2])
+mean_od1_ov1 = np.mean(np.diff(rs_stack)[1::2]*rs_stack[1:rs_stack.size-1:2])
+mean_ed2_ev1 = np.mean(np.diff(rs_stack)[0::2]**2*rs_stack[0::2])
+mean_od2_ov1 = np.mean(np.diff(rs_stack)[1::2]**2*rs_stack[1:rs_stack.size-1:2])
+
+
+print((mean_od2_ed2 - mean_od2*mean_ed2)/np.sqrt(var_od2*var_ed2))
+print((mean_ed1_ev1 - mean_ed1*mean_ev1)/np.sqrt(var_ed1*var_ev1))
+print((mean_od1_ov1 - mean_od1*mean_ov1)/np.sqrt(var_od1*var_ov1))
+print((mean_ed2_ev1 - mean_ed2*mean_ev1)/np.sqrt(var_ed2*var_ev1))
+print((mean_od2_ov1 - mean_od2*mean_ov1)/np.sqrt(var_od2*var_ov1))
 
 print(np.min(diff_ext_log[cycle_burn_index:]),np.max(diff_ext_log[cycle_burn_index:]),np.median(diff_ext_log[cycle_burn_index:]),np.mean(diff_ext_log[cycle_burn_index:]),np.std(diff_ext_log[cycle_burn_index:]))
 print(np.min(cycle_zero_log[cycle_burn_index:]),np.max(cycle_zero_log[cycle_burn_index:]),np.median(cycle_zero_log[cycle_burn_index:]),np.mean(cycle_zero_log[cycle_burn_index:]),np.std(cycle_zero_log[cycle_burn_index:]))
@@ -415,8 +433,11 @@ print(np.max(cycle_min_log[cycle_burn_index:]),np.median(cycle_min_log[cycle_bur
 
 dch.print_diagnostic_commentary(mcc)
 
+counts,bins = np.histogram(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
 
-counts,bins,_ = plt.hist(rs_stack,10000,range=[0.,np.sqrt(n_par)*like_obj.high_lims[1]],density=True)
+rs_stack = None
+
+plt.plot(bins[1:],counts)
 plt.plot(ibf.rs,ibf.get_density_pred(1.))
 plt.show()
 
@@ -427,20 +448,11 @@ plt.show()
 plt.plot(bins[:bins.size-1],integ_loc-interp_true)
 plt.show()
 
-plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
-plt.show()
-
 plt.plot(bins[:bins.size-1],integ_loc-interp_true)
 plt.show()
 
 plt.plot(autocorr_rs_lim/autocorr_rs_lim[0])
 plt.show()
-
-    
-
-#res_shuffle /= res_shuffle.sum()
-#res_even /= res_even.sum()
-#res_odd /= res_odd.sum()
 
 plt.imshow(np.rot90(np.log(res_shuffle)))
 plt.show()
