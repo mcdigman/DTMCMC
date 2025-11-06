@@ -1,9 +1,11 @@
 """C 2023 Matthew C. Digman
-various jit compatible interfaces to cython lapack functions """
+various jit compatible interfaces to cython lapack functions
+"""
 import ctypes
-from numba.extending import get_cython_function_address
-from numba import njit
+
 import numpy as np
+from numba import njit
+from numba.extending import get_cython_function_address
 
 _PTR = ctypes.POINTER
 
@@ -49,7 +51,7 @@ dtrtrs_fn = functype(addr)
 
 @njit()
 def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
-    """solve x*B=y where x is a triangular matrix, note y must be fortran ordered and x must be either type of contiguous"""
+    """Solve x*B=y where x is a triangular matrix, note y must be fortran ordered and x must be either type of contiguous"""
     # if the input matrix is c contiguous but not fortran contiguous
     # transposing it will make it fortran contiguous with no copying
     # then flipping upper and lower and telling dtrtrs to undo the transpose will force dtrtrs to do the correct operation
@@ -100,7 +102,7 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
     def check_info(info):
         if info[0] != 0:
             print(info)
-            raise RuntimeError("INFO indicates problem with dtrtrs")
+            raise RuntimeError('INFO indicates problem with dtrtrs')
 
     dtrtrs_fn(UPLO.ctypes,
               TRANS.ctypes,

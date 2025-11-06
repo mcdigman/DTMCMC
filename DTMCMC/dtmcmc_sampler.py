@@ -1,11 +1,130 @@
 """C 2023 Matthew C. Digman
-Module with the overall PTMCMC Chain object"""
+Module with the overall PTMCMC Chain object
+"""
 import numpy as np
 from numba import njit
 
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
-
 from DTMCMC.tracker_manager import TrackerManager
+
+
+@njit()
+def store_sample_helper(
+    samples_store,
+    logLs_store,
+    samples_block,
+    logLs_block,
+    store_idx_in,
+    store_counter_in,
+    n_record,
+    block_size,
+    store_thin,
+    read_offset):
+    """Write the samples from n_record chains to be stored using store_thin thinning,
+    store_idx and store_counter are counters for the index to write into and
+    the thinning respectively read offset needs to be zero for first write
+    and 1 otherwise to prevent duplicate writes due to wrapping
+    """
+    store_idx = store_idx_in
+    store_counter = store_counter_in
+    for itrk in range(read_offset, block_size + read_offset):
+        if store_counter == 0:
+            # write the sample if the thinning counter is 0
+            samples_store[store_idx, :n_record, :] = samples_block[itrk, :n_record, :]
+            logLs_store[store_idx, :n_record] = logLs_block[itrk, :n_record]
+            store_idx += 1
+        store_counter += 1
+
+        if store_counter >= store_thin:
+            # wrap the thinning counter
+            store_counter = 0
+        if store_idx >= samples_store.shape[0]:
+            # wrap the writing counter
+            store_idx = 0
+
+    return store_idx, store_counter
+
+
+@njit()
+def mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump):
+    """Helper to decide whether mcmc point is accepted or not and process accordingly"""
+    # draw to determine if we will accept
+    test = np.log(np.random.uniform(0., 1.))
+
+    # process acceptance or rejection
+    if betas[itrt] * (logL_new - logLs[itrb - 1, itrt]) + density_fac > test:
+        # the draw was accepted, assign its parameters
+        samples[itrb, itrt] = new_point
+        logLs[itrb, itrt] = logL_new
+        accept_record[0, itrt, idx_jump] += 1
+    else:
+        # the draw was rejected, assign the old parameters
+        samples[itrb, itrt] = samples[itrb - 1, itrt]
+        logLs[itrb, itrt] = logLs[itrb - 1, itrt]
+        accept_record[1, itrt, idx_jump] += 1
+
+
+def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
+    """Advance a single step step in the ptmcmc chain"""
+    n_chain = T_ladder.n_chain
+    betas = T_ladder.betas
+
+    for itrt in range(n_chain):
+        new_point, density_fac, success, idx_jump = proposal_manager.dispatch_jump(samples[itrb - 1, itrt], itrt)
+
+        if success:
+            # see if the point is in bounds, if not try to make it legal
+            if not like_obj.check_bounds(new_point):
+                # try to make the point in bounds and fail if unsuccesful
+                new_point = like_obj.correct_bounds(new_point)
+                success = like_obj.check_bounds(new_point)
+
+        # skip likelihood evaluation if proposal is marked as a failure
+        if success:
+            # if the point passes, get the likelihood
+            logL_new = like_obj.get_loglike(new_point)
+        else:
+            # Failed, ensure the point will not be accepted
+            logL_new = -np.inf
+
+        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump)
+
+
+def advance_block_ptmcmc(
+    T_ladder, logLs, samples, chain_track, proposal_manager, like_obj, tracker_manager
+):
+    """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
+    block_size = samples.shape[0] - 1
+
+    for itrb in range(1, block_size + 1):
+        if proposal_manager.exchange_manager.is_exchange_step(itrb):
+            # if the index requests an exchange, do that
+            proposal_manager.exchange_manager.do_ptmcmc_exchange(
+                itrb,
+                samples,
+                logLs,
+                T_ladder,
+                tracker_manager.exchange_tracker,
+                chain_track,
+            )
+        else:
+            # if the index is a normal jump
+            advance_step_ptmcmc(
+                itrb,
+                samples,
+                logLs,
+                T_ladder,
+                tracker_manager.accept_record,
+                proposal_manager,
+                like_obj,
+            )
+            # track the indexes of the chains, which only change on exchange steps
+            chain_track[itrb, :] = chain_track[itrb - 1, :]
+
+        # record the differential evolution buffer
+        proposal_manager.post_step_update(samples[itrb])
+
+    return samples
 
 # TODO rename this module
 # TODO add any necessary handlers for block length
@@ -17,7 +136,7 @@ class DTMCMCSampler():
     def __init__(self, T_ladder_in, like_obj, block_size, store_size,
                  tracker_manager=None, proposal_manager=None, starting_samples=None,
                  store_thin=1, n_record=-1):
-        """create the chain object
+        """Create the chain object
         inputs:
             block_size: scalar integer, the number of MCMC iterations to do per block
             store_size: scalar integer, the number of MCMC states to store
@@ -27,7 +146,8 @@ class DTMCMCSampler():
             proposal_manager: a DTMCMC.proposal_manager.ProposalManager object
             starting_samples: a (n_chain, n_par) float array of starting samples
             store_thin: scalar integer, how much to thin the stored samples by (default 1)
-            n_record: scalar integer, how many chains to store the results of (default n_cold)"""
+            n_record: scalar integer, how many chains to store the results of (default n_cold)
+        """
         self.block_size = block_size
         self.n_par = like_obj.n_par
         self.store_size = store_size
@@ -60,7 +180,7 @@ class DTMCMCSampler():
         self.initialize_trackers()
 
     def initialize_trackers(self):
-        """initialize the various trackers like acceptance rate and cycle times"""
+        """Initialize the various trackers like acceptance rate and cycle times"""
         if self.tracker_manager is None:
             track_full_exchanges = self.proposal_manager.exchange_manager.track_full_exchanges
             self.tracker_manager = TrackerManager(
@@ -70,7 +190,7 @@ class DTMCMCSampler():
                 self.n_par,
                 track_full_exchanges,
                 self.proposal_manager.n_jump_types,
-                max(self.store_size//self.block_size,1),
+                max(self.store_size // self.block_size, 1),
             )
         self.logL_means = []
         self.logL2_means = []
@@ -84,44 +204,44 @@ class DTMCMCSampler():
         self.logL_vars = []
 
     def initialize_iterators(self):
-        """initialize needed iterators"""
+        """Initialize needed iterators"""
         self.itrn = 0
 
     def instantiate_state(self):
-        """instantiate the state of the sampler"""
-        self.logLs = np.zeros((self.block_size+1, self.n_chain))
-        self.samples = np.zeros((self.block_size+1, self.n_chain, self.n_par))
-        self.chain_track = np.zeros((self.block_size+1, self.n_chain), dtype=np.int64)
+        """Instantiate the state of the sampler"""
+        self.logLs = np.zeros((self.block_size + 1, self.n_chain))
+        self.samples = np.zeros((self.block_size + 1, self.n_chain, self.n_par))
+        self.chain_track = np.zeros((self.block_size + 1, self.n_chain), dtype=np.int64)
         self.chain_track[0] = np.arange(0, self.n_chain)
         # TODO fix non-required plus one
         self.samples_store = np.zeros((self.store_size, self.n_record, self.n_par))
         self.logLs_store = np.zeros((self.store_size, self.n_record))
 
     def initialize_jumps(self):
-        """anything that needs to be done to initialize the various jumps"""
+        """Anything that needs to be done to initialize the various jumps"""
         if self.proposal_manager is None:
             self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])
 
     def initialize_state(self):
-        """initialize the samples"""
+        """Initialize the samples"""
         if self.starting_samples is None:
-            self.starting_samples = np.zeros((self.n_chain,self.n_par))
+            self.starting_samples = np.zeros((self.n_chain, self.n_par))
             for itrt in range(self.n_chain):
-                self.starting_samples[itrt,:] = self.like_obj.prior_draw()
+                self.starting_samples[itrt, :] = self.like_obj.prior_draw()
 
         self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
-            self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt,:])
+            self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt, :])
 
         for itrt in range(self.n_chain):
-            self.samples[0, itrt, :] = self.starting_samples[itrt,:]
+            self.samples[0, itrt, :] = self.starting_samples[itrt, :]
             self.logLs[0, itrt] = self.starting_logLs[itrt]
 
         # initialize the storage with just the first element
         # TODO initialize storage without breaking first block
         self.store_idx = 0
         self.store_counter = 0
-        #self.store_idx, self.store_counter = store_sample_helper(
+        # self.store_idx, self.store_counter = store_sample_helper(
         #    self.samples_store,
         #    self.logLs_store,
         #    self.samples,
@@ -132,22 +252,22 @@ class DTMCMCSampler():
         #    1,
         #    self.store_thin,
         #    0,
-        #)
+        # )
 
     def get_stored_flattened(self, n_burnin, n_chain_out=-1, thin=1):
-        """get the stored samples flattened, with additional thinning if desired and only the first n_chain_out chains"""
+        """Get the stored samples flattened, with additional thinning if desired and only the first n_chain_out chains"""
         if n_chain_out == -1:
             n_chain_out = self.n_record
 
-        n_burnin_thin = n_burnin//self.store_thin
+        n_burnin_thin = n_burnin // self.store_thin
 
-        flat_shape = ((self.samples_store.shape[0]-n_burnin_thin-1)//thin+1)*n_chain_out
+        flat_shape = ((self.samples_store.shape[0] - n_burnin_thin - 1) // thin + 1) * n_chain_out
         samples_flattened = self.samples_store[n_burnin_thin::thin, :n_chain_out, :].reshape(flat_shape, self.n_par)
         logLs_flattened = self.logLs_store[n_burnin_thin::thin, :n_chain_out].reshape(flat_shape)
         return samples_flattened, logLs_flattened
 
     def store_samples(self):
-        """store the samples from the current block in the memory block"""
+        """Store the samples from the current block in the memory block"""
         # make sure the very first value gets written to storage correctly
         self.store_idx, self.store_counter = store_sample_helper(
             self.samples_store,
@@ -163,24 +283,25 @@ class DTMCMCSampler():
         )
 
     def reset_block(self):
-        """blank all but the first sample"""
+        """Blank all but the first sample"""
         self.samples[1:, :, :] = 0.
         self.logLs[1:, :] = 0.
         self.chain_track[1:, :] = 0
 
     def loop_block(self):
-        """loop the final values of the previous block back to
-        the next block's starting parameters"""
+        """Loop the final values of the previous block back to
+        the next block's starting parameters
+        """
         self.samples[0, :, :] = self.samples[self.block_size, :, :]
         self.logLs[0, :] = self.logLs[self.block_size, :]
         self.chain_track[0, :] = self.chain_track[self.block_size, :]
 
     def block_start(self):
-        """things to execute before the main body of the block to prepare for the mcmc step"""
+        """Things to execute before the main body of the block to prepare for the mcmc step"""
         self.reset_block()
 
     def block_main(self):
-        """the main body of the block with the mcmc step"""
+        """The main body of the block with the mcmc step"""
         advance_block_ptmcmc(
             self.T_ladder,
             self.logLs,
@@ -192,9 +313,10 @@ class DTMCMCSampler():
         )
 
     def block_end(self):
-        """things to execute after the main mcmc body of the block,
+        """Things to execute after the main mcmc body of the block,
         like clean up recalculating fisher matrices, and storing results
-        as well as perhaps non-legal burn in steps"""
+        as well as perhaps non-legal burn in steps
+        """
         self.store_samples()
         self.proposal_manager.post_block_update(self.itrn, self.block_size, self.samples, self.logLs)
         self.tracker_manager.post_block_update(self.itrn, self.chain_track)
@@ -210,40 +332,40 @@ class DTMCMCSampler():
         self.logL4_means.append((self.logLs[1:]**4).mean(axis=0))
         self.logL5_means.append((self.logLs[1:]**5).mean(axis=0))
         self.logL6_means.append((self.logLs[1:]**6).mean(axis=0))
-        self.logL_prod11_means.append((self.logLs[1:,:self.n_chain-1]*self.logLs[1:,1:self.n_chain]).mean(axis=0))
-        self.logL_prod21_means.append((self.logLs[1:,:self.n_chain-1]**2*self.logLs[1:,1:self.n_chain]).mean(axis=0))
-        self.logL_prod12_means.append((self.logLs[1:,:self.n_chain-1]*self.logLs[1:,1:self.n_chain]**2).mean(axis=0))
+        self.logL_prod11_means.append((self.logLs[1:, :self.n_chain - 1] * self.logLs[1:, 1:self.n_chain]).mean(axis=0))
+        self.logL_prod21_means.append((self.logLs[1:, :self.n_chain - 1]**2 * self.logLs[1:, 1:self.n_chain]).mean(axis=0))
+        self.logL_prod12_means.append((self.logLs[1:, :self.n_chain - 1] * self.logLs[1:, 1:self.n_chain]**2).mean(axis=0))
         self.loop_block()
 
     def block_advance_iterators(self):
-        """iterators to be advanced at the end of every block"""
+        """Iterators to be advanced at the end of every block"""
         self.itrn += self.block_size
 
     def advance_block(self):
-        """advance the state of the mcmc chain 1 full block"""
+        """Advance the state of the mcmc chain 1 full block"""
         self.block_start()
         self.block_main()
         self.block_end()
         self.block_advance_iterators()
 
     def preblock_operations(self):
-        """any operations to be done before each block even starts, like resetting acceptance rate trackers at the end of burn in"""
+        """Any operations to be done before each block even starts, like resetting acceptance rate trackers at the end of burn in"""
         return
 
     def postblock_operations(self):
-        """any operations to be done after the block finishes completely, perhaps printing acceptances"""
+        """Any operations to be done after the block finishes completely, perhaps printing acceptances"""
         return
 
     def pre_Nblock_setup(self):
-        """any operations to be done before advance_N_blocks starts, maybe rearranging file outputs"""
+        """Any operations to be done before advance_N_blocks starts, maybe rearranging file outputs"""
         return
 
     def post_Nblock_teardown(self):
-        """any operations to be done after advance_N_blocks ends, maybe finishing file outputs"""
+        """Any operations to be done after advance_N_blocks ends, maybe finishing file outputs"""
         self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
 
     def advance_N_blocks(self, Nblocks):
-        """advance the current state of the chain forward Nblocks blocks"""
+        """Advance the current state of the chain forward Nblocks blocks"""
         self.pre_Nblock_setup()
         for itrk in range(Nblocks):
             self.preblock_operations()
@@ -251,120 +373,3 @@ class DTMCMCSampler():
             self.postblock_operations()
 
         self.post_Nblock_teardown()
-
-
-@njit()
-def store_sample_helper(
-    samples_store,
-    logLs_store,
-    samples_block,
-    logLs_block,
-    store_idx_in,
-    store_counter_in,
-    n_record,
-    block_size,
-    store_thin,
-    read_offset):
-    """write the samples from n_record chains to be stored using store_thin thinning,
-    store_idx and store_counter are counters for the index to write into and
-    the thinning respectively read offset needs to be zero for first write
-    and 1 otherwise to prevent duplicate writes due to wrapping"""
-    store_idx = store_idx_in
-    store_counter = store_counter_in
-    for itrk in range(read_offset, block_size + read_offset):
-        if store_counter == 0:
-            # write the sample if the thinning counter is 0
-            samples_store[store_idx, :n_record, :] = samples_block[itrk, :n_record, :]
-            logLs_store[store_idx, :n_record] = logLs_block[itrk, :n_record]
-            store_idx += 1
-        store_counter += 1
-
-        if store_counter >= store_thin:
-            # wrap the thinning counter
-            store_counter = 0
-        if store_idx >= samples_store.shape[0]:
-            # wrap the writing counter
-            store_idx = 0
-
-    return store_idx, store_counter
-
-
-def advance_block_ptmcmc(
-    T_ladder, logLs, samples, chain_track, proposal_manager, like_obj, tracker_manager
-):
-    """advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
-    block_size = samples.shape[0]-1
-
-    for itrb in range(1, block_size+1):
-        if proposal_manager.exchange_manager.is_exchange_step(itrb):
-            # if the index requests an exchange, do that
-            proposal_manager.exchange_manager.do_ptmcmc_exchange(
-                itrb,
-                samples,
-                logLs,
-                T_ladder,
-                tracker_manager.exchange_tracker,
-                chain_track,
-            )
-        else:
-            # if the index is a normal jump
-            advance_step_ptmcmc(
-                itrb,
-                samples,
-                logLs,
-                T_ladder,
-                tracker_manager.accept_record,
-                proposal_manager,
-                like_obj,
-            )
-            # track the indexes of the chains, which only change on exchange steps
-            chain_track[itrb, :] = chain_track[itrb-1, :]
-
-        # record the differential evolution buffer
-        proposal_manager.post_step_update(samples[itrb])
-
-    return samples
-
-
-def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
-    """advance a single step step in the ptmcmc chain"""
-    n_chain = T_ladder.n_chain
-    betas = T_ladder.betas
-
-    for itrt in range(0, n_chain):
-        new_point, density_fac, success, idx_jump = proposal_manager.dispatch_jump(samples[itrb-1, itrt], itrt)
-
-        if success:
-            # see if the point is in bounds, if not try to make it legal
-            if not like_obj.check_bounds(new_point):
-                # try to make the point in bounds and fail if unsuccesful
-                new_point = like_obj.correct_bounds(new_point)
-                success = like_obj.check_bounds(new_point)
-
-        # skip likelihood evaluation if proposal is marked as a failure
-        if success:
-            # if the point passes, get the likelihood
-            logL_new = like_obj.get_loglike(new_point)
-        else:
-            # Failed, ensure the point will not be accepted
-            logL_new = -np.inf
-
-        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump)
-
-@njit()
-def mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump):
-    """Helper to decide whether mcmc point is accepted or not and process accordingly"""
-    # draw to determine if we will accept
-    test = np.log(np.random.uniform(0., 1.))
-
-    # process acceptance or rejection
-    if betas[itrt]*(logL_new-logLs[itrb-1, itrt]) + density_fac > test:
-        # the draw was accepted, assign its parameters
-        samples[itrb, itrt] = new_point
-        logLs[itrb, itrt] = logL_new
-        accept_record[0, itrt, idx_jump] += 1
-    else:
-        # the draw was rejected, assign the old parameters
-        samples[itrb, itrt] = samples[itrb-1, itrt]
-        logLs[itrb, itrt] = logLs[itrb-1, itrt]
-        accept_record[1, itrt, idx_jump] += 1
