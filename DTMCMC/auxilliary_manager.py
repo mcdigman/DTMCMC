@@ -15,6 +15,7 @@ class BlankJump(AbstractJump):
 
     def __call__(self, sample_point, itrt):
         """Call the jump"""
+        del itrt
         return sample_point.copy(), 0., True
 
 

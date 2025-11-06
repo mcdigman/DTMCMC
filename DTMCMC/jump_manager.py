@@ -168,6 +168,7 @@ class JumpManager(ABC):
         inputs:
             samples: 2D float array of samples
         """
+        del samples
         return
 
     def post_block_update(self, itrn, block_size, samples, logLs):
@@ -179,4 +180,8 @@ class JumpManager(ABC):
             samples: 3D float array of samples
             logLs: 2D float array of likelihoods
         """
+        del itrn
+        del block_size
+        del samples
+        del logLs
         return

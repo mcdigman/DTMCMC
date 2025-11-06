@@ -20,6 +20,7 @@ class LadderHistoryJump(AbstractJump):
 
     def __call__(self, sample_point, itrt):
         """Draw a future point from the stored set of past points"""
+        del itrt
         itrt_target = np.random.randint(0, self.manager.T_ladder_old.n_chain)
         idx_target = np.random.randint(0, self.manager.logls_old.shape[0])
 

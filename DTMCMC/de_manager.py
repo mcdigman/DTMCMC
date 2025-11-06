@@ -35,7 +35,7 @@ def apply_de_helper(de_buffer, de_subspace_frac, itrt, sample_point, do_subspace
     new_point = sample_point + alpha * delta
 
     # make sure something changed or else flag the jump as trivial
-    nontrivial = not np.all(delta == 0.) and not alpha == 0.
+    nontrivial = not np.all(delta == 0.) and alpha != 0.
 
     # density factor is 0 for differential evolution jumps
     return new_point, 0., nontrivial

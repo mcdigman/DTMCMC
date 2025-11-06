@@ -27,6 +27,7 @@ class AbstractLikelihood(ABC):
             output:
                 logL: a scalar float likelihood
         """
+        del params_in
         return 0.
 
     @abstractmethod
@@ -45,6 +46,7 @@ class AbstractLikelihood(ABC):
             output:
                 prior_factor: a scalar density factor for the prior draw
         """
+        del params_in
         return 0.
 
     @abstractmethod
@@ -65,6 +67,7 @@ class AbstractLikelihood(ABC):
             output:
                 valid: a scalar boolean which is True is the point is valid in the prior volume and false otherwise
         """
+        del params_in
         return True
 
     def get_epsilons(self):
@@ -76,10 +79,7 @@ class AbstractLikelihood(ABC):
 
     def get_labels(self):
         """Get formatted axis labels for corner plots"""
-        labels = []
-        for itrp in range(self.n_par):
-            labels.append(r'$v_' + str(itrp) + '$')
-        return labels
+        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
 
     def format_samples_output(self, samples_store, params_fid):
         """Purely a convenience function for making corner plots:
@@ -142,6 +142,7 @@ class RectangularLikelihood(AbstractLikelihood):
 
     def prior_factor(self, v):
         """Get the density factor for prior draws assuming a uniform prior"""
+        del v
         return 0.
 
     def prior_draw(self):

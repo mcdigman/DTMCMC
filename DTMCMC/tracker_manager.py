@@ -4,6 +4,33 @@ module to store various trackers about the state of chains
 import numpy as np
 from numba import njit
 
+
+# TODO fix cycle and exchange tracking if not sorted
+@njit()
+def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold):
+    """Process whether the sampler has undergone any partial cold-hot cycles"""
+    for itrb in range(1, block_size + 1, 1):
+
+        # check if any current cold chains have been hot more recently than it was last cold
+        # if so, a hot->cold cycle has occurred
+        for itrj in range(n_cold):
+            chain_idx = chain_track[itrb, itrj]
+            if cycle_tracker[0][chain_idx] < cycle_tracker[1][chain_idx] and cycle_tracker[0][chain_idx] > -1:
+                cycle_tracker[2][chain_idx] += 1
+
+        # check if the current hot chain has been cold more recently than it was last hot
+        # if so, a cold->hot cycle has occurred
+        chain_idx = chain_track[itrb, -1]
+        if cycle_tracker[1][chain_idx] < cycle_tracker[0][chain_idx] and cycle_tracker[1][chain_idx] > -1:
+            cycle_tracker[3][chain_idx] += 1
+
+        # track which chain is currently hot
+        cycle_tracker[1][chain_track[itrb, -1]] = itrn + itrb
+
+        # track which chains are currently one of the cold chains
+        for itrj in range(n_cold):
+            cycle_tracker[0][chain_track[itrb, itrj]] = itrn + itrb
+
 # TODO clean up tracker reporting
 
 
@@ -106,7 +133,7 @@ class TrackerManager():
             a_no_nn_sym = exchange_tracker_loc[1, 1, itrt_start:]
 
             exchange_vec_nn_sym = a_yes_nn_sym / (a_yes_nn_sym + a_no_nn_sym)
-            exchange_tot_nn = a_yes_nn_sym.sum() / (a_yes_nn_sym.sum() + a_no_sym.sum())
+            exchange_tot_nn = a_yes_nn_sym.sum() / (a_yes_nn_sym.sum() + a_no_nn_sym.sum())
             exchange_full = exchange_vec_nn_sym.copy()
 
         return exchange_full, exchange_vec_nn_sym, exchange_tot_nn
@@ -166,34 +193,7 @@ class TrackerManager():
                     label_T = label_T + label_loc
                 print(label_T)
 
-            exchange_full, exchange_nn, exchange_overall = self.get_exchange_rate_summary(0)
-            exchange_full_no_cold, exchange_nn_no_cold, exchange_overall_no_cold = self.get_exchange_rate_summary(n_cold)
+            _exchange_full, _exchange_nn, exchange_overall = self.get_exchange_rate_summary(0)
+            _exchange_full_no_cold, exchange_nn_no_cold, exchange_overall_no_cold = self.get_exchange_rate_summary(n_cold)
             # TODO maybe need option to use actual nearest neighbors, not just in the ladder
             print('overall exchange rate, no cold exchange rate, no cold nearest neighbor exchange rate', exchange_overall, exchange_overall_no_cold, np.mean(exchange_nn_no_cold))
-
-
-# TODO fix cycle and exchange tracking if not sorted
-@njit()
-def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold):
-    """Process whether the sampler has undergone any partial cold-hot cycles"""
-    for itrb in range(1, block_size + 1, 1):
-
-        # check if any current cold chains have been hot more recently than it was last cold
-        # if so, a hot->cold cycle has occurred
-        for itrj in range(n_cold):
-            chain_idx = chain_track[itrb, itrj]
-            if cycle_tracker[0][chain_idx] < cycle_tracker[1][chain_idx] and cycle_tracker[0][chain_idx] > -1:
-                cycle_tracker[2][chain_idx] += 1
-
-        # check if the current hot chain has been cold more recently than it was last hot
-        # if so, a cold->hot cycle has occurred
-        chain_idx = chain_track[itrb, -1]
-        if cycle_tracker[1][chain_idx] < cycle_tracker[0][chain_idx] and cycle_tracker[1][chain_idx] > -1:
-            cycle_tracker[3][chain_idx] += 1
-
-        # track which chain is currently hot
-        cycle_tracker[1][chain_track[itrb, -1]] = itrn + itrb
-
-        # track which chains are currently one of the cold chains
-        for itrj in range(n_cold):
-            cycle_tracker[0][chain_track[itrb, itrj]] = itrn + itrb

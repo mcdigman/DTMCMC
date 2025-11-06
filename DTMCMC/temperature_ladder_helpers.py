@@ -74,11 +74,15 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
                 separate from the geometric ladder
     """
     if n_cold > n_chain:
-        raise ValueError('n cold cannot be more than total number of chains')
+        msg = 'n cold cannot be more than total number of chains'
+        raise ValueError(msg)
 
-    assert T_min > 0. and np.isfinite(T_min)
-    assert T_max > 0. and np.isfinite(T_max)
-    assert T_cold > 0. and np.isfinite(T_cold)
+    assert T_min > 0.
+    assert np.isfinite(T_min)
+    assert T_max > 0.
+    assert np.isfinite(T_max)
+    assert T_cold > 0.
+    assert np.isfinite(T_cold)
     assert T_max > T_min
     assert n_cold >= 0
     assert n_chain > 0
@@ -92,7 +96,7 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=
         # otherwise, ladder needs to be pinned to n_cold element,
         # or it will not include an element at T_min
         if n_chain == n_cold:
-            warn('all chains are cold, infinite temperature chain will be overwritten')
+            warn('all chains are cold, infinite temperature chain will be overwritten', stacklevel=2)
         else:
             if T_cold == T_min and n_cold != 0:
                 n_geo = n_chain - n_cold
@@ -179,7 +183,7 @@ def standardize_input_vars(betas_in, logL_vars_in):
 
     if np.any(~np.isfinite(logL_vars_use)):
         # Handle non-finite variance just by excising those points
-        warn('Nonfinite variance requested, results may not be meaningful')
+        warn('Nonfinite variance requested, results may not be meaningful', stacklevel=2)
         betas_use = betas_use[np.isfinite(logL_vars_use)]
         logL_vars_use = logL_vars_use[np.isfinite(logL_vars_use)]
 
@@ -240,7 +244,8 @@ def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
 
     if betas_use.size == 0:
         # Somehow there are no valid betas; there is really nothing we can do to recover
-        raise ValueError('No valid points available to construct ladder')
+        msg = 'No valid points available to construct ladder'
+        raise ValueError(msg)
 
     assert betas_use.size > 0
 
@@ -259,18 +264,18 @@ def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
     # If the splines are non-monotonic it could produce nonsense negative temperatures
     if betas_use.size == 1:
         beta_grid_got = np.full(n_chain_need, betas_use[0])
-        warn('Only one unique input temperature: cannot generate a meaningful grid')
+        warn('Only one unique input temperature: cannot generate a meaningful grid', stacklevel=2)
     else:
         beta_interp = InterpolatedUnivariateSpline(heat_capacity_integ, betas_use, k=1, ext=3)
         beta_grid_got = beta_interp(heat_grid_need)
 
     if np.any(beta_grid_got < 0.):
-        warn('Unexpected negative temperatures: defaulting to abs')
+        warn('Unexpected negative temperatures: defaulting to abs', stacklevel=2)
         beta_grid_got[beta_grid_got < 0.] = np.abs(beta_grid_got[beta_grid_got < 0.])
         beta_grid_got = np.sort(beta_grid_got)[::-1]
 
     if not np.all(np.diff(beta_grid_got) <= 0.):
-        warn('Temperature grid is not sorted correctly')
+        warn('Temperature grid is not sorted correctly', stacklevel=2)
         beta_grid_got = np.sort(beta_grid_got)[::-1]
 
     assert np.all(beta_grid_got >= 0.)
@@ -293,7 +298,8 @@ def entropy_spaced_betas(
 ):
     """Estimate constant entropy increase spaced chain from an input file of betas and logLs"""
     if n_cold > n_chain_need:
-        raise ValueError('cannot have more cold chains than total chains')
+        msg = 'cannot have more cold chains than total chains'
+        raise ValueError(msg)
 
     assert T_cold >= 0.
     assert np.all(logL_vars_in >= 0.)
@@ -317,7 +323,7 @@ def entropy_spaced_betas(
         Ts_got[-1] = np.inf
 
         if n_chain_need == n_cold:
-            warn('all chains are cold, infinite temperature chain will be overwritten')
+            warn('all chains are cold, infinite temperature chain will be overwritten', stacklevel=2)
 
     # TODO add option to do include cold spacing adaptively or not
     if n_cold > 0:

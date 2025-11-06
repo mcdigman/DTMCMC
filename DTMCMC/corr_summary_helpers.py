@@ -254,7 +254,6 @@ class CorrelationSummary():
 
         for itrp in range(n_par):
             est_vars_cross[itrp] = 0.
-            cov_cross_cut = 0
 
             get_blockwise_vars(N_blocks, n_burnin_thin, mcc.samples_store, block_size, 0, itrp, blockwise_vars, blockwise_means)
             get_blockwise_vars_scramble(N_blocks, n_cold, n_burnin_thin, mcc.samples_store, block_size, 0, itrp, blockwise_vars_scramble, blockwise_means_scramble)
@@ -268,7 +267,7 @@ class CorrelationSummary():
                 n_eff_preds_auto[itrp] = n_tot / (est_vars_auto[itrp] / autocorr_lim[0])
 
                 if self.do_cross:
-                    cov_cross_lim, cov_cross_cut, est_vars_cross[itrp] = get_crosscorr_sum(mcc, n_burnin_thin, itrp, autocorr_lim, autocorr_cut, obs_var_loc, n_eff_preds_auto)
+                    cov_cross_lim, _cov_cross_cut, est_vars_cross[itrp] = get_crosscorr_sum(mcc, n_burnin_thin, itrp, autocorr_lim, autocorr_cut, obs_var_loc, n_eff_preds_auto)
                     self.cov_cross_lims.append(cov_cross_lim)
 
                 est_vars[itrp] = est_vars_auto[itrp] + est_vars_cross[itrp]

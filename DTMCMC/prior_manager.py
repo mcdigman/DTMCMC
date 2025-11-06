@@ -14,6 +14,7 @@ class PriorFullJump(AbstractJump):
         AbstractJump.__init__(self, 'Prior All-D')
 
     def __call__(self, sample_point, itrt):
+        del itrt
         new_point = self.manager.like_obj.prior_draw()
         density_fac = self.manager.like_obj.prior_factor(sample_point) - self.manager.like_obj.prior_factor(new_point)
         return new_point, density_fac, True

@@ -76,7 +76,8 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
 
     # cannot do this operation in place if y is not contiguous, though could copy
     if not (A.flags.f_contiguous and B.flags.f_contiguous):
-        raise ValueError('x must be contiguous and y must be fortran contiguous')
+        msg = 'x must be contiguous and y must be fortran contiguous'
+        raise ValueError(msg)
 
     if unitdiag:
         DIAG = np.array([ord('U')], np.int32)
@@ -90,7 +91,8 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
     else:
         _LDB, _NB = y.shape
     if _LDB != _N or _M != _N:
-        raise ValueError('x must be square and y must have same first dimension as x')
+        msg = 'x must be square and y must have same first dimension as x'
+        raise ValueError(msg)
 
     N = np.array(_N, np.int32)
     NRHS = np.array(_NB, np.int32)
@@ -102,7 +104,8 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
     def check_info(info):
         if info[0] != 0:
             print(info)
-            raise RuntimeError('INFO indicates problem with dtrtrs')
+            msg = 'INFO indicates problem with dtrtrs'
+            raise RuntimeError(msg)
 
     dtrtrs_fn(UPLO.ctypes,
               TRANS.ctypes,

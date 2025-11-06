@@ -181,7 +181,8 @@ def do_ptmcmc_exchange(
             targets[0] = 0
         no_repeat = False
     else:
-        assert False
+        msg = f'Unrecognized target_select: {target_select}'
+        raise ValueError(msg)
 
     logLs_cur = np.zeros(n_chain)
     logLs_cur[:] = logLs[itrb]

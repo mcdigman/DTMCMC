@@ -74,7 +74,8 @@ def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_
 
         if success:
             # see if the point is in bounds, if not try to make it legal
-            if not like_obj.check_bounds(new_point):
+            check_success = like_obj.check_bounds(new_point)
+            if not check_success:
                 # try to make the point in bounds and fail if unsuccesful
                 new_point = like_obj.correct_bounds(new_point)
                 success = like_obj.check_bounds(new_point)
@@ -367,7 +368,7 @@ class DTMCMCSampler():
     def advance_N_blocks(self, Nblocks):
         """Advance the current state of the chain forward Nblocks blocks"""
         self.pre_Nblock_setup()
-        for itrk in range(Nblocks):
+        for _itrk in range(Nblocks):
             self.preblock_operations()
             self.advance_block()
             self.postblock_operations()
