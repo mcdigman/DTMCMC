@@ -50,8 +50,8 @@ if __name__ == '__main__':
 
     # create needed objects
     # T_ladder = GeometricTemperatureLadder(n_chain, n_cold=n_cold, T_max=T_max,T_min=80.,T_cold=80.)  # get the temperature ladder object
-    # T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_combo2.npy','vars_cake_combo2.npy',use_inf_final=True,T_cold=1.,correct_last=False)
-    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'Ts_cake_gold.npy', 'vars_cake_gold.npy', use_inf_final=True, T_cold=1., correct_last=False)
+    # T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_combo2.npy','vars_cake_combo2.npy',n_inf_final=1,T_cold=1.,correct_last=False)
+    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'Ts_cake_gold.npy', 'vars_cake_gold.npy', n_inf_final=1, T_cold=1., correct_last=False)
 
     like_obj = trial_likelihood.CakeLikelihood(n_par)
     params_true = like_obj.correct_bounds(params_true)                 # make sure the conventions on the parameters match

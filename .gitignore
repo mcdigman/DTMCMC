@@ -4,3 +4,7 @@ profiles/
 .idea/
 **/.swp
 *.swp
+DTMCMC.egg-info/
+.ipynb_checkpoints/
+bak/
+build/

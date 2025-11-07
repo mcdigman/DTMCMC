@@ -85,7 +85,7 @@ if do_recalc:
     betas_in = Ts_to_betas(Ts_in)
     cumulants = cumulants_from_Ts(Ts_in)
 
-# betas_geo, Ts_geo = geometric_spaced_betas(8192, 0, 1, 1.e-1, 1.e12, use_inf_final=True)
+# betas_geo, Ts_geo = geometric_spaced_betas(8192, 0, 1, 1.e-1, 1.e12, n_inf_final=1)
     betas_geo = np.linspace(1.3, 0, 8192)
     Ts_geo = betas_to_Ts(betas_geo)
 # Ts_geo = np.hstack([np.linspace(0.8,1.e5,8191),np.inf])
@@ -99,7 +99,7 @@ if do_recalc:
     betas_combine = Ts_to_betas(Ts_combine)
 
     for itrb in range(3):
-        betas_recalc, Ts_recalc = entropy_spaced_betas(8192, 0, Ts_combine, cumulants_combine[1], use_inf_final=True, T_cold=1., correct_last=True)
+        betas_recalc, Ts_recalc = entropy_spaced_betas(8192, 0, Ts_combine, cumulants_combine[1], n_inf_final=1, T_cold=1., correct_last=True)
         Ts_log.append(Ts_recalc)
         cumulants_recalc = cumulants_from_Ts(Ts_recalc)
         Ts_combine = np.hstack([Ts_recalc, Ts_combine])
