@@ -1,0 +1,6 @@
+.DS_store
+**/__pycache__/
+profiles/
+.idea/
+**/.swp
+*.swp
