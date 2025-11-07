@@ -101,9 +101,9 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final: i
     # otherwise, ladder needs to be pinned to n_cold element,
     # or it will not include an element at T_min
     if n_inf_final > 0 and n_chain - n_cold == n_inf_final:
-        warn('No geometric spaced chains can be created', stacklevel=2)
+        warn('No finite temperature chains will be created', stacklevel=2)
     elif n_chain - n_cold < n_inf_final:
-        warn('Too many chains are cold, infinite temperature chain will be overwritten', stacklevel=2)
+        warn('Some infinite temperature chains will be overwritten', stacklevel=2)
         n_inf_final = n_chain - n_cold
 
     if T_cold == T_min and n_cold != 0:
@@ -310,7 +310,7 @@ def entropy_spaced_betas(
 ):
     """Estimate constant entropy increase spaced chain from an input file of betas and logLs"""
     if n_cold > n_chain_need:
-        msg = 'cannot have more cold chains than total chains'
+        msg = 'n cold cannot be more than total number of chains'
         raise ValueError(msg)
 
     assert T_cold >= 0.

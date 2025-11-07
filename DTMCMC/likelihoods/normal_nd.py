@@ -2,7 +2,17 @@
 import numpy as np
 from numba import njit
 
-from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
+
+
+# @njit()
+def get_loglike(v):
+    """Get an n dimensional gaussian likelihood"""
+    const = np.log(1. / np.sqrt(2. * np.pi))  # normalization constant
+    res = v.shape[0] * const
+    for itrp in range(v.shape[0]):
+        res += -1 / 2 * v[itrp]**2
+    return res
 
 
 # n dimensional unit normal motivated by the 100d considerations in
@@ -23,16 +33,6 @@ class GaussianLikelihood(RectangularLikelihood):
         return get_loglike(v)
 
 
-# @njit()
-def get_loglike(v):
-    """Get an n dimensional gaussian likelihood"""
-    const = np.log(1. / np.sqrt(2. * np.pi))  # normalization constant
-    res = v.shape[0] * const
-    for itrp in range(v.shape[0]):
-        res += -1 / 2 * v[itrp]**2
-    return res
-
-
 @njit()
 def gen_draws(n_draws, n_par, cutoff, attempt_lim=10000):
     """Get posterior draws"""
@@ -40,10 +40,10 @@ def gen_draws(n_draws, n_par, cutoff, attempt_lim=10000):
     for itrk in range(n_draws):
         itra = 0
         draw_loc = np.random.normal(0., 1, n_par)
-        while not check_bounds(draw_loc, cutoff):
+        while not check_bounds_rectangular(draw_loc, cutoff):
             if itra == attempt_lim:
-                print('failed to find valid posterior point')
-                assert False
+                msg = 'failed to find valid posterior point'
+                raise RuntimeError(msg)
 
             draw_loc = np.random.normal(0., 1, n_par)
         draws[itrk] = draw_loc
@@ -59,10 +59,11 @@ def drawposterior(n, Ts, n_par, cutoff):
             if np.isfinite(Ts[itrt]):
                 sample_loc = np.random.normal(0., np.sqrt(Ts[itrt]), n_par)
                 itrlim = 0
-                while not check_bounds(sample_loc, cutoff):
+                while not check_bounds_rectangular(sample_loc, cutoff):
                     if itrlim == 100000:
                         print(itrt, itrn, itrlim)
-                        assert False
+                        msg = 'failed to find valid posterior point'
+                        raise RuntimeError(msg)
                     sample_loc = np.random.normal(0., np.sqrt(Ts[itrt]), n_par)
                     itrlim += 1
                 samples[itrn, itrt] = sample_loc

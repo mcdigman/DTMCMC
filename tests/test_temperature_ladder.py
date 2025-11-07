@@ -44,7 +44,7 @@ def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final):
 def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final):
     """Test the entropy based spacing produces results that makes sense"""
     if n_cold > n_chain:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='n cold cannot be more than total number of chain'):
             T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
 
         return
@@ -90,7 +90,7 @@ def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final):
     T_max = 1000.
 
     if n_cold > n_chain:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='n cold cannot be more than total number of chain'):
             betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
         return

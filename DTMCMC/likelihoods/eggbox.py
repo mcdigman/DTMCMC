@@ -1,5 +1,5 @@
 """the eggbox likelihood in n dimensions"""
-# see MNRAS 455, 1919–1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
+# see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
 import numba as nb
 import numpy as np
 from numba import njit
@@ -16,6 +16,46 @@ low_lim = -(5 * np.pi / 2.)
 high_lim = (5 * np.pi / 2.)
 
 n_pi_range = np.int64((high_lim - low_lim) / np.pi)
+
+
+@njit()
+def get_loglike(x, n_par):
+    """Get the eggbox likelihood in n dimensions"""
+    prod = 1.
+    for itrp in range(n_par):
+        prod *= (np.cos(x[itrp]))
+    return (prod + 1.)**betap
+
+
+@njit()
+def prior_draw(n_par):
+    """Get a prior draw"""
+    return np.random.uniform(low_lim, high_lim, n_par)
+
+
+@njit()
+def prior_factor(v, n_par):
+    """Get the denstiy factor for prior draws"""
+    del v
+    del n_par
+    return 0.
+
+
+@njit()
+def correct_bounds(v, n_par):
+    """Correct parameters to be in boundaries"""
+    for itrp in range(n_par):
+        v[itrp] = reflect_into_range(v[itrp], low_lim, high_lim)
+    return v
+
+
+@njit()
+def check_bounds(v):
+    """Check if a sample is within the prior range"""
+    for itrp in range(v.size):
+        if not low_lim < v[itrp] < high_lim:
+            return False
+    return True
 
 
 @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])
@@ -52,50 +92,9 @@ class Likelihood():
         return check_bounds(v)
 
 
-@njit()
-def get_loglike(x, n_par):
-    """Get the eggbox likelihood in n dimensions"""
-    prod = 1.
-    for itrp in range(n_par):
-        prod *= (np.cos(x[itrp]))
-    return (prod + 1.)**betap
-
-
-@njit()
-def prior_draw(n_par):
-    """Get a prior draw"""
-    return np.random.uniform(low_lim, high_lim, n_par)
-
-
-@njit()
-def prior_factor(v, n_par):
-    """Get the denstiy factor for prior draws"""
-    return 0.
-
-
-@njit()
-def correct_bounds(v, n_par):
-    """Correct parameters to be in boundaries"""
-    for itrp in range(n_par):
-        v[itrp] = reflect_into_range(v[itrp], low_lim, high_lim)
-    return v
-
-
-@njit()
-def check_bounds(v):
-    """Check if a sample is within the prior range"""
-    for itrp in range(v.size):
-        if not low_lim < v[itrp] < high_lim:
-            return False
-    return True
-
-
 def get_labels(n_par):
     """Get useful labels for corner plots"""
-    labels = []
-    for itrp in range(n_par):
-        labels.append(r'$v_' + str(itrp) + '$')
-    return labels
+    return [r'$v_' + str(itrp) + '$' for itrp in range(n_par)]
 
 
 def format_samples_output(samples, params_fid):
@@ -150,14 +149,14 @@ def gen_nd_modelist(n_par=5):
         idx_max = np.int64(idx_max) + 2
     else:
         idx_max = np.int64(idx_max) + 1
-    targ_like = loglike(np.zeros(n_par), n_par)
+    targ_like = get_loglike(np.zeros(n_par), n_par)
     modes_canonical_got = np.zeros(n_pi_range**n_par, dtype=np.int64) - 1
     mode_idxs = np.zeros(n_par, dtype=np.int64)
-    for itrm in range(idx_max**n_par):
+    for _itrm in range(idx_max**n_par):
         pos_loc = np.zeros(n_par)
         for itrp in range(n_par):
             pos_loc[itrp] = low_lim + mode_idxs[itrp] * np.pi / 2
-        res = loglike(pos_loc, n_par)
+        res = get_loglike(pos_loc, n_par)
         # check mode is almost as likely as the mode at (0,0)
         if res > 0.9 * targ_like:
             mode_loc.append(pos_loc.copy())

@@ -45,7 +45,7 @@ def test_known_result():
 
     vars_in = np.full(n_chain_in, 1.) / beta_grid_in**2
 
-    beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+    _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
     assert np.allclose(T_grid_in, T_grid_got, atol=1.e-10, rtol=1.e-10)
@@ -70,7 +70,7 @@ def test_ignore_invalid1():
     T_grid_in = np.hstack([T_grid_in, np.full(50, 0.)])
     vars_in = np.hstack([vars_in, np.full(50, 1.)])
 
-    beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+    _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
     assert np.allclose(T_grid_in[:n_chain_in], T_grid_got, atol=1.e-10, rtol=1.e-10)
@@ -96,7 +96,7 @@ def test_ignore_invalid2():
     vars_in = np.hstack([vars_in, np.full(50, np.inf)])
 
     with pytest.warns(UserWarning):
-        beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+        _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
     assert np.allclose(T_grid_in[:n_chain_in], T_grid_got, atol=1.e-10, rtol=1.e-10)
@@ -122,13 +122,13 @@ def test_ignore_invalid3():
     vars_in = np.hstack([vars_in, np.full(50, 1.), np.full(50, np.inf)])
 
     with pytest.warns(UserWarning):
-        beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+        _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
     assert np.allclose(T_grid_in[:n_chain_in], T_grid_got, atol=1.e-10, rtol=1.e-10)
 
 
-@pytest.mark.parametrize('n_chain_need,correct_last', [(1, False), (2, False), (3, False), (4, False), (8, False), (15, False), (16, False), (32, False), (64, False), (128, False), (2048, False), (10000, False),
+@pytest.mark.parametrize(('n_chain_need', 'correct_last'), [(1, False), (2, False), (3, False), (4, False), (8, False), (15, False), (16, False), (32, False), (64, False), (128, False), (2048, False), (10000, False),
                                                       (1, True), (2, True), (3, True), (4, True), (8, True), (15, True), (16, True), (32, True), (64, True), (128, True), (2048, True), (10000, True)])
 def test_interpolation_case(n_chain_need, correct_last):
     """This is a test case encountered from a real run that broke the use of cubic spline interpolation"""
@@ -148,7 +148,7 @@ def test_interpolation_case(n_chain_need, correct_last):
     T_prediction_sensibility_check(T_grid_got, 1., 1., 1)
 
 
-@pytest.mark.parametrize('n_chain_in,n_chain_need', [(2, 1), (2, 2), (2, 3), (2, 4), (2, 100), (3, 1), (3, 2), (3, 3), (3, 4), (3, 100), (4, 1), (4, 2), (4, 3), (4, 4), (4, 100), (100, 100)])
+@pytest.mark.parametrize(('n_chain_in', 'n_chain_need'), [(2, 1), (2, 2), (2, 3), (2, 4), (2, 100), (3, 1), (3, 2), (3, 3), (3, 4), (3, 100), (4, 1), (4, 2), (4, 3), (4, 4), (4, 100), (100, 100)])
 def test_zero_T_handling(n_chain_in, n_chain_need):
     """Test handling if there is a zero temperature chain included"""
     n_cold = 1
@@ -158,7 +158,10 @@ def test_zero_T_handling(n_chain_in, n_chain_need):
     n_inf_final_in = 1
     n_inf_final_out = 0
 
-    if n_chain_in - 1 <= n_cold + n_inf_final_in and n_inf_final_in > 0:
+    if n_chain_in - 1 == n_cold + n_inf_final_in and n_inf_final_in > 0:
+        with pytest.warns(UserWarning):
+            beta_grid_in, T_grid_in = tlh.geometric_spaced_betas(n_chain_in - 1, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final_in, sort_mode=0)
+    elif n_chain_in - 1 < n_cold + n_inf_final_in and n_inf_final_in > 0:
         with pytest.warns(UserWarning):
             beta_grid_in, T_grid_in = tlh.geometric_spaced_betas(n_chain_in - 1, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final_in, sort_mode=0)
     else:
@@ -172,9 +175,9 @@ def test_zero_T_handling(n_chain_in, n_chain_need):
 
     if (n_chain_need == n_cold and n_inf_final_out > 0) or n_chain_in == 2:
         with pytest.warns(UserWarning):
-            beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+            _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
     else:
-        beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+        _beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
 
@@ -186,10 +189,10 @@ def test_zero_raises1():
     n_inf_final_out = 1
     T_cold = 1.
 
-    with pytest.raises(ValueError):
-        T_grid_in = np.zeros(10)
-        vars_in = np.zeros(10)
-        beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+    T_grid_in = np.zeros(10)
+    vars_in = np.zeros(10)
+    with pytest.raises(ValueError, match='No valid points available to construct ladder'):
+        _beta_grid_got, _T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
 
 def test_zero_raises2():
@@ -199,11 +202,10 @@ def test_zero_raises2():
     n_inf_final_out = 1
     T_cold = 1.
 
-    with pytest.raises(ValueError):
-        T_grid_in = np.full(10, T_cold)
-        vars_in = np.full(10, np.inf)
-        with pytest.warns(UserWarning):
-            beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+    T_grid_in = np.full(10, T_cold)
+    vars_in = np.full(10, np.inf)
+    with pytest.raises(ValueError, match='No valid points available to construct ladder'), pytest.warns(UserWarning):
+        _beta_grid_got, _T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
 
 def test_zero_raises3():
@@ -213,13 +215,12 @@ def test_zero_raises3():
     n_inf_final_out = 1
     T_cold = 1.
 
-    with pytest.raises(ValueError):
-        T_grid_in = np.full(10, T_cold)
-        vars_in = np.full(10, np.inf)
-        T_grid_in[5:] = 0.
-        vars_in[5:] = 0.
-        with pytest.warns(UserWarning):
-            beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
+    T_grid_in = np.full(10, T_cold)
+    vars_in = np.full(10, np.inf)
+    T_grid_in[5:] = 0.
+    vars_in[5:] = 0.
+    with pytest.raises(ValueError, match='No valid points available to construct ladder'), pytest.warns(UserWarning):
+        _beta_grid_got, _T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
 
 def gen_combos_entropy1():
@@ -237,7 +238,7 @@ def gen_combos_entropy1():
                                         for n_inf_final_in in [1, 0]:
                                             for correct_last in [True, False]:
                                                 for n_inf_final_out in [1, 0]:
-                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))
+                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))  # noqa: PERF401
     return combos_loc
 
 
@@ -256,7 +257,7 @@ def gen_combos_entropy2():
                                         for n_inf_final_in in [1, 0]:
                                             for correct_last in [True, False]:
                                                 for n_inf_final_out in [1]:
-                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))
+                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))  # noqa: PERF401
     return combos_loc
 
 
@@ -275,7 +276,7 @@ def gen_combos_entropy3():
                                         for n_inf_final_in in [1, 0]:
                                             for correct_last in [True, False]:
                                                 for n_inf_final_out in [1, 0]:
-                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))
+                                                    combos_loc.append((n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out))  # noqa: PERF401
     return combos_loc
 
 
@@ -289,7 +290,7 @@ def gen_combos_geo():
                     for T_max in [0.9, 1., 1.1]:
                         if T_max > T_min:
                             for n_inf_final_in in [True, False]:
-                                combos_loc.append((n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in))
+                                combos_loc.append((n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in))  # noqa: PERF401
     return combos_loc
 
 
@@ -300,11 +301,11 @@ combos_entropy.extend(gen_combos_entropy2())
 combos_geo = gen_combos_geo()
 
 
-@pytest.mark.parametrize('n_cold,n_chain_in,T_cold,T_min,T_max,n_inf_final_in', combos_geo)
+@pytest.mark.parametrize(('n_cold', 'n_chain_in', 'T_cold', 'T_min', 'T_max', 'n_inf_final_in'), combos_geo)
 def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in):
     """Test some random grids with power law variances"""
     if n_cold > n_chain_in:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='n cold cannot be more than total number of chains'):
             tlh.geometric_spaced_betas(n_chain_in, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final_in, sort_mode=0)
         return
     if n_cold + n_inf_final_in >= n_chain_in and n_inf_final_in > 0:
@@ -327,7 +328,7 @@ def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_i
     T_prediction_sensibility_check(T_grid_in, T_min, T_cold, n_cold)
 
 
-@pytest.mark.parametrize('n_cold,n_chain_in,n_chain_need,T_cold,T_min,T_max,power_law_exp,n_inf_final_in,correct_last,n_inf_final_out', combos_entropy)
+@pytest.mark.parametrize(('n_cold', 'n_chain_in', 'n_chain_need', 'T_cold', 'T_min', 'T_max', 'power_law_exp', 'n_inf_final_in', 'correct_last', 'n_inf_final_out'), combos_entropy)
 def test_random_data_entropy(n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out):
     """Test some random grids with power law variances"""
     if n_cold + n_inf_final_in >= n_chain_in and n_inf_final_in > 0:
@@ -356,16 +357,16 @@ def test_random_data_entropy(n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_
     print('Variances: ', vars_in)
 
     if n_cold > n_chain_need:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match='n cold cannot be more than total number of chains'):
             beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=correct_last, sort_mode=0)
         return
     if n_cold == n_chain_in:
         with pytest.warns(UserWarning):
             beta_grid_got, T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=correct_last, sort_mode=0)
-            if n_inf_final_out:
-                if n_chain_need > n_cold:
-                    assert np.all(T_grid_got[n_cold:n_chain_need - 1] == T_grid_got[n_cold])  # if we only have one value, then the results all must be the same
-                    assert ~np.isfinite(T_grid_got[-1])
+        if n_inf_final_out:
+            if n_chain_need > n_cold:
+                assert np.all(T_grid_got[n_cold:n_chain_need - 1] == T_grid_got[n_cold])  # if we only have one value, then the results all must be the same
+                assert ~np.isfinite(T_grid_got[-1])
 
     else:
         if (n_cold + n_inf_final_out >= n_chain_need and n_inf_final_out > 0) or (n_cold == 0 and n_chain_in == 1):
