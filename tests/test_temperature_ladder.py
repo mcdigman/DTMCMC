@@ -82,51 +82,6 @@ def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final):
     unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
 
-@pytest.mark.parametrize('n_cold,n_chain,T_cold', test_set1)
-def test_entropy_spacing_fromfile_noinf(n_cold, n_chain, T_cold):
-    """Test the entropy based spacing produces results that makes sense"""
-    n_inf_final = 0
-    if n_cold > n_chain:
-        with pytest.raises(ValueError):
-            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
-
-        return
-
-    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
-    Ts_in = T_ladder.Ts
-
-    finite_mask = np.isfinite(Ts_in)
-    positive_mask = Ts_in > 0
-    joint_mask = finite_mask & positive_mask
-
-    # Strict technical requirements for non-negative temperatures
-    assert Ts_in.size == n_chain              # check correct number of chains
-    assert np.sum(Ts_in == T_cold) >= n_cold  # check correct number of cold chains
-    assert not np.any(Ts_in < 0.)             # check no negative temperature chains
-    assert_array_equal(T_ladder.Ts, Ts_in)       # check object matches
-    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
-    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
-    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
-
-    # Not technically required, but expected in this test case
-    if T_cold != np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold  # check correct number of cold chains
-        if n_chain > n_cold:
-            # check not inserting more non infinite chains
-            # note this method does not *guarantee* temps are finite
-            # TODO should this guarantee temps are finite?
-            n_inf_final = np.sum((~finite_mask) & positive_mask)
-            assert n_inf_final <= 1
-        else:
-            n_inf_final = 0
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)  # check non-cold chains are sorted
-    else:
-        n_inf_final = min(n_cold + n_inf_final, n_chain) - n_cold
-        assert np.sum(Ts_in == T_cold) == n_inf_final + n_cold
-
-    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
-
-
 @pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 @pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
 def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final):
@@ -177,55 +132,6 @@ def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final):
         assert np.all(np.diff(Ts_in[n_cold:min(Ts_in.size, Ts_in.size - n_nonfinite + 1)]) >= 0.)  # check non-cold chains are sorted
     else:
         assert np.sum(Ts_in == T_cold) == min(n_cold + n_inf_final, n_chain)
-
-    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
-
-
-@pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
-def test_geometric_spacing(n_cold, n_chain, T_cold):
-    """Test the geoemtric based spacing produces results that makes sense"""
-    T_min = 1.
-    T_max = 1000.
-    n_inf_final = 0
-
-    if n_cold > n_chain:
-        with pytest.raises(ValueError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
-
-        return
-
-    if T_cold == np.inf:
-        with pytest.raises(AssertionError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
-        return
-    betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
-    T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
-
-    finite_mask = np.isfinite(Ts_in)
-    positive_mask = Ts_in > 0
-    joint_mask = finite_mask & positive_mask
-
-    print(Ts_in)
-    print(T_ladder.Ts)
-    print(T_cold)
-    # Strict technical requirements for non-negative temperatures
-    assert Ts_in.size == n_chain                # check correct number of chains
-    assert np.sum(Ts_in == T_cold) >= n_cold      # check correct number of cold chains
-    assert not np.any(Ts_in < 0.)               # check no negative temperature chains
-    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
-    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
-    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
-    assert_array_equal(T_ladder.Ts, Ts_in)         # check object matches
-    assert_array_equal(T_ladder.betas, betas_in)         # check object matches
-
-    # Not technically required, but expected in this test case
-    if T_cold != np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold  # check correct number of cold chains
-        if n_chain > n_cold:
-            assert np.sum(~finite_mask) == 0      # check no infinite temperature chain exists
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)  # check non-cold chains are sorted
-    else:
-        assert np.sum(Ts_in == T_cold) == min(n_cold + 1, n_chain)
 
     unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
