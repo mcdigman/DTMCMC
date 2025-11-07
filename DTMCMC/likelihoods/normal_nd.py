@@ -21,7 +21,7 @@ def get_loglike(v):
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
 class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=100, cutoff=5):
+    def __init__(self, n_par=100, cutoff=5) -> None:
         """Create the class and store any object specific variables"""
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)

@@ -6,7 +6,7 @@ import scipy
 import DTMCMC.temperature_ladder_helpers as th
 
 
-def print_diagnostic_commentary(mcc):
+def print_diagnostic_commentary(mcc) -> None:
     print('==========Descriptive Summary===========')
     print('Sampler has %5d chains, of which %5d are cold' % (mcc.n_chain, mcc.n_cold))
     print('Sampler reports having run for %10d iterations' % (mcc.itrn))

@@ -7,7 +7,7 @@ from numba import njit
 
 # TODO fix cycle and exchange tracking if not sorted
 @njit()
-def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold):
+def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold) -> None:
     """Process whether the sampler has undergone any partial cold-hot cycles"""
     for itrb in range(1, block_size + 1, 1):
 
@@ -37,7 +37,7 @@ def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold):
 class TrackerManager():
     """track various things about chains like acceptance rates and cycle times"""
 
-    def __init__(self, n_cold, n_chain, block_size, n_par, track_full_exchanges, n_jump_types, n_block_archive):
+    def __init__(self, n_cold, n_chain, block_size, n_par, track_full_exchanges, n_jump_types, n_block_archive) -> None:
         self.n_cold = n_cold
         self.n_chain = n_chain
         self.block_size = block_size
@@ -54,7 +54,7 @@ class TrackerManager():
         self.exchange_archive = []
         self.itrn_archive = []
 
-    def initialize_trackers(self):
+    def initialize_trackers(self) -> None:
         """Initialize the various trackers like acceptance rate and cycle times"""
         # cycle_tracker stores 4 integer variables related to tracking the number of cycles
         # the time the chain was last at T=T_cold, the time the chain was last at T=maximum index
@@ -74,7 +74,7 @@ class TrackerManager():
             # track limited exchange information
             self.exchange_tracker = np.zeros((2, 2, self.n_chain), dtype=np.int64)
 
-    def post_block_update(self, itrn, chain_track):
+    def post_block_update(self, itrn, chain_track) -> None:
         """Process anything the tracker needs to do after every block"""
         self.process_chain_cycles(itrn, chain_track)
 
@@ -87,7 +87,7 @@ class TrackerManager():
             self.exchange_archive.append(self.exchange_tracker.copy())
             self.itrn_archive.append(itrn + self.block_size)
 
-    def process_chain_cycles(self, itrn, chain_track):
+    def process_chain_cycles(self, itrn, chain_track) -> None:
         """Process whether the sampler has undergone any partial cold-hot cycles"""
         process_chain_cycles(self.cycle_tracker, itrn, self.block_size, chain_track, self.n_cold)
 
@@ -142,7 +142,7 @@ class TrackerManager():
         """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone"""
         return np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
 
-    def print_tracker_summary(self, n_cold, Ts, proposal_manager, last_itrn=-1):
+    def print_tracker_summary(self, n_cold, Ts, proposal_manager, last_itrn=-1) -> None:
         """Print a summmary of results from this tracker object"""
         with np.errstate(invalid='ignore', divide='ignore'):
             if last_itrn == -1 and len(self.itrn_archive) >= 2:

@@ -13,14 +13,14 @@ from DTMCMC.correction_helpers import reflect_into_range
 class AbstractLikelihood(ABC):
     """abstract likelihood object"""
 
-    def __init__(self, n_par):
+    def __init__(self, n_par) -> None:
         """Initialize the likelihood
             input: n_par integer, how many dimensions in the parameter space
         """
         self.n_par = n_par
 
     @abstractmethod
-    def get_loglike(self, params_in):
+    def get_loglike(self, params_in) -> float:
         """Get the log likelihood at the specified parameters:
             input:
                 params_in: a 1D float array of parameters
@@ -39,7 +39,7 @@ class AbstractLikelihood(ABC):
         return np.zeros(1)
 
     @abstractmethod
-    def prior_factor(self, params_in):
+    def prior_factor(self, params_in) -> float:
         """Get the prior density factor for the input parameters
             input:
                 params_in: the parameters to consider
@@ -60,7 +60,7 @@ class AbstractLikelihood(ABC):
         return np.zeros(params_in.size)
 
     @abstractmethod
-    def check_bounds(self, params_in):
+    def check_bounds(self, params_in) -> bool:
         """Check if the specified point is within the prior volume
             input:
                 params_in: the point to be checkout
@@ -110,7 +110,7 @@ def prior_draw_rectangular(n_par, low_lims, high_lims):
 
 # TODO handle trivial bounds correctly
 @njit()
-def check_bounds_rectangular(v, low_lims, high_lims):
+def check_bounds_rectangular(v, low_lims, high_lims) -> bool:
     """Check if a sample is within the prior range"""
     for itrp in range(v.size):
         if not low_lims[itrp] <= v[itrp] <= high_lims[itrp]:
@@ -123,7 +123,7 @@ class RectangularLikelihood(AbstractLikelihood):
     by default assume a uniform prior
     """
 
-    def __init__(self, n_par, low_lims, high_lims):
+    def __init__(self, n_par, low_lims, high_lims) -> None:
         self.low_lims = low_lims
         self.high_lims = high_lims
 
@@ -140,7 +140,7 @@ class RectangularLikelihood(AbstractLikelihood):
         """Check bounds for rectangular walls"""
         return check_bounds_rectangular(params_in, self.low_lims, self.high_lims)
 
-    def prior_factor(self, v):
+    def prior_factor(self, v) -> float:
         """Get the density factor for prior draws assuming a uniform prior"""
         del v
         return 0.

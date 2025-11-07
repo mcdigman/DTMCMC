@@ -7,7 +7,7 @@ from numpy.testing import assert_array_equal
 import DTMCMC.temperature_ladder_helpers as tlh
 
 
-def T_prediction_sensibility_check(Ts, T_min=1., T_cold=1, n_cold=1):
+def T_prediction_sensibility_check(Ts, T_min=1., T_cold=1, n_cold=1) -> None:
     assert np.all(Ts >= 0.)                             # negative temperatures make no sense here
     assert np.all(Ts != 0.)                             # zero temperatures could be meaningful, but the code should not be generating them
     # assert Ts[0] == T_cold
@@ -29,7 +29,7 @@ def T_prediction_sensibility_check(Ts, T_min=1., T_cold=1, n_cold=1):
         assert np.all(np.diff(Ts[n_cut:]) > 0.)  # with the current code all Ts > 1 should be unique
 
 
-def test_known_result():
+def test_known_result() -> None:
     """Test a grid where we know the correct result analytically"""
     n_chain_in = 100
     n_chain_need = 100
@@ -51,7 +51,7 @@ def test_known_result():
     assert np.allclose(T_grid_in, T_grid_got, atol=1.e-10, rtol=1.e-10)
 
 
-def test_ignore_invalid1():
+def test_ignore_invalid1() -> None:
     """Test a grid where we know the correct result analytically ignores invalid zero temperature chains"""
     n_chain_in = 100
     n_chain_need = 100
@@ -76,7 +76,7 @@ def test_ignore_invalid1():
     assert np.allclose(T_grid_in[:n_chain_in], T_grid_got, atol=1.e-10, rtol=1.e-10)
 
 
-def test_ignore_invalid2():
+def test_ignore_invalid2() -> None:
     """Test a grid where we know the correct result analytically ignores invalid infinite variance chains"""
     n_chain_in = 100
     n_chain_need = 100
@@ -102,7 +102,7 @@ def test_ignore_invalid2():
     assert np.allclose(T_grid_in[:n_chain_in], T_grid_got, atol=1.e-10, rtol=1.e-10)
 
 
-def test_ignore_invalid3():
+def test_ignore_invalid3() -> None:
     """Test a grid where we know the correct result analytically ignores invalid zero T and infinite variance chains"""
     n_chain_in = 100
     n_chain_need = 100
@@ -130,7 +130,7 @@ def test_ignore_invalid3():
 
 @pytest.mark.parametrize(('n_chain_need', 'correct_last'), [(1, False), (2, False), (3, False), (4, False), (8, False), (15, False), (16, False), (32, False), (64, False), (128, False), (2048, False), (10000, False),
                                                       (1, True), (2, True), (3, True), (4, True), (8, True), (15, True), (16, True), (32, True), (64, True), (128, True), (2048, True), (10000, True)])
-def test_interpolation_case(n_chain_need, correct_last):
+def test_interpolation_case(n_chain_need, correct_last) -> None:
     """This is a test case encountered from a real run that broke the use of cubic spline interpolation"""
     vars_break = np.array([5.06922253, 5.05661274, 5.0814881, 5.1003227,
              5.10862914, 5.1422349, 5.15319122, 5.14869325,
@@ -149,7 +149,7 @@ def test_interpolation_case(n_chain_need, correct_last):
 
 
 @pytest.mark.parametrize(('n_chain_in', 'n_chain_need'), [(2, 1), (2, 2), (2, 3), (2, 4), (2, 100), (3, 1), (3, 2), (3, 3), (3, 4), (3, 100), (4, 1), (4, 2), (4, 3), (4, 4), (4, 100), (100, 100)])
-def test_zero_T_handling(n_chain_in, n_chain_need):
+def test_zero_T_handling(n_chain_in, n_chain_need) -> None:
     """Test handling if there is a zero temperature chain included"""
     n_cold = 1
     T_cold = 1.
@@ -182,7 +182,7 @@ def test_zero_T_handling(n_chain_in, n_chain_need):
     T_prediction_sensibility_check(T_grid_got, 0., T_cold, n_cold)
 
 
-def test_zero_raises1():
+def test_zero_raises1() -> None:
     """Test that if no chains are valid appropriate errors are raised"""
     n_chain_need = 10
     n_cold = 1
@@ -195,7 +195,7 @@ def test_zero_raises1():
         _beta_grid_got, _T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
 
-def test_zero_raises2():
+def test_zero_raises2() -> None:
     """Test that if no chains are valid appropriate errors are raised"""
     n_chain_need = 10
     n_cold = 1
@@ -208,7 +208,7 @@ def test_zero_raises2():
         _beta_grid_got, _T_grid_got = tlh.entropy_spaced_betas(n_chain_need, n_cold, T_grid_in, vars_in, n_inf_final=n_inf_final_out, T_cold=T_cold, correct_last=False, sort_mode=0)
 
 
-def test_zero_raises3():
+def test_zero_raises3() -> None:
     """Test that if no chains are valid appropriate errors are raised"""
     n_chain_need = 10
     n_cold = 1
@@ -302,7 +302,7 @@ combos_geo = gen_combos_geo()
 
 
 @pytest.mark.parametrize(('n_cold', 'n_chain_in', 'T_cold', 'T_min', 'T_max', 'n_inf_final_in'), combos_geo)
-def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in):
+def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in) -> None:
     """Test some random grids with power law variances"""
     if n_cold > n_chain_in:
         with pytest.raises(ValueError, match='n cold cannot be more than total number of chains'):
@@ -329,7 +329,7 @@ def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_i
 
 
 @pytest.mark.parametrize(('n_cold', 'n_chain_in', 'n_chain_need', 'T_cold', 'T_min', 'T_max', 'power_law_exp', 'n_inf_final_in', 'correct_last', 'n_inf_final_out'), combos_entropy)
-def test_random_data_entropy(n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out):
+def test_random_data_entropy(n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out) -> None:
     """Test some random grids with power law variances"""
     if n_cold + n_inf_final_in >= n_chain_in and n_inf_final_in > 0:
         with pytest.warns(UserWarning):
@@ -381,7 +381,7 @@ def test_random_data_entropy(n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_
     assert T_grid_got.size == n_chain_need
 
 
-def test_prominences():
+def test_prominences() -> None:
     """Test that prominence finding has at least basic functionality"""
     Ts_dummy = np.linspace(1., 100, 1000)
     betas_dummy = tlh.Ts_to_betas(Ts_dummy)

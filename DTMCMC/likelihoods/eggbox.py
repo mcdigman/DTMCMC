@@ -34,7 +34,7 @@ def prior_draw(n_par):
 
 
 @njit()
-def prior_factor(v, n_par):
+def prior_factor(v, n_par) -> float:
     """Get the denstiy factor for prior draws"""
     del v
     del n_par
@@ -50,7 +50,7 @@ def correct_bounds(v, n_par):
 
 
 @njit()
-def check_bounds(v):
+def check_bounds(v) -> bool:
     """Check if a sample is within the prior range"""
     for itrp in range(v.size):
         if not low_lim < v[itrp] < high_lim:
@@ -61,7 +61,7 @@ def check_bounds(v):
 @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # pyright: ignore[reportCallIssue]
 class Likelihood():
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=5, eps_default=1.e-3):
+    def __init__(self, n_par=5, eps_default=1.e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default

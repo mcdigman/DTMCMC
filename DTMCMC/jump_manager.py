@@ -7,6 +7,10 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
+
+from DTMCMC.likelihood import AbstractLikelihood
+from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 # TODO update docs
 # TODO jump name length check
@@ -15,14 +19,14 @@ from numba import njit
 class AbstractJump(ABC):
     """An object that performs a single proposal from its __call__ method"""
 
-    def __init__(self, print_name):
+    def __init__(self, print_name: str) -> None:
         """Create the jump object:
             inputs:
                 print_name: a string to print as the formatted name of this jump
         """
-        self.print_name = print_name
+        self.print_name: str = print_name
 
-    def get_print_name(self):
+    def get_print_name(self) -> str:
         """Retrieve the formatted name of the jump
         Outputs:
             print_name: a string to print as the formatted name of this jump
@@ -30,7 +34,7 @@ class AbstractJump(ABC):
         return self.print_name
 
     @abstractmethod
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point, itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Perform and MCMC proposal
             inputs:
                 sample_point: a numpy array with the current point
@@ -45,11 +49,11 @@ class AbstractJump(ABC):
 
 
 @njit()
-def choose_prob_helper(jump_probs):
+def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     """Helper that picks a random integer with the given input probabilities"""
-    choose_val = np.random.uniform(0., 1)
-    choose_sum = jump_probs[0]
-    choose = jump_probs.size - 1
+    choose_val: float = np.random.uniform(0., 1)
+    choose_sum: float = jump_probs[0]
+    choose: int = jump_probs.size - 1
     for itrp in range(1, jump_probs.size):
         if choose_val < choose_sum:
             choose = itrp - 1
@@ -61,30 +65,30 @@ def choose_prob_helper(jump_probs):
 class JumpManager(ABC):
     """mcmc proposals should be dispatched from extensions of this class"""
 
-    def __init__(self, T_ladder, like_obj, jumps):
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, jumps: list[AbstractJump]) -> None:
         """Default constructor that handles all the common actions we expect to need"""
-        self.T_ladder = T_ladder
-        self.like_obj = like_obj
-        self.n_chain = self.T_ladder.n_chain
-        self.n_par = self.like_obj.n_par
+        self.T_ladder: TemperatureLadder = T_ladder
+        self.like_obj: AbstractLikelihood = like_obj
+        self.n_chain: int = self.T_ladder.n_chain
+        self.n_par: int = self.like_obj.n_par
 
         # self.jump_names = jump_names
-        self.jumps = jumps
+        self.jumps: list[AbstractJump] = jumps
         self.n_jump_types = len(jumps)
 
-        self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
-        self.jump_weights = np.zeros((self.n_chain, self.n_jump_types))
+        self.jump_probs: NDArray[np.floating] = np.zeros((self.n_chain, self.n_jump_types))
+        self.jump_weights: NDArray[np.floating] = np.zeros((self.n_chain, self.n_jump_types))
 
         # self.jump_labels_array = np.array([jump_labels_dict.get(name, name) for name in jump_names])
-        self.jump_labels_array = np.array([jump.get_print_name() for jump in self.jumps])
+        self.jump_labels_array: list[str] = [jump.get_print_name() for jump in self.jumps]
 
-        self.name_to_idx = {}
+        self.name_to_idx: dict[str, int] = {}
         for itrm, name in enumerate(self.jump_labels_array):
             self.name_to_idx[name] = itrm
 
         self.set_jump_probs()
 
-    def dispatch_jump(self, sample_point, itrt, choose=-1):
+    def dispatch_jump(self, sample_point, itrt: int, choose: int = -1):
         """Dispatch the specified proposal
             inputs:
                 sample_point: 1D float array, the parameters of the current point
@@ -110,7 +114,7 @@ class JumpManager(ABC):
         new_point, density_fac, success = self.jumps[choose](sample_point, itrt)
         return new_point, density_fac, success, choose
 
-    def set_jump_weights(self):
+    def set_jump_weights(self) -> None:
         """Set the relative jump probabilities as a function of temperature for each jump type the manager exports
         based on a given strategy parameter object
         """
@@ -120,13 +124,13 @@ class JumpManager(ABC):
         self.jump_weights = jump_weights
 
     @abstractmethod
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Do any necessary steps to record the current configuration of the manager
         to the input ConfigParser object config_in
         """
         return
 
-    def set_jump_probs(self):
+    def set_jump_probs(self) -> None:
         """Set the normalized probabilities of the jump subtypes
         as a function of temperature, relying on the set_jump_weights
         methods which must be provided in subclasses
@@ -147,14 +151,14 @@ class JumpManager(ABC):
 
         for itrt in range(self.jump_probs.shape[0]):
             # sanity check that all rows are either normalized  to 1 or sum to 0
-            sum_check = np.sum(self.jump_probs[itrt])
+            sum_check: float = float(np.sum(self.jump_probs[itrt]))
             assert sum_check == 0. or sum_check == 1.
 
-    def get_jump_weights(self):
+    def get_jump_weights(self) -> NDArray[np.floating]:
         """Get the desired weights of this jump type as a function of temperature"""
         return self.jump_weights
 
-    def get_jump_labels(self):
+    def get_jump_labels(self) -> list[str]:
         """Get text labels for the different jump types"""
         return self.jump_labels_array.copy()
 
@@ -162,7 +166,7 @@ class JumpManager(ABC):
         """Return the list of available jumps"""
         return self.jumps
 
-    def post_step_update(self, samples):
+    def post_step_update(self, samples) -> None:
         """Do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer
         inputs:
@@ -171,7 +175,7 @@ class JumpManager(ABC):
         del samples
         return
 
-    def post_block_update(self, itrn, block_size, samples, logLs):
+    def post_block_update(self, itrn: int, block_size: int, samples, logLs) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         inputs:
@@ -184,4 +188,3 @@ class JumpManager(ABC):
         del block_size
         del samples
         del logLs
-        return

@@ -10,7 +10,7 @@ from DTMCMC.jump_manager import JumpManager
 class ProposalManager(JumpManager):
     """manage generation of proposals, handles all dispatching of jumps"""
 
-    def __init__(self, T_ladder, like_obj, managers, exchange_manager, config):
+    def __init__(self, T_ladder, like_obj, managers, exchange_manager, config) -> None:
         """Create the core proposal manager object, subclass of DTMCMC.jump_manager.JumpManager
             inputs:
                 T_ladder: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
@@ -59,7 +59,7 @@ class ProposalManager(JumpManager):
         """Return the unnormalized jump weights for each jump type the manager knows"""
         return self.jump_weights
 
-    def set_jump_weights(self):
+    def set_jump_weights(self) -> None:
         """Set the jump probabilities for everything combined"""
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
@@ -76,7 +76,7 @@ class ProposalManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def set_jump_probs(self):
+    def set_jump_probs(self) -> None:
         """Set the normalized probabilities of the jump subtypes
         as a function of temperature, relying on set_jump_weights.
         The overall manager cannot have any rows with 0 total probability,
@@ -87,21 +87,21 @@ class ProposalManager(JumpManager):
         # but the overarching proposal manager must make proposals for all temps
         assert np.all(np.sum(self.jump_probs, axis=1) == 1.)
 
-    def post_step_update(self, samples):
+    def post_step_update(self, samples) -> None:
         """Do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer
         """
         for itrm in range(self.n_managers):
             self.managers[itrm].post_step_update(samples)
 
-    def post_block_update(self, itrn, block_size, samples, logLs):
+    def post_block_update(self, itrn, block_size, samples, logLs) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         """
         for itrm in range(self.n_managers):
             self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         for itrm in range(self.n_managers):
             self.managers[itrm].record_config(config_in)

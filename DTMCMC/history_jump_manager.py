@@ -13,7 +13,7 @@ from DTMCMC.jump_manager import AbstractJump, JumpManager
 class LadderHistoryJump(AbstractJump):
     """Get a proposal from a random draw from the recorded historical points"""
 
-    def __init__(self, manager):
+    def __init__(self, manager) -> None:
         """Get the object to propose ladder history draws"""
         self.manager = manager
         AbstractJump.__init__(self, 'Ladder History')
@@ -37,7 +37,7 @@ class LadderHistoryJump(AbstractJump):
 class HistoryStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         """Initialize the object with the prescribed parameters"""
         self.config = config
         config_h = self.config['LadderHistoryJumpManager']
@@ -47,7 +47,7 @@ class HistoryStrategyParameters():
         """Copy the object"""
         return HistoryStrategyParameters(self.config)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
             inputs:
                 config_in: ConfigParser object
@@ -61,7 +61,7 @@ class LadderHistoryJumpManager(JumpManager):
     at different temperatures
     """
 
-    def __init__(self, T_ladder, like_obj, config, T_ladder_old, logLs_old, states_old):
+    def __init__(self, T_ladder, like_obj, config, T_ladder_old, logLs_old, states_old) -> None:
         """A blank"""
         self.T_ladder_old = T_ladder_old
         self.states_old = states_old
@@ -73,7 +73,7 @@ class LadderHistoryJumpManager(JumpManager):
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
-    def set_jump_weights(self):
+    def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
@@ -83,6 +83,6 @@ class LadderHistoryJumpManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

@@ -6,7 +6,7 @@ hold some helpers to help determine the proposal strategy
 class ProposalStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         """Initialize the object with the prescribed parameters"""
         self.config = config
 

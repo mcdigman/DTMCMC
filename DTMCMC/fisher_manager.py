@@ -9,7 +9,7 @@ from DTMCMC.lapack_wrappers import solve_triangular
 
 
 class FisherFullJump(AbstractJump):
-    def __init__(self, manager):
+    def __init__(self, manager) -> None:
         self.manager = manager
         AbstractJump.__init__(self, 'Fisher All-D')
 
@@ -49,7 +49,7 @@ def sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, 
 class SigmaFullJump(AbstractJump):
     """Standard Deviation Jump in Full Dimensions"""
 
-    def __init__(self, manager):
+    def __init__(self, manager) -> None:
         """Create the jump"""
         self.manager = manager
         AbstractJump.__init__(self, 'Std All-D')
@@ -65,7 +65,7 @@ class SigmaFullJump(AbstractJump):
 
 class SigmaRandomSubspaceJump(AbstractJump):
     """Standard deviation jump in random subspaces"""
-    def __init__(self, manager):
+    def __init__(self, manager) -> None:
         self.manager = manager
         AbstractJump.__init__(self, 'Std Random-D')
 
@@ -205,7 +205,7 @@ class FisherStrategyParameters():
     fisher matrix proposal generation
     """
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         """Initialize the object with the prescribed parameters"""
         self.config = config
 
@@ -236,7 +236,7 @@ class FisherStrategyParameters():
         """Copy the object"""
         return FisherStrategyParameters(self.config)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
             inputs:
                 config_in: ConfigParser object
@@ -257,7 +257,7 @@ class FisherStrategyParameters():
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, sample_set, config):
+    def __init__(self, T_ladder, like_obj, sample_set, config) -> None:
         """Create the object"""
         self.strategy_params = FisherStrategyParameters(config)
 
@@ -268,7 +268,7 @@ class FisherJumpManager(JumpManager):
         self.sample_set = sample_set
         self.reset_fishers_from_point(self.sample_set)
 
-    def set_jump_weights(self):
+    def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_cold = self.T_ladder.n_cold
         n_chain = self.T_ladder.n_chain
@@ -325,14 +325,14 @@ class FisherJumpManager(JumpManager):
         """
         return self.reset_fishers(itrn, block_size, samples, logLs)
 
-    def reset_fishers_from_point(self, sample_set):
+    def reset_fishers_from_point(self, sample_set) -> None:
         """Set the fisher matrix object at the specified point"""
         self.sigma_diags, self.fishers, self.chol_fishers = set_fishers(
             sample_set, self.strategy_params, self.n_chain, self.like_obj
         )
         self.sigma_scales, self.gamma_mults = set_scales(self.n_par, self.T_ladder, self.sigma_diags)
 
-    def reset_fishers(self, itrn, block_size, samples, logLs):
+    def reset_fishers(self, itrn, block_size, samples, logLs) -> None:
         """Reset the fisher matrices from input samples"""
         if itrn // block_size < 4 or itrn % (block_size * self.strategy_params.fisher_downsample) == 0:
             samples_fisher = np.zeros((self.n_chain, self.n_par))
@@ -346,6 +346,6 @@ class FisherJumpManager(JumpManager):
                 samples_fisher[itrt] = samples[index_select]
             self.reset_fishers_from_point(samples_fisher)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

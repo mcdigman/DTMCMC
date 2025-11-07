@@ -80,7 +80,7 @@ def get_crosscorr_sum(mcc, n_burnin_thin, itrp, autocorr_lim, autocorr_cut, obs_
     return cov_cross_lim, cov_cross_cut, est_var_cross
 
 
-def n_eff_summary_print(n_par, n_use, n_cold, n_chain, store_thin, n_eff_preds, n_eff_preds_empirical, obs_vars, obs_means):
+def n_eff_summary_print(n_par, n_use, n_cold, n_chain, store_thin, n_eff_preds, n_eff_preds_empirical, obs_vars, obs_means) -> None:
     """Print salient information about the number of effective samples"""
     eff_empiricals = np.zeros(n_par)
     eff_preds = np.zeros(n_par)
@@ -129,7 +129,7 @@ def n_eff_summary_print(n_par, n_use, n_cold, n_chain, store_thin, n_eff_preds, 
     print('overall effective sample sizes:', n_eff_preds_empirical[0])
 
 
-def autocorr_summary_print(n_par, autocorr_lims, do_cross):
+def autocorr_summary_print(n_par, autocorr_lims, do_cross) -> None:
     """Print useful information about the autocorrelations"""
     autocorr_lim_array = np.array(autocorr_lims)
     crosscorr_lim_array = np.array(autocorr_lims)
@@ -186,7 +186,7 @@ def summarize_vars(mcc, n_burnin_thin):
 class CorrelationSummary():
     """class to store various attributes memorializing the correlations of a chain across multiple runs"""
 
-    def __init__(self, do_corr_summary=True, do_autocorr=True, do_cross=True):
+    def __init__(self, do_corr_summary=True, do_autocorr=True, do_cross=True) -> None:
         """Create the class instance"""
         self.do_corr_summary = do_corr_summary
         self.do_cross = do_cross
@@ -209,13 +209,13 @@ class CorrelationSummary():
         self.arg_logL_burns = []
         self.arg_logL_deviant = []
 
-    def final_prints(self, mcc, n_burnin):
+    def final_prints(self, mcc, n_burnin) -> None:
         """Printouts to do after all the runs have been done"""
         if self.do_corr_summary:
             self.n_eff_summary_print(mcc, n_burnin)
             self.autocorr_summary_print(mcc)
 
-    def summarize_blocks(self, mcc, n_burnin):
+    def summarize_blocks(self, mcc, n_burnin) -> None:
         """Summary functions that can be printed after a run has been executed"""
         self.summarize_logLs(mcc)
         self.summarize_vars(mcc, n_burnin)
@@ -228,7 +228,7 @@ class CorrelationSummary():
         n_complete_hc_cycles = mcc.tracker_manager.get_n_cycles()
         print(n_complete_hc_cycles.sum())
 
-    def corr_summary(self, mcc, n_burnin):
+    def corr_summary(self, mcc, n_burnin) -> None:
         """The summaries of correlations that need to be computed after every run"""
         n_par = mcc.n_par
         n_cold = mcc.n_cold
@@ -285,7 +285,7 @@ class CorrelationSummary():
         self.est_vars_auto.append(est_vars_auto)
         self.est_vars.append(est_vars)
 
-    def summarize_vars(self, mcc, n_burnin):
+    def summarize_vars(self, mcc, n_burnin) -> None:
         """Get the means and vars for the whole run"""
         n_burnin_thin = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
         obs_mean, obs_var = summarize_vars(mcc, n_burnin_thin)
@@ -306,7 +306,7 @@ class CorrelationSummary():
         """Print salient information about autocorrelation functions"""
         return autocorr_summary_print(mcc.n_par, self.autocorr_lims, self.do_cross)
 
-    def summarize_logLs(self, mcc):
+    def summarize_logLs(self, mcc) -> None:
         """Save some summary statistics related to the likelihoods"""
         N_blocks = mcc.store_size // (mcc.block_size // mcc.store_thin)
         logL_block_mean, arg_logL_burn, arg_logL_deviant = summarize_logLs(mcc, N_blocks)

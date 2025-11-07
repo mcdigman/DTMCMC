@@ -14,7 +14,7 @@ test_set1 = [
 ]
 
 
-def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final):
+def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final) -> None:
     uniq, counts = np.unique(Ts_in, return_counts=True)
     print(Ts_in)
     print(T_cold, n_cold, n_inf_final)
@@ -41,7 +41,7 @@ def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final):
 
 @pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 @pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
-def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final):
+def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
     """Test the entropy based spacing produces results that makes sense"""
     if n_cold > n_chain:
         with pytest.raises(ValueError, match='n cold cannot be more than total number of chain'):
@@ -84,7 +84,7 @@ def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final):
 
 @pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 @pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
-def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final):
+def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
     """Test the entropy based spacing produces results that makes sense"""
     T_min = 1.
     T_max = 1000.

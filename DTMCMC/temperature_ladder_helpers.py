@@ -5,11 +5,12 @@ helpers for computing the temperature ladder for parallel tempering
 from warnings import warn
 
 import numpy as np
+from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 
-def Ts_to_betas(Ts_in):
+def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
     """Convert Ts to betas=1/Ts safely handling infinities and zeros:
             input:
                 Ts_in: float array, temperatures
@@ -17,8 +18,8 @@ def Ts_to_betas(Ts_in):
                 betas_got: float array, 1/temperatures
     """
     assert np.all(Ts_in >= 0.)
-    betas_got = np.zeros(Ts_in.size)
-    Ts_finite = np.isfinite(Ts_in) & (Ts_in != 0.)
+    betas_got: NDArray[np.floating] = np.zeros(Ts_in.size)
+    Ts_finite: NDArray[np.bool] = np.isfinite(Ts_in) & (Ts_in != 0.)
     betas_got[Ts_finite] = 1. / Ts_in[Ts_finite]
     betas_got[~np.isfinite(Ts_in)] = 0.
     betas_got[Ts_in == 0.] = np.inf
@@ -28,7 +29,7 @@ def Ts_to_betas(Ts_in):
 class TemperatureLadder():
     """store a temperature ladder for parallel tempering"""
 
-    def __init__(self, n_cold, Ts_in, sort_mode=1):
+    def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1) -> None:
         """Create the temperature ladder object:
             inputs:
                 n_cold: scalar integer<=n_chain, total number of T=T_cold chains
@@ -36,7 +37,7 @@ class TemperatureLadder():
                     this if it is not None
         """
         if sort_mode == 0:
-            pass
+            self.Ts: NDArray[np.floating] = Ts_in.copy()
         elif sort_mode == 1:
             self.Ts = np.sort(Ts_in)
         else:
@@ -44,13 +45,15 @@ class TemperatureLadder():
             raise ValueError(msg)
 
         # self.Ts = Ts_in
-        self.betas = Ts_to_betas(self.Ts)
+        self.sort_mode: int = sort_mode
 
-        self.n_chain = Ts_in.size
-        self.n_cold = n_cold
+        self.betas: NDArray[np.floating] = Ts_to_betas(self.Ts)
+
+        self.n_chain: int = Ts_in.size
+        self.n_cold: int = n_cold
 
 
-def betas_to_Ts(betas_in):
+def betas_to_Ts(betas_in: NDArray[np.floating]) -> NDArray[np.floating]:
     """Convert Ts to Ts=1/betas safely handling infinities and zeros:
             input:
                 betas_in: float array, 1/temperatures
@@ -58,15 +61,15 @@ def betas_to_Ts(betas_in):
                 Ts_got: float array, temperatures
     """
     assert np.all(betas_in >= 0.)
-    Ts_got = np.zeros(betas_in.size)
-    beta_finite = np.isfinite(betas_in) & (betas_in != 0.)
+    Ts_got: NDArray[np.floating] = np.zeros(betas_in.size)
+    beta_finite: NDArray[np.bool] = np.isfinite(betas_in) & (betas_in != 0.)
     Ts_got[beta_finite] = 1. / betas_in[beta_finite]
     Ts_got[~np.isfinite(betas_in)] = 0.
     Ts_got[betas_in == 0.] = np.inf
     return Ts_got
 
 
-def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final: int = 1, sort_mode=1):
+def geometric_spaced_betas(n_chain: int, n_cold: int, T_cold: float, T_min: float, T_max: float, n_inf_final: int = 1, sort_mode: int = 1) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Temperatures spaced geometrically in a range
         inputs:
             n_chain: scalar integer, total number of chains
@@ -93,8 +96,8 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final: i
     assert n_cold >= 0
     assert n_chain > 0
 
-    betas = np.zeros(n_chain)
-    Ts = np.zeros(n_chain)
+    betas: NDArray[np.floating] = np.zeros(n_chain)
+    Ts: NDArray[np.floating] = np.zeros(n_chain)
     assert n_inf_final >= 0
 
     # if T_cold==T_min then include geometric ladder is pinned to n_cold-1 element.
@@ -143,7 +146,7 @@ def geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final: i
 class GeometricTemperatureLadder(TemperatureLadder):
     """store a geometrically spaced temperature ladder for parallel tempering"""
 
-    def __init__(self, n_chain, n_cold=1, T_cold=1., T_min=1., T_max=1.e15, n_inf_final: int = 1, sort_mode=1):
+    def __init__(self, n_chain: int, n_cold: int = 1, T_cold: float = 1., T_min: float = 1., T_max: float = 1.e15, n_inf_final: int = 1, sort_mode: int = 1) -> None:
         """Create the temperature ladder object:
             inputs:
                 n_chain: scalar integer, total number of parallel tempering chains
@@ -155,10 +158,10 @@ class GeometricTemperatureLadder(TemperatureLadder):
                 n_inf_final: int
                     How many infinite temperature chains to insert at the end
         """
-        self.T_cold = T_cold
-        self.T_min = T_min
-        self.T_max = T_max
-        self.n_inf_final = n_inf_final
+        self.T_cold: float = T_cold
+        self.T_min: float = T_min
+        self.T_max: float = T_max
+        self.n_inf_final: int = n_inf_final
 
         _, Ts = geometric_spaced_betas(
             n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final, sort_mode=sort_mode
@@ -166,10 +169,13 @@ class GeometricTemperatureLadder(TemperatureLadder):
         TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
 
 
-def standardize_input_vars(betas_in, logL_vars_in):
+def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Helper to standardize the input betas and variances
     so that the heat capacity integration can work correctly
     """
+    assert len(betas_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert betas_in.shape == logL_vars_in.shape
     # need to sort the input temperatures and get only unique ones so we can interpolate
     betas_use = np.unique(betas_in)[::-1]
     # Note that using partition functions the lowest order taylor approximation
@@ -195,13 +201,17 @@ def standardize_input_vars(betas_in, logL_vars_in):
     return betas_use, logL_vars_use
 
 
-def get_heat_capacity_integrated(logL_vars_use, betas_use, correct_last):
+def get_heat_capacity_integrated(logL_vars_use: NDArray[np.floating], betas_use: NDArray[np.floating], correct_last: bool) -> NDArray[np.floating]:
     """Helper to get the integral of the heat capacity"""
-    heat_capacity_integrand = -np.abs(logL_vars_use) * betas_use
+    assert len(logL_vars_use.shape) == 1
+    assert len(betas_use.shape) == 1
+    assert logL_vars_use.shape == betas_use.shape
+
+    heat_capacity_integrand: NDArray[np.floating] = -np.abs(logL_vars_use) * betas_use
     # cannot handle non finite beta case correctly
     heat_capacity_integrand[~np.isfinite(heat_capacity_integrand)] = 0.
 
-    heat_capacity_integ = cumulative_trapezoid(heat_capacity_integrand[::-1], betas_use[::-1], initial=0.)[::-1]
+    heat_capacity_integ = cumulative_trapezoid(heat_capacity_integrand[::-1], betas_use[::-1], initial=0)[::-1]
 
     if correct_last and betas_use[-1] == 0. and betas_use.size > 1:
         # this should be a more accurate approximation of the integrand
@@ -237,13 +247,15 @@ def get_heat_capacity_integrated(logL_vars_use, betas_use, correct_last):
     return heat_capacity_integ
 
 
-def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
+def entropy_spacing(n_chain_need: int, betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating], correct_last: bool = False) -> NDArray[np.floating]:
     """Helper to estimate constant entropy increase spaced chain
     from an input file of betas and logLs
     """
     assert n_chain_need > 0
     assert betas_in.size > 0
-    assert betas_in.size == logL_vars_in.size
+    assert len(betas_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert betas_in.shape == logL_vars_in.shape
 
     betas_use, logL_vars_use = standardize_input_vars(betas_in, logL_vars_in)
 
@@ -270,16 +282,12 @@ def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
     # but we would need to enforce monotonicity on the splines
     # If the splines are non-monotonic it could produce undesired negative temperatures
     if betas_use.size == 1:
-        beta_grid_got = np.full(n_chain_need, betas_use[0])
+        beta_grid_got: NDArray[np.floating] = np.full(n_chain_need, betas_use[0])
         warn('Only one unique input temperature: cannot generate a meaningful grid', stacklevel=2)
     else:
         beta_interp = InterpolatedUnivariateSpline(heat_capacity_integ, betas_use, k=1, ext=3)
         beta_grid_got = beta_interp(heat_grid_need)
 
-    print(heat_capacity_integ[-1])
-    print(heat_grid_need[-1])
-    print(betas_use)
-    print(beta_grid_got)
     if np.any(beta_grid_got < 0.):
         warn('Unexpected negative temperatures: defaulting to abs', stacklevel=2)
         beta_grid_got[beta_grid_got < 0.] = np.abs(beta_grid_got[beta_grid_got < 0.])
@@ -293,30 +301,32 @@ def entropy_spacing(n_chain_need, betas_in, logL_vars_in, correct_last=False):
     assert np.all(np.diff(beta_grid_got) <= 0.)
 
     # Avoid dividing by zero
-    T_grid_got = betas_to_Ts(beta_grid_got)
+    T_grid_got: NDArray[np.floating] = betas_to_Ts(beta_grid_got)
 
     return T_grid_got
 
 
 def entropy_spaced_betas(
-    n_chain_need,
-    n_cold,
-    Ts_in,
-    logL_vars_in,
-    n_inf_final=1,
-    T_cold=1.,
-    correct_last=False,
-    sort_mode=1,
-):
+        n_chain_need: int,
+        n_cold: int,
+        Ts_in: NDArray[np.floating],
+        logL_vars_in: NDArray[np.floating],
+        n_inf_final: int = 1,
+        T_cold: float = 1.,
+        correct_last: bool = False,
+        sort_mode: int = 1,
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Estimate constant entropy increase spaced chain from an input file of betas and logLs"""
     if n_cold > n_chain_need:
         msg = 'n cold cannot be more than total number of chains'
         raise ValueError(msg)
 
+    assert len(Ts_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert Ts_in.shape == logL_vars_in.shape
     assert T_cold >= 0.
     assert np.all(logL_vars_in >= 0.)
     assert np.all(Ts_in >= 0.)
-    assert Ts_in.size == logL_vars_in.size
     assert n_cold >= 0
     assert n_chain_need > 0
     assert n_inf_final >= 0
@@ -345,9 +355,6 @@ def entropy_spaced_betas(
     Ts_got = entropy_spacing(n_chain_space, betas_in, logL_vars_in, correct_last=correct_last)
     if needs_prune:
         # trim the non-finite beta if we requested none
-        print(Ts_got)
-        print(correct_last)
-        print(n_chain_space)
         assert Ts_got[-1] == np.inf
         n_chain_space = n_chain_space - 1
         assert n_chain_space >= 0
@@ -357,11 +364,6 @@ def entropy_spaced_betas(
 
     assert np.all(Ts_got >= 0.)
 
-    print(Ts_got)
-    print(Ts_got[:n_chain_space - n_inf_final])
-    print(Ts_got[Ts_got.size - 1:])
-    print(n_inf_final)
-    print(Ts_got[n_chain_space - n_inf_final:])
     if n_inf_final > 0:
         Ts_got[n_chain_space - n_inf_final:] = np.inf
         assert np.all(np.isfinite(Ts_got[:n_chain_space - n_inf_final])) or np.all(betas_in == 0.)
@@ -378,8 +380,6 @@ def entropy_spaced_betas(
             assert arg_cold >= 0
         else:
             arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
-        print('arg_cold', arg_cold, n_inf_final)
-        print(Ts_got)
         Ts_got[arg_cold] = T_cold
         if arg_cold != 0:
             # put cold values first for now
@@ -410,15 +410,15 @@ class EntropyTemperatureLadder(TemperatureLadder):
 
     def __init__(
             self,
-            n_chain,
-            Ts_in,
-            logL_vars_in,
-            n_cold=1,
-            T_cold=1.,
+            n_chain: int,
+            Ts_in: NDArray[np.floating],
+            logL_vars_in: NDArray[np.floating],
+            n_cold: int = 1,
+            T_cold: float = 1.,
             n_inf_final: int = 1,
-            correct_last=False,
-            sort_mode=1,
-    ):
+            correct_last: bool = False,
+            sort_mode: int = 1,
+    ) -> None:
         """Create the temperature ladder object:
             inputs:
                 n_chain: scalar integer, total number of parallel tempering chains
@@ -432,8 +432,8 @@ class EntropyTemperatureLadder(TemperatureLadder):
                     extrapolate the heat capacity integral out to infinity; only works well
                     if maximum T in input ladder is well above any phase transitions
         """
-        self.T_cold = T_cold
-        self.n_inf_final = n_inf_final
+        self.T_cold: float = T_cold
+        self.n_inf_final: int = n_inf_final
 
         _, Ts = entropy_spaced_betas(
             n_chain,
@@ -445,37 +445,39 @@ class EntropyTemperatureLadder(TemperatureLadder):
             correct_last=correct_last,
             sort_mode=sort_mode,
         )
-        print('from entropy_spaced_beta', Ts)
-        print(n_cold)
-        print(T_cold)
-
         TemperatureLadder.__init__(self, n_cold, Ts)
 
 
 def entropy_ladder_fromfile(
-    n_chain_need,
-    n_cold,
-    T_file_in,
-    logL_var_file_in,
-    n_inf_final=1,
-    T_cold=1.,
-    correct_last=False,
-    sort_mode=1,
-):
+        n_chain_need: int,
+        n_cold: int,
+        T_file_in: str,
+        logL_var_file_in: str,
+        n_inf_final: int = 1,
+        T_cold: float = 1.,
+        correct_last: bool = False,
+        sort_mode: int = 1,
+) -> EntropyTemperatureLadder:
     """Get a constant entropy increase spaced temperature ladder
     from an input file of betas and logL variances
     """
-    Ts_in = np.load(T_file_in)
-    logL_vars_in = np.load(logL_var_file_in)
+    Ts_in: NDArray[np.floating] = np.load(T_file_in)
+    logL_vars_in: NDArray[np.floating] = np.load(logL_var_file_in)
 
-    logL_vars_in = logL_vars_in[Ts_in >= 1.]
-    Ts_in = Ts_in[Ts_in >= 1.]
+    assert n_chain_need >= 0
+    assert n_cold >= 0
+    assert n_inf_final >= 0
+    assert len(Ts_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert Ts_in.shape == logL_vars_in.shape
+    assert Ts_in.size > 0
+    assert logL_vars_in.size > 0
+
+    logL_vars_in = logL_vars_in[Ts_in >= 1.].copy()
+    Ts_in = Ts_in[Ts_in >= 1.].copy()
 
     assert np.all(logL_vars_in >= 0.)
     assert np.all(Ts_in >= 0.)
-    assert Ts_in.size == logL_vars_in.size
-    print(Ts_in)
-    print(logL_vars_in)
 
     return EntropyTemperatureLadder(
         n_chain_need,
@@ -490,20 +492,24 @@ def entropy_ladder_fromfile(
 
 
 def find_potential_phase_transitions(
-    betas_in, logL_vars_in, correct_last=True, n_chain_need=2048, micro_thresh=1.e-5, sort_mode=1
-):
+        betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating], correct_last: bool = True, n_chain_need: int = 2048, micro_thresh: float = 1.e-5, sort_mode: int = 1
+        ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Find the best estimates for temperatures of potential phase transitions
     by interpolating the integrated heat capacity
     """
-    maxima = []
-    minima = []
+    assert len(betas_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert logL_vars_in.shape == betas_in.shape
+
+    maxima_list: list[int] = []
+    minima_list: list[int] = []
 
     # get a spacing that is predicted to be good
-    Ts_in = Ts_to_betas(betas_in)
+    Ts_in: NDArray[np.floating] = Ts_to_betas(betas_in)
 
     # get the integrated heat capacity
     betas_use, logL_vars_use = standardize_input_vars(betas_in, logL_vars_in)
-    heat_capacity_integ = get_heat_capacity_integrated(logL_vars_use, betas_use, correct_last)
+    heat_capacity_integ: NDArray[np.floating] = get_heat_capacity_integrated(logL_vars_use, betas_use, correct_last)
 
     # Sample the grid with increased density around predicted maxima,
     # but also include and all input points
@@ -519,7 +525,7 @@ def find_potential_phase_transitions(
     )
     betas_got = np.unique(np.hstack([betas_use, betas_got]))[::-1]
     Ts_got = betas_to_Ts(betas_got)
-    n_chain_got = betas_got.size
+    n_chain_got: int = betas_got.size
 
     # Interpolate the integrate heat capacity and get the derivative
     # Note that because we actually want to interpolate the derivative
@@ -532,7 +538,7 @@ def find_potential_phase_transitions(
         ext=3
     )
     heat_capacity_interp = integral_interp.derivative(1)
-    heat_capacity_got = heat_capacity_interp(betas_got) * betas_got
+    heat_capacity_got: NDArray[np.floating] = heat_capacity_interp(betas_got) * betas_got
 
     # remove spurious negative heat capacities
     heat_capacity_got[heat_capacity_got < 0.] = 0.
@@ -540,21 +546,21 @@ def find_potential_phase_transitions(
     assert np.all(heat_capacity_got >= 0.)
 
     # find local maxima that may represent a phase transition
-    itrt_last = 0
-    itrt = 1
+    itrt_last: int = 0
+    itrt: int = 1
 
     while heat_capacity_got[itrt_last] == heat_capacity_got[itrt] and itrt < n_chain_got - 2:
         # while loops instead of for loops to handle the unlikely case
         # where some heat capacities are exactly equal
         itrt = itrt + 1
 
-    itrt_next = itrt + 1
+    itrt_next: int = itrt + 1
 
     # handle starting boundary
     if heat_capacity_got[0] < heat_capacity_got[itrt]:
-        minima.append(0)
+        minima_list.append(0)
     elif heat_capacity_got[0] > heat_capacity_got[itrt]:
-        maxima.append(0)
+        maxima_list.append(0)
 
     while itrt_next < n_chain_got:
         # while loops instead of for loops to handle the unlikely case
@@ -570,13 +576,13 @@ def find_potential_phase_transitions(
             heat_capacity_got[itrt_last] < heat_capacity_got[itrt] and
             heat_capacity_got[itrt_next] <= heat_capacity_got[itrt]
         ):
-            maxima.append(itrt)
+            maxima_list.append(itrt)
 
         elif (
             heat_capacity_got[itrt_last] > heat_capacity_got[itrt] and
             heat_capacity_got[itrt_next] >= heat_capacity_got[itrt]
         ):
-            minima.append(itrt)
+            minima_list.append(itrt)
 
         itrt_last = itrt
         itrt = itrt_next
@@ -584,18 +590,18 @@ def find_potential_phase_transitions(
 
     # handle ending boundary
     if heat_capacity_got[itrt_last] > heat_capacity_got[-1]:
-        minima.append(n_chain_got - 1)
+        minima_list.append(n_chain_got - 1)
     elif heat_capacity_got[itrt_last] < heat_capacity_got[-1]:
-        maxima.append(n_chain_got - 1)
+        maxima_list.append(n_chain_got - 1)
 
-    minima = np.array(minima)
-    maxima = np.array(maxima)
+    minima: NDArray[np.int64] = np.array(minima_list, dtype=np.int64)
+    maxima: NDArray[np.int64] = np.array(maxima_list, dtype=np.int64)
 
     # minima_Ts = Ts_got[minima]
-    maxima_Ts = Ts_got[maxima]
+    maxima_Ts: NDArray[np.floating] = Ts_got[maxima]
 
-    minima_vals = heat_capacity_got[minima]
-    maxima_vals = heat_capacity_got[maxima]
+    minima_vals: NDArray[np.floating] = heat_capacity_got[minima]
+    maxima_vals: NDArray[np.floating] = heat_capacity_got[maxima]
 
     # default end values
     maxima_Ts[maxima == 0] = 1. / betas_use[0]
@@ -604,17 +610,17 @@ def find_potential_phase_transitions(
     # calculate the prominence of each maxima, in the same sense as topographic prominence
     # prominence is difference between maxima and key col, where key col is
     # lowest point between that maxima and a higher maxima
-    prominences = np.zeros(maxima.size)
+    prominences: NDArray[np.floating] = np.zeros(maxima.size)
     for itrp, itrt in enumerate(maxima):
-        cur_max_val = maxima_vals[itrp]
+        cur_max_val: float = maxima_vals[itrp]
 
-        key_col1 = 0.
-        key_col2 = 0.
+        key_col1: float = 0.
+        key_col2: float = 0.
 
         itrt_last = 0
         itrt_next = n_chain_got - 1
 
-        itrp_last = itrp - 1
+        itrp_last: int = itrp - 1
         if itrp_last >= 0:
             while maxima_vals[itrp_last] < cur_max_val:
                 itrp_last -= 1
@@ -625,13 +631,13 @@ def find_potential_phase_transitions(
             itrt_last = maxima[itrp_last]
 
             if np.any((minima >= itrt_last) & (minima <= itrt)):
-                key_col1 = np.min(minima_vals[(minima >= itrt_last) & (minima <= itrt)])
+                key_col1 = float(np.min(minima_vals[(minima >= itrt_last) & (minima <= itrt)]))
             else:
                 key_col1 = cur_max_val
         else:
-            key_col1 = heat_capacity_got[0]
+            key_col1 = float(heat_capacity_got[0])
 
-        itrp_next = itrp + 1
+        itrp_next: int = itrp + 1
         if itrp_next <= maxima.size - 1:
             while maxima_vals[itrp_next] < cur_max_val:
                 itrp_next += 1
@@ -639,23 +645,23 @@ def find_potential_phase_transitions(
                     break
 
         if itrp_next < maxima.size:
-            itrt_next = maxima[itrp_next]
+            itrt_next = int(maxima[itrp_next])
 
             if np.any((minima <= itrt_next) & (minima >= itrt)):
-                key_col2 = np.min(minima_vals[(minima <= itrt_next) & (minima >= itrt)])
+                key_col2 = float(np.min(minima_vals[(minima <= itrt_next) & (minima >= itrt)]))
             else:
                 key_col2 = cur_max_val
         else:
             key_col2 = 0.
 
-        key_col = max(key_col1, key_col2)
+        key_col: float = max(key_col1, key_col2)
 
         prominences[itrp] = cur_max_val - key_col
 
     # cut out micro-prominent maxima, which are probably just noise
     if prominences.size > 0:
         # make sure we keep at least one peak if there are any
-        micro_thresh_loc = min(micro_thresh, np.max(prominences))
+        micro_thresh_loc: float = min(micro_thresh, float(np.max(prominences)))
     else:
         micro_thresh_loc = micro_thresh
 

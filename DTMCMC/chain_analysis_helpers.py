@@ -33,7 +33,7 @@ def get_blockwise_vars_scramble(N_blocks, n_cold, n_burnin, samples_store, block
     return blockwise_vars_scramble, blockwise_means_scramble
 
 
-def get_autocorr_sum(n_burnin, mcc, itrp, autocorr_sum):
+def get_autocorr_sum(n_burnin, mcc, itrp, autocorr_sum) -> None:
     """Get the sum of the autocorrelations of all the cold chains"""
     for itrt in range(mcc.n_cold):
         params_adj = mcc.samples_store[n_burnin:, itrt, itrp] - np.mean(mcc.samples_store[n_burnin:, itrt, itrp])

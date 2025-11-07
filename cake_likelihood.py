@@ -47,7 +47,7 @@ def get_loglike(v):
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
 class CakeLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=2, cutoff=10):
+    def __init__(self, n_par=2, cutoff=10) -> None:
         """Create the class and store any object specific variables"""
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)

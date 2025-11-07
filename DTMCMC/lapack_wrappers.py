@@ -101,7 +101,7 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
 
     INFO = np.empty(1, dtype=np.int32)
 
-    def check_info(info):
+    def check_info(info) -> None:
         if info[0] != 0:
             print(info)
             msg = 'INFO indicates problem with dtrtrs'

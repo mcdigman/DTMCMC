@@ -9,7 +9,7 @@ from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 class BlankJump(AbstractJump):
     """Template jump for future extensions"""
-    def __init__(self, manager):
+    def __init__(self, manager) -> None:
         self.manager = manager
         AbstractJump.__init__(self, 'Blank Jump')
 
@@ -22,7 +22,7 @@ class BlankJump(AbstractJump):
 class AuxilliaryStrategyParameters():
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config):
+    def __init__(self, config) -> None:
         """Initialize the object with the prescribed parameters"""
         self.config = config
         config_a = self.config['AuxilliaryJumpManager']
@@ -32,7 +32,7 @@ class AuxilliaryStrategyParameters():
         """Copy the object"""
         return AuxilliaryStrategyParameters(self.config)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
             inputs:
                 config_in: ConfigParser object
@@ -46,7 +46,7 @@ class AuxilliaryJumpManager(JumpManager):
     subclass of DTMCMC.jump_manager.JumpManager
     """
 
-    def __init__(self, T_ladder, like_obj, config):
+    def __init__(self, T_ladder, like_obj, config) -> None:
         """A blank proposal as a template"""
         self.strategy_params = AuxilliaryStrategyParameters(config)
 
@@ -54,7 +54,7 @@ class AuxilliaryJumpManager(JumpManager):
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
-    def set_jump_weights(self):
+    def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_chain = self.T_ladder.n_chain
         jump_weights = np.zeros((n_chain, self.n_jump_types))
@@ -66,6 +66,6 @@ class AuxilliaryJumpManager(JumpManager):
 
         assert np.all(self.jump_weights >= 0.)
 
-    def record_config(self, config_in):
+    def record_config(self, config_in) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

@@ -8,7 +8,7 @@ from DTMCMC.likelihood import RectangularLikelihood
 
 class HawaiiLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, rescale_like=1., default_like=5.e-1, normalize_like=True):
+    def __init__(self, rescale_like=1., default_like=5.e-1, normalize_like=True) -> None:
         """Create the class and store any object specific variables"""
         self.rescale_like = rescale_like
         self.default_like = default_like

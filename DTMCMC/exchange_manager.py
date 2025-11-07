@@ -142,7 +142,7 @@ def do_ptmcmc_exchange(
     chain_track,
     target_select,
     track_full_exchanges,
-):
+) -> None:
     """Chose and exchange strategy and do the exchange step"""
     no_repeat = True
     if target_select == RANDOM_TARGETS:
@@ -208,7 +208,7 @@ class ExchangeManager():
     and define the strategy by which to propose exchanges
     """
 
-    def __init__(self, strategy=RANDOM_TARGETS, track_full_exchanges=True):
+    def __init__(self, strategy=RANDOM_TARGETS, track_full_exchanges=True) -> None:
         """Select the exchange targeting strategy"""
         self.strategy = strategy
         self.track_full_exchanges = track_full_exchanges
