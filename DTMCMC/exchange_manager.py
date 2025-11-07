@@ -69,18 +69,17 @@ def exchange_step_helper(
                 if itrt_target == itrt + 1 or itrt_target == itrt - 1:
                     exchange_tracker[1, 0, itrt] += 1
                     exchange_tracker[1, 0, itrt_target] += 1
+        elif track_full_exchanges:
+            # track full exchange matrix
+            exchange_tracker[1, itrt, itrt_target] += 1
         else:
-            if track_full_exchanges:
-                # track full exchange matrix
-                exchange_tracker[1, itrt, itrt_target] += 1
-            else:
-                # track all exchanges for each individual chain
-                exchange_tracker[0, 1, itrt] += 1
-                exchange_tracker[0, 1, itrt_target] += 1
-                # track nn exchanges
-                if itrt_target == itrt + 1 or itrt_target == itrt - 1:
-                    exchange_tracker[1, 1, itrt] += 1
-                    exchange_tracker[1, 1, itrt_target] += 1
+            # track all exchanges for each individual chain
+            exchange_tracker[0, 1, itrt] += 1
+            exchange_tracker[0, 1, itrt_target] += 1
+            # track nn exchanges
+            if itrt_target == itrt + 1 or itrt_target == itrt - 1:
+                exchange_tracker[1, 1, itrt] += 1
+                exchange_tracker[1, 1, itrt_target] += 1
 
     return itrs_fin
 
@@ -203,7 +202,7 @@ def do_ptmcmc_exchange(
         chain_track[itrb + 1, itrt] = chain_track[itrb, itrs_fin[itrt]]
 
 
-class ExchangeManager():
+class ExchangeManager:
     """class to take a temperature ladder and state of a chain
     and define the strategy by which to propose exchanges
     """

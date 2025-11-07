@@ -1,5 +1,7 @@
-"""C 2023 Matthew C. Digman
-helpers for computing the temperature ladder for parallel tempering
+"""
+Helpersfor computing the temperature ladder for parallel tempering.
+
+C 2023 Matthew C. Digman
 """
 
 from warnings import warn
@@ -11,11 +13,15 @@ from scipy.interpolate import InterpolatedUnivariateSpline
 
 
 def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
-    """Convert Ts to betas=1/Ts safely handling infinities and zeros:
-            input:
-                Ts_in: float array, temperatures
-            output:
-                betas_got: float array, 1/temperatures
+    """Convert Ts to betas=1/Ts safely handling infinities and zeros.
+
+    Parameters
+    ----------
+    Ts_in: NDArray[np.floating]
+        Temperatures in units of boltzmann constant
+
+    betas_got: NDArray[float]
+        Inverse temperatures
     """
     assert np.all(Ts_in >= 0.)
     betas_got: NDArray[np.floating] = np.zeros(Ts_in.size)
@@ -26,15 +32,25 @@ def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
     return betas_got
 
 
-class TemperatureLadder():
-    """store a temperature ladder for parallel tempering"""
+class TemperatureLadder:
+    """Store a temperature ladder for parallel tempering."""
 
     def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1) -> None:
-        """Create the temperature ladder object:
-            inputs:
-                n_cold: scalar integer<=n_chain, total number of T=T_cold chains
-                Ts_in: array float, override everything else and replace Ts with
-                    this if it is not None
+        """Create the temperature ladder object.
+
+        Parameters
+        ----------
+        n_cold: int
+            n_cold<=n_chain, total number of T=T_cold chains
+        Ts_in: NDArray[np.floating]
+            Ts to store
+        sort_mode: int
+            Selector for how to sort the input temperatures
+
+        Raises
+        ------
+        ValueError
+            If the sort mode is not recognized
         """
         if sort_mode == 0:
             self.Ts: NDArray[np.floating] = Ts_in.copy()
@@ -54,11 +70,17 @@ class TemperatureLadder():
 
 
 def betas_to_Ts(betas_in: NDArray[np.floating]) -> NDArray[np.floating]:
-    """Convert Ts to Ts=1/betas safely handling infinities and zeros:
-            input:
-                betas_in: float array, 1/temperatures
-            output:
-                Ts_got: float array, temperatures
+    """Convert Ts to Ts=1/betas safely handling infinities and zeros.
+
+    Parameters
+    ----------
+    betas_in: NDArray[np.floating]
+        inverse temperatures
+
+    Returns
+    -------
+    Ts_got: NDarray[np.floating]
+        Temperatures in units of boltzmann constant
     """
     assert np.all(betas_in >= 0.)
     Ts_got: NDArray[np.floating] = np.zeros(betas_in.size)
@@ -70,17 +92,24 @@ def betas_to_Ts(betas_in: NDArray[np.floating]) -> NDArray[np.floating]:
 
 
 def geometric_spaced_betas(n_chain: int, n_cold: int, T_cold: float, T_min: float, T_max: float, n_inf_final: int = 1, sort_mode: int = 1) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Temperatures spaced geometrically in a range
-        inputs:
-            n_chain: scalar integer, total number of chains
-            n_cold: scalar integer, number of T=T_cold chains
-                    (cold chains are separate from geometric ladder, unless T_cold=T_min
-                     in which case 1 of the cold chains is considered part of the geometric ladder)
-            T_cold: scalar float, temperature of 'cold' chains
-            T_min: scalar float, minimum temperature of geometric ladder
-            T_max: scalar float, maximum temperature of finite part of geometric ladder
-            n_inf_final: int
-                How many infinite temperature chains to insert at the end
+    """Space temperatures geometrically in a range.
+
+    Parameters
+    ----------
+    n_chain: int
+        total number of chains
+    n_cold: int
+        number of T=T_cold chains.
+        cold chains are separate from geometric ladder, unless T_cold=T_min,
+        In which case 1 of the cold chains is also considered part of the geometric ladder.
+    T_cold: float
+        temperature of 'cold' chains
+    T_min: float
+        minimum temperature of geometric ladder
+    T_max: float
+        maximum temperature of finite part of geometric ladder
+    n_inf_final: int
+        How many infinite temperature chains to insert at the end
     """
     if n_cold > n_chain:
         msg = 'n cold cannot be more than total number of chains'
@@ -144,19 +173,26 @@ def geometric_spaced_betas(n_chain: int, n_cold: int, T_cold: float, T_min: floa
 
 
 class GeometricTemperatureLadder(TemperatureLadder):
-    """store a geometrically spaced temperature ladder for parallel tempering"""
+    """store a geometrically spaced temperature ladder for parallel tempering."""
 
     def __init__(self, n_chain: int, n_cold: int = 1, T_cold: float = 1., T_min: float = 1., T_max: float = 1.e15, n_inf_final: int = 1, sort_mode: int = 1) -> None:
-        """Create the temperature ladder object:
-            inputs:
-                n_chain: scalar integer, total number of parallel tempering chains
-                n_cold: scalar integer<=n_chain, total number of T=T_cold chains
-                T_cold: scalar float, temperature of 'cold' chain for readout, 1 by default
-                T_min: scalar float, minimum temperature of temperature ladder,
-                        permitted to be less than T_cold for annealing
-                T_max: scalar float, maximum temperature of finite temperature chains
-                n_inf_final: int
-                    How many infinite temperature chains to insert at the end
+        """Create the temperature ladder object.
+
+        Parameters
+        ----------
+        n_chain: int
+            total number of parallel tempering chains
+        n_cold: int
+            n_cold<=n_chain, total number of T=T_cold chains
+        T_cold: float
+            temperature of 'cold' chain for readout, 1 by default
+        T_min: float
+            minimum temperature of temperature ladder,
+            permitted to be less than T_cold for annealing
+        T_max: float
+            maximum temperature of finite temperature chains
+        n_inf_final: int
+            How many infinite temperature chains to insert at the end
         """
         self.T_cold: float = T_cold
         self.T_min: float = T_min
@@ -170,8 +206,9 @@ class GeometricTemperatureLadder(TemperatureLadder):
 
 
 def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Helper to standardize the input betas and variances
-    so that the heat capacity integration can work correctly
+    """Convert the input betas and variances to a standardized form.
+
+    Needed so that the heat capacity integration can work correctly.
     """
     assert len(betas_in.shape) == 1
     assert len(logL_vars_in.shape) == 1
@@ -202,7 +239,7 @@ def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray
 
 
 def get_heat_capacity_integrated(logL_vars_use: NDArray[np.floating], betas_use: NDArray[np.floating], correct_last: bool) -> NDArray[np.floating]:
-    """Helper to get the integral of the heat capacity"""
+    """Get the integrand of the heat capacity integral."""
     assert len(logL_vars_use.shape) == 1
     assert len(betas_use.shape) == 1
     assert logL_vars_use.shape == betas_use.shape
@@ -248,8 +285,9 @@ def get_heat_capacity_integrated(logL_vars_use: NDArray[np.floating], betas_use:
 
 
 def entropy_spacing(n_chain_need: int, betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating], correct_last: bool = False) -> NDArray[np.floating]:
-    """Helper to estimate constant entropy increase spaced chain
-    from an input file of betas and logLs
+    """Help estimate constant entropy increase spaced chain.
+
+    Takes an input file of betas and logLs.
     """
     assert n_chain_need > 0
     assert betas_in.size > 0
@@ -316,7 +354,7 @@ def entropy_spaced_betas(
         correct_last: bool = False,
         sort_mode: int = 1,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Estimate constant entropy increase spaced chain from an input file of betas and logLs"""
+    """Estimate constant entropy increase spaced chain from an input file of betas and logLs."""
     if n_cold > n_chain_need:
         msg = 'n cold cannot be more than total number of chains'
         raise ValueError(msg)
@@ -406,7 +444,7 @@ def entropy_spaced_betas(
 
 
 class EntropyTemperatureLadder(TemperatureLadder):
-    """store a constant entropy increase spaced temperature ladder for parallel tempering"""
+    """Store a constant entropy increase spaced temperature ladder for parallel tempering."""
 
     def __init__(
             self,
@@ -419,18 +457,30 @@ class EntropyTemperatureLadder(TemperatureLadder):
             correct_last: bool = False,
             sort_mode: int = 1,
     ) -> None:
-        """Create the temperature ladder object:
-            inputs:
-                n_chain: scalar integer, total number of parallel tempering chains
-                Ts_in: float array of input temperatures to use for building heat capacity
-                logL_vars_in: float array of input variances to use for building heat capacity
-                n_cold: scalar integer<=n_chain, total number of T=T_cold chains
-                T_cold: scalar float, temperature of 'cold' chain for readout, 1 by default
-                n_inf_final: int
-                    How many infinite temperature chains to insert at the end
-                correct_last: scalar boolean, whether to use a taylor series estimate to
-                    extrapolate the heat capacity integral out to infinity; only works well
-                    if maximum T in input ladder is well above any phase transitions
+        """
+        Create the temperature ladder object.
+
+        Parameters
+        ----------
+        n_chain: int
+            total number of parallel tempering chains
+        Ts_in: NDArray[np.floating]
+            input temperatures to use for building heat capacity
+        logL_vars_in: NDArray[np.floating]
+            input variances to use for building heat capacity
+        n_cold: int
+            n_cold<=n_chain
+            total number of T=T_cold chains
+        T_cold: float
+            temperature of 'cold' chain for readout, 1 by default
+        n_inf_final: int
+            How many infinite temperature chains to insert at the end
+        correct_last: bool
+            whether to use a taylor series estimate to
+            extrapolate the heat capacity integral out to infinity; only works well
+            if maximum T in input ladder is well above any phase transitions
+        sort_mode: int
+            Select mode for how temperatures are sorted.
         """
         self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
@@ -458,8 +508,9 @@ def entropy_ladder_fromfile(
         correct_last: bool = False,
         sort_mode: int = 1,
 ) -> EntropyTemperatureLadder:
-    """Get a constant entropy increase spaced temperature ladder
-    from an input file of betas and logL variances
+    """Get a constant entropy increase spaced temperature ladder.
+
+    Takes an input file of betas and logL variances.
     """
     Ts_in: NDArray[np.floating] = np.load(T_file_in)
     logL_vars_in: NDArray[np.floating] = np.load(logL_var_file_in)
@@ -494,8 +545,9 @@ def entropy_ladder_fromfile(
 def find_potential_phase_transitions(
         betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating], correct_last: bool = True, n_chain_need: int = 2048, micro_thresh: float = 1.e-5, sort_mode: int = 1
         ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
-    """Find the best estimates for temperatures of potential phase transitions
-    by interpolating the integrated heat capacity
+    """Find the best estimates for temperatures of potential phase transitions.
+
+    Interpolates the integrated heat capacity.
     """
     assert len(betas_in.shape) == 1
     assert len(logL_vars_in.shape) == 1

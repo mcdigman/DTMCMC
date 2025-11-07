@@ -1,11 +1,14 @@
-"""C 2023 Matthew C. Digman
-various jit compatible interfaces to cython lapack functions
+"""C 2023 Matthew C. Digman.
+
+Various jit compatible interfaces to cython lapack functions.
 """
+# ruff: noqa: N806, RUF100, SIM108, RUF052, FBT002, FBT001
 import ctypes
 
 import numpy as np
 from numba import njit
 from numba.extending import get_cython_function_address
+from numpy.typing import NDArray
 
 _PTR = ctypes.POINTER
 
@@ -31,7 +34,7 @@ _ptr_int = _PTR(_int)
 #  d *B,
 #  int *LDB,
 #  int *info
-# )
+# )  # noqa: ERA001
 # bind to the real space variant of the function
 addr = get_cython_function_address('scipy.linalg.cython_lapack', 'dtrtrs')
 functype = ctypes.CFUNCTYPE(None,
@@ -50,8 +53,12 @@ dtrtrs_fn = functype(addr)
 
 
 @njit()
-def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
-    """Solve x*B=y where x is a triangular matrix, note y must be fortran ordered and x must be either type of contiguous"""
+def solve_triangular(x: NDArray[np.floating], y: NDArray[np.floating], lower_a: bool = True, trans_a: bool = True, unitdiag: bool = False) -> NDArray[np.floating]:
+    """
+    Solve x*B=y where x is a triangular matrix.
+
+    Note y must be fortran ordered and x must be either type of contiguous.
+    """
     # if the input matrix is c contiguous but not fortran contiguous
     # transposing it will make it fortran contiguous with no copying
     # then flipping upper and lower and telling dtrtrs to undo the transpose will force dtrtrs to do the correct operation
@@ -101,10 +108,9 @@ def solve_triangular(x, y, lower_a=True, trans_a=True, unitdiag=False):
 
     INFO = np.empty(1, dtype=np.int32)
 
-    def check_info(info) -> None:
+    def check_info(info: NDArray[np.int32]) -> None:
         if info[0] != 0:
-            print(info)
-            msg = 'INFO indicates problem with dtrtrs'
+            msg = f'INFO {info}indicates problem with dtrtrs'
             raise RuntimeError(msg)
 
     dtrtrs_fn(UPLO.ctypes,

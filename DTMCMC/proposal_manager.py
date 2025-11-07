@@ -1,50 +1,66 @@
-"""C 2023 Matthew C. Digman
-Manager object to handle all dispatching of proposals
 """
+Manager object to handle all dispatching of proposals.
+
+C 2023 Matthew C. Digman
+"""
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 import DTMCMC.prior_manager as ph
-from DTMCMC.jump_manager import JumpManager
+from DTMCMC.exchange_manager import ExchangeManager
+from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.likelihood import AbstractLikelihood
+from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 class ProposalManager(JumpManager):
-    """manage generation of proposals, handles all dispatching of jumps"""
+    """Manage generation of proposals, handles all dispatching of jumps."""
 
-    def __init__(self, T_ladder, like_obj, managers, exchange_manager, config) -> None:
-        """Create the core proposal manager object, subclass of DTMCMC.jump_manager.JumpManager
-            inputs:
-                T_ladder: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
-                managers: a tuple of objects extending DTMCMC.jump_manager.JumpManager, managers to dispatch jumps too
-                exchange_manager: a DTMCMC.exchange_manager.ExchangeManager object (or suitable replacement)
-                                  exchanges are a separate manager from the other jump types because
-                                  they are fundamentally different in how the temperatures interact
-                config: a ConfigParser object storing any relevant configuration variables
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, managers: tuple[JumpManager, ...], exchange_manager: ExchangeManager, config) -> None:
+        """Create the core proposal manager object.
+
+        Parameters
+        ----------
+        T_ladder: TemperatureLadder
+            Temperatures for the sampler
+        managers: tuple[JumpManager, ...]
+            Managers to dispatch jumps between
+        exchange_manager: ExchangeManager
+            Manager for exchange proposals.
+            Exchanges are a separate manager from the other jump types because
+            the temperatures intereact differenctly
+        config: ConfigParser
+            object storing any relevant configuration variables
         """
         self.config = config
 
-        self.only_prior_hot = config['ProposalManager'].getboolean('only_prior_hot', True)
+        self.only_prior_hot: bool = config['ProposalManager'].getboolean('only_prior_hot', True)
 
         # self.T_ladder = T_ladder
 
-        self.managers = managers
-        self.n_managers = len(self.managers)
-        self.n_jumps_managers = np.zeros(self.n_managers, dtype=np.int64)
+        self.managers: tuple[JumpManager, ...] = managers
+        self.n_managers: int = len(self.managers)
+        self.n_jumps_managers: NDArray[np.int64] = np.zeros(self.n_managers, dtype=np.int64)
 
-        self.exchange_manager = exchange_manager
+        self.exchange_manager: ExchangeManager = exchange_manager
 
-        jump_labels_temp = []
-        jumps_temp = []
+        jump_labels_temp: list[str] = []
+        jumps_temp: list[AbstractJump] = []
         for itrm, manager in enumerate(self.managers):
-            jump_labels_loc = manager.get_jump_labels()
+            jump_labels_loc: list[str] = manager.get_jump_labels()
             self.n_jumps_managers[itrm] = len(manager.jumps)
-            jump_labels_temp.append(jump_labels_loc)
+            jump_labels_temp.extend(jump_labels_loc)
             jumps_temp.extend(manager.jumps)
 
-        self.jumps = jumps_temp
-        self.jump_labels_array = np.hstack(jump_labels_temp)
-        self.n_jump_types = np.sum(self.n_jumps_managers)
+        self.jumps: list[AbstractJump] = jumps_temp
+        self.jump_labels_array: list[str] = jump_labels_temp
+        self.n_jump_types: int = int(np.sum(self.n_jumps_managers))
 
-        self.choose_idx_modifiers = np.zeros(self.n_managers, dtype=np.int64)
+        self.choose_idx_modifiers: NDArray[np.int64] = np.zeros(self.n_managers, dtype=np.int64)
         if self.n_managers > 1:
             # If there is more than one manager we will need to adjust the jump indexes when dispatching
             for itrm in range(1, self.n_managers):
@@ -56,17 +72,17 @@ class ProposalManager(JumpManager):
         JumpManager.__init__(self, T_ladder, like_obj, self.jumps)
 
     def get_jump_weights(self):
-        """Return the unnormalized jump weights for each jump type the manager knows"""
+        """Return the unnormalized jump weights for each jump type the manager knows."""
         return self.jump_weights
 
     def set_jump_weights(self) -> None:
-        """Set the jump probabilities for everything combined"""
-        n_chain = self.T_ladder.n_chain
-        jump_weights = np.zeros((n_chain, self.n_jump_types))
+        """Set the jump probabilities for everything combined."""
+        n_chain: int = self.T_ladder.n_chain
+        jump_weights: NDArray[np.floating] = np.zeros((n_chain, self.n_jump_types))
 
-        itrj1 = 0
+        itrj1: int = 0
         for itrm in range(self.n_managers):
-            itrj2 = itrj1 + self.n_jumps_managers[itrm]
+            itrj2: int = itrj1 + self.n_jumps_managers[itrm]
             jump_weights[:, itrj1:itrj2] = self.managers[itrm].get_jump_weights()
             if self.only_prior_hot and not isinstance(self.managers[itrm], ph.PriorManager):
                 # override and only allow prior-type draws to contribute to the last chain
@@ -77,10 +93,10 @@ class ProposalManager(JumpManager):
         assert np.all(self.jump_weights >= 0.)
 
     def set_jump_probs(self) -> None:
-        """Set the normalized probabilities of the jump subtypes
-        as a function of temperature, relying on set_jump_weights.
+        """Set the normalized probabilities of the jump subtypes.
+
+        Probabilities are a function of temperature, relying on set_jump_weights.
         The overall manager cannot have any rows with 0 total probability,
-        so assert that
         """
         super().set_jump_probs()
         # individual proposals can have temps where they do not suggest proposals
@@ -88,21 +104,23 @@ class ProposalManager(JumpManager):
         assert np.all(np.sum(self.jump_probs, axis=1) == 1.)
 
     def post_step_update(self, samples) -> None:
-        """Do any needed internal processing after an individual step of all temperatures;
-        mainly intended to be used to write to differential evolution buffer
+        """Do any needed internal processing after an individual step of all temperatures.
+
+        Mainly intended to be used to write to e.g. differential evolution buffer.
         """
         for itrm in range(self.n_managers):
             self.managers[itrm].post_step_update(samples)
 
-    def post_block_update(self, itrn, block_size, samples, logLs) -> None:
-        """Do any needed internal processing after an individual block of size block_size:
-        ie, fisher matrix updates
+    def post_block_update(self, itrn: int, block_size: int, samples, logLs) -> None:
+        """Do any needed internal processing after an individual block of size block_size.
+
+        E.g. fisher matrix updates.
         """
         for itrm in range(self.n_managers):
             self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
 
     def record_config(self, config_in) -> None:
-        """Record the current configuration to an input ConfigParser object config_in"""
+        """Record the current configuration to an input ConfigParser object config_in."""
         for itrm in range(self.n_managers):
             self.managers[itrm].record_config(config_in)
 

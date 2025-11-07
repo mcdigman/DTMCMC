@@ -141,7 +141,7 @@ def advance_block_ptmcmc(
 # TODO add any necessary handlers for block length
 
 
-class DTMCMCSampler():
+class DTMCMCSampler:
     """object to manage the overall chain evolution"""
 
     def __init__(self, T_ladder_in: TemperatureLadder, like_obj: AbstractLikelihood, block_size, store_size,

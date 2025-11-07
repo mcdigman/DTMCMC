@@ -30,7 +30,7 @@ def reflect_into_range(x, x_low, x_high):
 @njit()
 def reflect_cosines(cos_in, angle_in, rotfac=np.pi, modfac=2 * np.pi):
     """Helper to reflect cosines of coordinates around poles  to get them between -1 and 1,
-        which requires also rotating the signal by rotfac each time, then mod the angle by modfac
+    which requires also rotating the signal by rotfac each time, then mod the angle by modfac
     """
     # reflect at poles, requires shifting corresponding azimuth as well
     # needs to be mod 4 instead of 2 because a very large jump could have gotten reflected even or odd number of times

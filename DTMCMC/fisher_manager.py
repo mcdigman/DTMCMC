@@ -8,22 +8,6 @@ from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
 
 
-class FisherFullJump(AbstractJump):
-    def __init__(self, manager) -> None:
-        self.manager = manager
-        AbstractJump.__init__(self, 'Fisher All-D')
-
-    def __call__(self, sample_point, itrt):
-        """Apply a fisher matrix jump"""
-        n_par = sample_point.size
-        new_point = sample_point + solve_triangular(
-            self.manager.chol_fishers[itrt],
-            self.manager.gamma_mults[itrt] * np.random.normal(0., 1., n_par),
-            trans_a=True
-        )
-        return new_point, 0., True
-
-
 @njit()
 def sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, sigma_scales, do_full):
     """Helper to compute a standard deviation jump in random subspaces"""
@@ -65,6 +49,7 @@ class SigmaFullJump(AbstractJump):
 
 class SigmaRandomSubspaceJump(AbstractJump):
     """Standard deviation jump in random subspaces"""
+
     def __init__(self, manager) -> None:
         self.manager = manager
         AbstractJump.__init__(self, 'Std Random-D')
@@ -200,7 +185,7 @@ def set_scales(n_par, T_ladder, sigma_diags):
     return sigma_scales, gamma_mults
 
 
-class FisherStrategyParameters():
+class FisherStrategyParameters:
     """container to store some parameters related to the strategy of
     fisher matrix proposal generation
     """
@@ -238,8 +223,8 @@ class FisherStrategyParameters():
 
     def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
-            inputs:
-                config_in: ConfigParser object
+        inputs:
+            config_in: ConfigParser object
         """
         config_f = config_in['FisherJumpManager']
         config_f['use_chol_fishers'] = str(self.use_chol_fishers)
@@ -349,3 +334,19 @@ class FisherJumpManager(JumpManager):
     def record_config(self, config_in) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+
+class FisherFullJump(AbstractJump):
+    def __init__(self, manager: FisherJumpManager) -> None:
+        self.manager: FisherJumpManager = manager
+        AbstractJump.__init__(self, 'Fisher All-D')
+
+    def __call__(self, sample_point, itrt: int):
+        """Apply a fisher matrix jump"""
+        n_par: int = sample_point.size
+        new_point = sample_point + solve_triangular(
+            self.manager.chol_fishers[itrt],
+            self.manager.gamma_mults[itrt] * np.random.normal(0., 1., n_par),
+            trans_a=True
+        )
+        return new_point, 0., True

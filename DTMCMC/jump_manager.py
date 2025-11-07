@@ -21,8 +21,8 @@ class AbstractJump(ABC):
 
     def __init__(self, print_name: str) -> None:
         """Create the jump object:
-            inputs:
-                print_name: a string to print as the formatted name of this jump
+        inputs:
+            print_name: a string to print as the formatted name of this jump
         """
         self.print_name: str = print_name
 
@@ -36,14 +36,14 @@ class AbstractJump(ABC):
     @abstractmethod
     def __call__(self, sample_point, itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Perform and MCMC proposal
-            inputs:
-                sample_point: a numpy array with the current point
-                itrt: the index of the requested temperature chain
-            outputs:
-                new_point: a numpy array with the proposed new point
-                density_factor: a scalar float, proposal density factor
-                    if no proposal density factor is needed can just be set to 0.
-                success: a boolean, whether generating the proposal succeeded
+        inputs:
+            sample_point: a numpy array with the current point
+            itrt: the index of the requested temperature chain
+        outputs:
+            new_point: a numpy array with the proposed new point
+            density_factor: a scalar float, proposal density factor
+                if no proposal density factor is needed can just be set to 0.
+            success: a boolean, whether generating the proposal succeeded
         """
         return np.zeros(sample_point.size), 0., True
 
@@ -90,19 +90,20 @@ class JumpManager(ABC):
 
     def dispatch_jump(self, sample_point, itrt: int, choose: int = -1):
         """Dispatch the specified proposal
-            inputs:
-                sample_point: 1D float array, the parameters of the current point
-                itrt: scalar integer, the index of the temperature chain for which to dispatch a proposal
-                choose: scalar int, optional, an index that the dispatcher may use to select which proposal to try
-                        if choose is not set, then try to jump according to the specified probability matrix
+        inputs:
+            sample_point: 1D float array, the parameters of the current point
+            itrt: scalar integer, the index of the temperature chain for which to dispatch a proposal
+            choose: scalar int, optional, an index that the dispatcher may use to select which proposal to try
+                    if choose is not set, then try to jump according to the specified probability matrix
 
-            returns:
-                new_point: 1D float array, the parameter of the new point
-                density_fac: a scalar float for the density factor of the proposal,
-                                will be added to the log likelihood to modify the acceptance probability
-                success: scalar boolean, whether or not generating the proposal succeeded
-                            (if not, the proposal will automatically be marked rejected)
-                choose: scalar int, index of the chosen jump type
+        Returns
+        -------
+            new_point: 1D float array, the parameter of the new point
+            density_fac: a scalar float for the density factor of the proposal,
+                            will be added to the log likelihood to modify the acceptance probability
+            success: scalar boolean, whether or not generating the proposal succeeded
+                        (if not, the proposal will automatically be marked rejected)
+            choose: scalar int, index of the chosen jump type
         """
         if choose == -1:
             # choose the jump
@@ -152,7 +153,7 @@ class JumpManager(ABC):
         for itrt in range(self.jump_probs.shape[0]):
             # sanity check that all rows are either normalized  to 1 or sum to 0
             sum_check: float = float(np.sum(self.jump_probs[itrt]))
-            assert sum_check == 0. or sum_check == 1.
+            assert sum_check in {0.0, 1.0}
 
     def get_jump_weights(self) -> NDArray[np.floating]:
         """Get the desired weights of this jump type as a function of temperature"""
@@ -173,7 +174,6 @@ class JumpManager(ABC):
             samples: 2D float array of samples
         """
         del samples
-        return
 
     def post_block_update(self, itrn: int, block_size: int, samples, logLs) -> None:
         """Do any needed internal processing after an individual block of size block_size:

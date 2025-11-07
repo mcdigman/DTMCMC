@@ -5,22 +5,24 @@ manager to manage prior-draw based jumps
 import numpy as np
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.likelihood import AbstractLikelihood
+from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 class PriorFullJump(AbstractJump):
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: JumpManager) -> None:
+        self.manager: JumpManager = manager
         AbstractJump.__init__(self, 'Prior All-D')
 
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point, itrt: int):
         del itrt
         new_point = self.manager.like_obj.prior_draw()
         density_fac = self.manager.like_obj.prior_factor(sample_point) - self.manager.like_obj.prior_factor(new_point)
         return new_point, density_fac, True
 
 
-class PriorStrategyParameters():
+class PriorStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
     def __init__(self, config) -> None:
@@ -38,8 +40,8 @@ class PriorStrategyParameters():
 
     def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
-            inputs:
-                config_in: ConfigParser object
+        inputs:
+            config_in: ConfigParser object
         """
         config_prior = config_in['PriorManager']
         config_prior['cold_prior_weight'] = str(self.cold_prior_weight)
@@ -49,11 +51,11 @@ class PriorStrategyParameters():
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
         self.strategy_params = PriorStrategyParameters(config)
 
-        jumps = [PriorFullJump(self)]
+        jumps: list[AbstractJump] = [PriorFullJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 

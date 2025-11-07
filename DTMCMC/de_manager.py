@@ -12,7 +12,6 @@ from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 @njit()
 def apply_de_helper(de_buffer, de_subspace_frac: float, itrt: int, sample_point, do_subspace: bool, do_big: bool) -> tuple[NDArray[np.floating], float, bool]:
-
     """Apply the differential evolution jump"""
     de_size: int = de_buffer.shape[0]
     n_par: int = de_buffer.shape[2]
@@ -140,8 +139,8 @@ class DEStrategyParameters:
 
     def record_config(self, config_in) -> None:
         """Record the current configuration to the requested configuration object
-            inputs:
-                config_in: ConfigParser object
+        inputs:
+            config_in: ConfigParser object
         """
         config_de = config_in['DEJumpManager']
         config_de['cold_de_weight'] = str(self.cold_de_weight)

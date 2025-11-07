@@ -61,6 +61,7 @@ def check_bounds(v) -> bool:
 @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # pyright: ignore[reportCallIssue]
 class Likelihood():
     """class to manage the likelihood-specific essential functions for the sampler"""
+
     def __init__(self, n_par=5, eps_default=1.e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par

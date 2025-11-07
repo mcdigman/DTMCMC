@@ -3,12 +3,15 @@ module to store various trackers about the state of chains
 """
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
+
+from DTMCMC.proposal_manager import ProposalManager
 
 
 # TODO fix cycle and exchange tracking if not sorted
 @njit()
-def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold) -> None:
-    """Process whether the sampler has undergone any partial cold-hot cycles"""
+def process_chain_cycles(cycle_tracker, itrn: int, block_size: int, chain_track, n_cold: int) -> None:
+    """Process whether the sampler has undergone any partial cold-hot cycles."""
     for itrb in range(1, block_size + 1, 1):
 
         # check if any current cold chains have been hot more recently than it was last cold
@@ -34,20 +37,20 @@ def process_chain_cycles(cycle_tracker, itrn, block_size, chain_track, n_cold) -
 # TODO clean up tracker reporting
 
 
-class TrackerManager():
-    """track various things about chains like acceptance rates and cycle times"""
+class TrackerManager:
+    """track various things about chains like acceptance rates and cycle times."""
 
-    def __init__(self, n_cold, n_chain, block_size, n_par, track_full_exchanges, n_jump_types, n_block_archive) -> None:
-        self.n_cold = n_cold
-        self.n_chain = n_chain
-        self.block_size = block_size
-        self.n_par = n_par
+    def __init__(self, n_cold: int, n_chain: int, block_size: int, n_par: int, track_full_exchanges, n_jump_types: int, n_block_archive: int) -> None:
+        self.n_cold: int = n_cold
+        self.n_chain: int = n_chain
+        self.block_size: int = block_size
+        self.n_par: int = n_par
         self.track_full_exchanges = track_full_exchanges
-        self.n_jump_types = n_jump_types
+        self.n_jump_types: int = n_jump_types
         self.initialize_trackers()
 
-        self.n_block_archive = n_block_archive
-        self.itrb = 0
+        self.n_block_archive: int = n_block_archive
+        self.itrb: int = 0
 
         self.cycle_archive = []
         self.accept_archive = []
@@ -55,7 +58,7 @@ class TrackerManager():
         self.itrn_archive = []
 
     def initialize_trackers(self) -> None:
-        """Initialize the various trackers like acceptance rate and cycle times"""
+        """Initialize the various trackers like acceptance rate and cycle times."""
         # cycle_tracker stores 4 integer variables related to tracking the number of cycles
         # the time the chain was last at T=T_cold, the time the chain was last at T=maximum index
         # the number of cycles hot to cold, and number of cycles cold to hot
@@ -74,8 +77,8 @@ class TrackerManager():
             # track limited exchange information
             self.exchange_tracker = np.zeros((2, 2, self.n_chain), dtype=np.int64)
 
-    def post_block_update(self, itrn, chain_track) -> None:
-        """Process anything the tracker needs to do after every block"""
+    def post_block_update(self, itrn: int, chain_track) -> None:
+        """Process anything the tracker needs to do after every block."""
         self.process_chain_cycles(itrn, chain_track)
 
         self.itrb += 1
@@ -87,22 +90,20 @@ class TrackerManager():
             self.exchange_archive.append(self.exchange_tracker.copy())
             self.itrn_archive.append(itrn + self.block_size)
 
-    def process_chain_cycles(self, itrn, chain_track) -> None:
-        """Process whether the sampler has undergone any partial cold-hot cycles"""
+    def process_chain_cycles(self, itrn: int, chain_track) -> None:
+        """Process whether the sampler has undergone any partial cold-hot cycles."""
         process_chain_cycles(self.cycle_tracker, itrn, self.block_size, chain_track, self.n_cold)
 
-    def get_exchange_rate_summary(self, itrt_start=0, itrt_end=-1, last_itrn=-1):
-        """Get nn exchange rate summary"""
+    def get_exchange_rate_summary(self, itrt_start: int = 0, itrt_end: int = -1, last_itrn: int = -1):
+        """Get nn exchange rate summary."""
         if last_itrn == -1 and len(self.itrn_archive) >= 2:
             exchange_tracker_loc = self.exchange_tracker - self.exchange_archive[-2]
         else:
             exchange_tracker_loc = self.exchange_tracker
 
-        if itrt_start > self.n_chain - 1:
-            itrt_start = self.n_chain - 1
+        itrt_start = min(itrt_start, self.n_chain - 1)
 
-        if itrt_start < 0:
-            itrt_start = 0
+        itrt_start = max(itrt_start, 0)
 
         if itrt_end == -1 or itrt_end > self.n_chain:
             itrt_end = self.n_chain
@@ -138,12 +139,12 @@ class TrackerManager():
 
         return exchange_full, exchange_vec_nn_sym, exchange_tot_nn
 
-    def get_n_cycles(self):
-        """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone"""
+    def get_n_cycles(self) -> NDArray[np.int64]:
+        """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone."""
         return np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
 
-    def print_tracker_summary(self, n_cold, Ts, proposal_manager, last_itrn=-1) -> None:
-        """Print a summmary of results from this tracker object"""
+    def print_tracker_summary(self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: ProposalManager, last_itrn: int = -1) -> None:
+        """Print a summmary of results from this tracker object."""
         with np.errstate(invalid='ignore', divide='ignore'):
             if last_itrn == -1 and len(self.itrn_archive) >= 2:
                 accept_record_loc = self.accept_record - self.accept_archive[-2]
