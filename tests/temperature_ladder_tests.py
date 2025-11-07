@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from numpy.testing import assert_array_equal
 
 import DTMCMC.temperature_ladder_helpers as th
 
@@ -13,171 +14,220 @@ test_set1 = [
 ]
 
 
-@pytest.mark.parametrize('n_cold,n_chain,T_cold', test_set1)
-def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold):
+def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final):
+    uniq, counts = np.unique(Ts_in, return_counts=True)
+    print(Ts_in)
+    print(T_cold, n_cold, n_inf_final)
+    print(uniq)
+    print(counts)
+
+    if n_cold > 0:
+        assert np.any(uniq == T_cold)
+        arg_cold = int(np.argmax(uniq == T_cold))
+        assert_array_equal(counts[(uniq != T_cold) & np.isfinite(uniq)], 1)
+        if T_cold != np.inf:
+            assert_array_equal(counts[arg_cold], n_cold)
+            assert_array_equal(counts[~np.isfinite(uniq)], min(n_chain - n_cold, n_inf_final))
+            assert uniq.size == n_chain - n_cold + 1 - max(min(n_chain - n_cold, n_inf_final) - 1, 0)
+        else:
+            assert_array_equal(counts[arg_cold], min(n_cold + n_inf_final, n_chain))
+            assert uniq.size == n_chain + 1 - min(n_cold + n_inf_final, n_chain)
+    else:
+        assert uniq.size == n_chain
+
+    if T_cold <= 1.:
+        assert np.all(Ts_in[n_cold:] > T_cold)  # check all higher temperatures warmer than cold chain
+
+
+@pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
+@pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
+def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final):
     """Test the entropy based spacing produces results that makes sense"""
     if n_cold > n_chain:
         with pytest.raises(ValueError):
-            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', use_inf_final=True, T_cold=T_cold)
+            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
 
         return
 
-    if n_cold == n_chain:
+    if (n_cold + n_inf_final == n_chain and n_inf_final > 0) or n_cold + n_inf_final > n_chain:
         with pytest.warns(UserWarning):
-            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', use_inf_final=True, T_cold=T_cold)
-            Ts_in = T_ladder.Ts
+            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
     else:
-        T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', use_inf_final=True, T_cold=T_cold)
-        Ts_in = T_ladder.Ts
+        T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
+    Ts_in = T_ladder.Ts
 
-    # Strict technical requirements
+    finite_mask = np.isfinite(Ts_in)
+    positive_mask = Ts_in > 0
+    joint_mask = finite_mask & positive_mask
+
+    # Strict technical requirements for non-negative temperatures
     assert Ts_in.size == n_chain                # check correct number of chains
     assert np.sum(Ts_in == T_cold) >= n_cold      # check correct number of cold chains
     assert not np.any(Ts_in < 0.)               # check no negative temperature chains
-    assert np.all(T_ladder.Ts == Ts_in)         # check object matches
-    assert np.all(T_ladder.betas[np.isfinite(Ts_in) & (Ts_in > 0)] == 1. / Ts_in[np.isfinite(Ts_in) & (Ts_in > 0)])  # check inverses match
-    assert np.all(Ts_in[T_ladder.betas == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.betas[Ts_in == 0.] == np.inf)  # check inverses match
+    assert_array_equal(T_ladder.Ts, Ts_in)         # check object matches
+    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
+    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
 
     # Not technically required, but expected in this test case
-    if not T_cold == np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold                   # check correct number of cold chains
+    if T_cold != np.inf:
+        assert np.sum(Ts_in == T_cold) == n_cold      # check correct number of cold chains
         if n_chain > n_cold:
-            assert np.sum(Ts_in == np.inf) == 1                      # check 1 infinite temperature chain exists
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)             # check non-cold chains are sorted
+            assert np.sum(~finite_mask) == min(n_inf_final, n_chain - n_cold)  # check 1 infinite temperature chain exists
+        n_nonfinite = np.sum(~finite_mask)
+        assert np.all(np.diff(Ts_in[n_cold:min(Ts_in.size, Ts_in.size - n_nonfinite + 1)]) >= 0.)  # check non-cold chains are sorted
     else:
-        assert np.sum(Ts_in == T_cold) == min(n_cold + 1, n_chain)
+        assert np.sum(Ts_in == T_cold) == min(n_cold + n_inf_final, n_chain)
 
-    assert np.unique(Ts_in[n_cold:]).size == n_chain - n_cold  # check all temperatures are unique
-    if T_cold <= 1.:
-        assert np.all(Ts_in[n_cold:] > T_cold)                   # check all higher temperatures warmer than cold chain
+    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
 
 @pytest.mark.parametrize('n_cold,n_chain,T_cold', test_set1)
 def test_entropy_spacing_fromfile_noinf(n_cold, n_chain, T_cold):
     """Test the entropy based spacing produces results that makes sense"""
+    n_inf_final = 0
     if n_cold > n_chain:
         with pytest.raises(ValueError):
-            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', use_inf_final=False, T_cold=T_cold)
+            T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
 
         return
 
-    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', use_inf_final=False, T_cold=T_cold)
+    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
     Ts_in = T_ladder.Ts
 
-    # Strict technical requirements
-    assert Ts_in.size == n_chain                # check correct number of chains
-    assert np.sum(Ts_in == T_cold) >= n_cold      # check correct number of cold chains
-    assert not np.any(Ts_in < 0.)               # check no negative temperature chains
-    assert np.all(T_ladder.Ts == Ts_in)         # check object matches
-    assert np.all(T_ladder.betas[np.isfinite(Ts_in) & (Ts_in > 0)] == 1. / Ts_in[np.isfinite(Ts_in) & (Ts_in > 0)])  # check inverses match
-    assert np.all(Ts_in[T_ladder.betas == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.betas[Ts_in == 0.] == np.inf)  # check inverses match
+    finite_mask = np.isfinite(Ts_in)
+    positive_mask = Ts_in > 0
+    joint_mask = finite_mask & positive_mask
+
+    # Strict technical requirements for non-negative temperatures
+    assert Ts_in.size == n_chain              # check correct number of chains
+    assert np.sum(Ts_in == T_cold) >= n_cold  # check correct number of cold chains
+    assert not np.any(Ts_in < 0.)             # check no negative temperature chains
+    assert_array_equal(T_ladder.Ts, Ts_in)       # check object matches
+    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
+    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
 
     # Not technically required, but expected in this test case
-    if not T_cold == np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold                   # check correct number of cold chains
+    if T_cold != np.inf:
+        assert np.sum(Ts_in == T_cold) == n_cold  # check correct number of cold chains
         if n_chain > n_cold:
-            assert np.sum(Ts_in == np.inf) <= 1                  # check not inserting more non infinite chains (note this method does not *guarantee* temps are finite))
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)             # check non-cold chains are sorted
+            # check not inserting more non infinite chains
+            # note this method does not *guarantee* temps are finite
+            # TODO should this guarantee temps are finite?
+            n_inf_final = np.sum((~finite_mask) & positive_mask)
+            assert n_inf_final <= 1
+        else:
+            n_inf_final = 0
+        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)  # check non-cold chains are sorted
     else:
-        assert np.sum(Ts_in == T_cold) == min(n_cold + 1, n_chain)
+        n_inf_final = min(n_cold + n_inf_final, n_chain) - n_cold
+        assert np.sum(Ts_in == T_cold) == n_inf_final + n_cold
 
-    assert np.unique(Ts_in[n_cold:]).size == n_chain - n_cold  # check all temperatures are unique
-    if T_cold <= 1.:
-        assert np.all(Ts_in[n_cold:] > T_cold)                   # check all higher temperatures warmer than cold chain
+    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
 
-@pytest.mark.parametrize('n_cold,n_chain,T_cold', test_set1)
-def test_geometric_spacing_inf(n_cold, n_chain, T_cold):
+@pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
+@pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
+def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final):
     """Test the entropy based spacing produces results that makes sense"""
     T_min = 1.
     T_max = 1000.
 
     if n_cold > n_chain:
         with pytest.raises(ValueError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
+            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
         return
 
     if T_cold == np.inf:
         with pytest.raises(AssertionError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
+            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
         return
-    if n_cold == n_chain:
+    if (n_chain == n_cold + n_inf_final and n_inf_final > 0) or n_chain < n_cold + n_inf_final:
         with pytest.warns(UserWarning):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
-            T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
+            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
+        with pytest.warns(UserWarning):
+            T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
     else:
-        betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
-        T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=True)
+        betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
+        T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
-    # Strict technical requirements
+    finite_mask = np.isfinite(Ts_in)
+    positive_mask = Ts_in > 0
+    joint_mask = finite_mask & positive_mask
+
+    # Strict technical requirements for non-negative temperatures
     assert Ts_in.size == n_chain                # check correct number of chains
     assert np.sum(Ts_in == T_cold) >= n_cold      # check correct number of cold chains
     assert not np.any(Ts_in < 0.)               # check no negative temperature chains
-    assert np.all(T_ladder.Ts == Ts_in)         # check object matches
-    assert np.all(T_ladder.betas[np.isfinite(Ts_in) & (Ts_in > 0)] == 1. / Ts_in[np.isfinite(Ts_in) & (Ts_in > 0)])  # check inverses match
-    assert np.all(Ts_in[T_ladder.betas == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.betas[Ts_in == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.Ts == Ts_in)         # check object matches
-    assert np.all(T_ladder.betas == betas_in)         # check object matches
+    assert_array_equal(T_ladder.Ts, Ts_in)         # check object matches
+    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
+    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.Ts, Ts_in)         # check object matches
+    assert_array_equal(T_ladder.betas, betas_in)         # check object matches
 
     # Not technically required, but expected in this test case
-    if not T_cold == np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold                   # check correct number of cold chains
+    if T_cold != np.inf:
+        assert np.sum(Ts_in == T_cold) == n_cold      # check correct number of cold chains
         if n_chain > n_cold:
-            assert np.sum(Ts_in == np.inf) == 1                      # check 1 infinite temperature chain exists
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)             # check non-cold chains are sorted
+            assert np.sum(~finite_mask) == min(n_inf_final, n_chain - n_cold)  # check 1 infinite temperature chain exists
+        n_nonfinite = np.sum(~finite_mask)
+        assert np.all(np.diff(Ts_in[n_cold:min(Ts_in.size, Ts_in.size - n_nonfinite + 1)]) >= 0.)  # check non-cold chains are sorted
     else:
-        assert np.sum(Ts_in == T_cold) == min(n_cold + 1, n_chain)
+        assert np.sum(Ts_in == T_cold) == min(n_cold + n_inf_final, n_chain)
 
-    assert np.unique(Ts_in[n_cold:]).size == n_chain - n_cold  # check all temperatures are unique
-    if T_cold <= 1.:
-        assert np.all(Ts_in[n_cold:] > T_cold)                   # check all higher temperatures warmer than cold chain
+    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
 
-@pytest.mark.parametrize('n_cold,n_chain,T_cold', test_set1)
+@pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 def test_geometric_spacing(n_cold, n_chain, T_cold):
     """Test the geoemtric based spacing produces results that makes sense"""
     T_min = 1.
     T_max = 1000.
+    n_inf_final = 0
 
     if n_cold > n_chain:
         with pytest.raises(ValueError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=False)
+            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
         return
 
     if T_cold == np.inf:
         with pytest.raises(AssertionError):
-            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=False)
+            betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
         return
-    betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=False)
-    T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, use_inf_final=False)
+    betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
+    T_ladder = th.GeometricTemperatureLadder(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
-    # Strict technical requirements
+    finite_mask = np.isfinite(Ts_in)
+    positive_mask = Ts_in > 0
+    joint_mask = finite_mask & positive_mask
+
+    print(Ts_in)
+    print(T_ladder.Ts)
+    print(T_cold)
+    # Strict technical requirements for non-negative temperatures
     assert Ts_in.size == n_chain                # check correct number of chains
     assert np.sum(Ts_in == T_cold) >= n_cold      # check correct number of cold chains
     assert not np.any(Ts_in < 0.)               # check no negative temperature chains
-    assert np.all(T_ladder.betas[np.isfinite(Ts_in) & (Ts_in > 0)] == 1. / Ts_in[np.isfinite(Ts_in) & (Ts_in > 0)])  # check inverses match
-    assert np.all(Ts_in[T_ladder.betas == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.betas[Ts_in == 0.] == np.inf)  # check inverses match
-    assert np.all(T_ladder.Ts == Ts_in)         # check object matches
-    assert np.all(T_ladder.betas == betas_in)         # check object matches
+    assert_array_equal(T_ladder.betas[joint_mask], 1. / Ts_in[joint_mask])  # check inverses match
+    assert_array_equal(Ts_in[T_ladder.betas == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.betas[Ts_in == 0.], np.inf)  # check inverses match
+    assert_array_equal(T_ladder.Ts, Ts_in)         # check object matches
+    assert_array_equal(T_ladder.betas, betas_in)         # check object matches
 
     # Not technically required, but expected in this test case
-    if not T_cold == np.inf:
-        assert np.sum(Ts_in == T_cold) == n_cold                   # check correct number of cold chains
+    if T_cold != np.inf:
+        assert np.sum(Ts_in == T_cold) == n_cold  # check correct number of cold chains
         if n_chain > n_cold:
-            assert np.sum(Ts_in == np.inf) == 0                      # check no infinite temperature chain exists
-        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)             # check non-cold chains are sorted
+            assert np.sum(~finite_mask) == 0      # check no infinite temperature chain exists
+        assert np.all(np.diff(Ts_in[n_cold:]) >= 0.)  # check non-cold chains are sorted
     else:
         assert np.sum(Ts_in == T_cold) == min(n_cold + 1, n_chain)
 
-    assert np.unique(Ts_in[n_cold:]).size == n_chain - n_cold  # check all temperatures are unique
-    if T_cold <= 1.:
-        assert np.all(Ts_in[n_cold:] > T_cold)                   # check all higher temperatures warmer than cold chain
+    unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final)
 
 
 if __name__ == '__main__':

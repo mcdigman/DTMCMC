@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.ndimage import gaussian_filter
 
@@ -12,7 +12,7 @@ n_dim = 5
 rs = np.load('rs_rec_cake1.npy')
 vals = np.load('box_rec_cake1.npy')
 
-vals_integ = cumtrapz(vals, initial=0.)
+vals_integ = cumulative_trapezoid(vals, initial=0.)
 vals_integ_smooth = gaussian_filter(vals_integ, sigma=100)
 vals_derive = np.gradient(vals_integ_smooth)
 
@@ -63,7 +63,7 @@ def cumulants_from_Ts(Ts):
     return cumulants
 
 
-integrated_curve = cumtrapz(integ_stitch, rs, initial=0.)
+integrated_curve = cumulative_trapezoid(integ_stitch, rs, initial=0.)
 integrated_curve_interp = InterpolatedUnivariateSpline(rs, integrated_curve, k=3, ext=2)
 ratio_got = integrated_curve_interp(10) / integrated_curve_interp(np.sqrt(5) * 10)
 volume_in = (8 * np.pi**2 * 10**5 / 15)
@@ -131,9 +131,9 @@ if do_recalc:
     plt.semilogx(Ts_in, cumulants_load[1] * betas_in**2)
     plt.show()
 
-    plt.semilogx(Ts_in, cumtrapz(cumulants[1][::-1] * betas_in[::-1], betas_in[::-1], initial=0.)[::-1])
-    plt.semilogx(Ts_combine, cumtrapz(cumulants_combine[1][::-1] * betas_combine[::-1], betas_combine[::-1], initial=0.)[::-1])
-    plt.semilogx(Ts_in, cumtrapz(cumulants_load[1][::-1] * betas_in[::-1], betas_in[::-1], initial=0.)[::-1])
+    plt.semilogx(Ts_in, cumulative_trapezoid(cumulants[1][::-1] * betas_in[::-1], betas_in[::-1], initial=0.)[::-1])
+    plt.semilogx(Ts_combine, cumulative_trapezoid(cumulants_combine[1][::-1] * betas_combine[::-1], betas_combine[::-1], initial=0.)[::-1])
+    plt.semilogx(Ts_in, cumulative_trapezoid(cumulants_load[1][::-1] * betas_in[::-1], betas_in[::-1], initial=0.)[::-1])
     plt.show()
 
     plt.semilogx(Ts_in, cumulants[2] * betas_in**3)

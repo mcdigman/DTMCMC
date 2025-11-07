@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 
 import DTMCMC.temperature_ladder_helpers as th
 
@@ -58,9 +58,9 @@ plt.plot(cumulants4[5] * betas**6)
 plt.show()
 
 
-plt.plot(cumtrapz(cumulants1[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumtrapz(cumulants2[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumtrapz(cumulants3[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumtrapz(cumulants4[1][::-1] * betas[::-1], betas[::-1], initial=0.))
+plt.plot(cumulative_trapezoid(cumulants1[1][::-1] * betas[::-1], betas[::-1], initial=0.))
+plt.plot(cumulative_trapezoid(cumulants2[1][::-1] * betas[::-1], betas[::-1], initial=0.))
+plt.plot(cumulative_trapezoid(cumulants3[1][::-1] * betas[::-1], betas[::-1], initial=0.))
+plt.plot(cumulative_trapezoid(cumulants4[1][::-1] * betas[::-1], betas[::-1], initial=0.))
 
 plt.show()

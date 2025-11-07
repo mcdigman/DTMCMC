@@ -1,7 +1,7 @@
 from time import perf_counter
 
 import numpy as np
-from scipy.integrate import cumtrapz
+from scipy.integrate import cumulative_trapezoid
 from scipy.special import gamma
 
 cutoff = 10.
@@ -33,7 +33,7 @@ def rCutFunc(rs):
 
 integrand[rs > cutoff] = rCutFunc(rs[rs > cutoff]) / rCutFunc(cutoff + 1.e-13) * cutoff**(n_dim - 1)
 
-res = 2 * np.pi / (np.pi / 2.) * cumtrapz(integrand, rs, initial=0.)
+res = 2 * np.pi / (np.pi / 2.) * cumulative_trapezoid(integrand, rs, initial=0.)
 
 print(res[-1], np.pi * rs[-1]**2, (2 * cutoff)**2, np.pi * cutoff**2)
 print('answer: ', (2 * cutoff)**n_dim, 'result', res[-1], res[-1] / (2 * cutoff)**n_dim)
@@ -89,7 +89,7 @@ plt.show()
 
 # plt.plot(rs,areaFunc(rs)/(2*cutoff)**(n_dim))
 # plt.plot(rs,np.full(n_r,1.))
-# plt.plot(bins[1][1:],cumtrapz(bins[0],bins[1][1:],initial=0.))
+# plt.plot(bins[1][1:],cumulative_trapezoid(bins[0],bins[1][1:],initial=0.))
 # plt.show()
 
 # plt.loglog(np.sqrt(n_dim)*cutoff-bins[1][1:][bins[1][1:]>=cutoff],(bins[0]/bins[1][1:]**(n_dim-1))[bins[1][1:]>=cutoff])
