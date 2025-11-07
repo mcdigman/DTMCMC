@@ -1,11 +1,21 @@
 """C 2023 Matthew C. Digman
 Module with the overall PTMCMC Chain object
 """
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 
-from DTMCMC.proposal_manager_helper import get_default_proposal_manager
+from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
 from DTMCMC.tracker_manager import TrackerManager
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 @njit()
@@ -14,9 +24,9 @@ def store_sample_helper(
     logLs_store,
     samples_block,
     logLs_block,
-    store_idx_in,
-    store_counter_in,
-    n_record,
+    store_idx_in: int,
+    store_counter_in: int,
+    n_record: int,
     block_size,
     store_thin,
     read_offset):
@@ -25,8 +35,8 @@ def store_sample_helper(
     the thinning respectively read offset needs to be zero for first write
     and 1 otherwise to prevent duplicate writes due to wrapping
     """
-    store_idx = store_idx_in
-    store_counter = store_counter_in
+    store_idx: int = store_idx_in
+    store_counter: int = store_counter_in
     for itrk in range(read_offset, block_size + read_offset):
         if store_counter == 0:
             # write the sample if the thinning counter is 0
@@ -46,7 +56,7 @@ def store_sample_helper(
 
 
 @njit()
-def mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump):
+def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, itrt: int, new_point, logL_new, density_fac, idx_jump: int):
     """Helper to decide whether mcmc point is accepted or not and process accordingly"""
     # draw to determine if we will accept
     test = np.log(np.random.uniform(0., 1.))
@@ -64,7 +74,7 @@ def mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_p
         accept_record[1, itrt, idx_jump] += 1
 
 
-def advance_step_ptmcmc(itrb, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
+def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder, accept_record, proposal_manager, like_obj):
     """Advance a single step step in the ptmcmc chain"""
     n_chain = T_ladder.n_chain
     betas = T_ladder.betas
@@ -95,7 +105,7 @@ def advance_block_ptmcmc(
     T_ladder, logLs, samples, chain_track, proposal_manager, like_obj, tracker_manager
 ):
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
-    block_size = samples.shape[0] - 1
+    block_size: int = samples.shape[0] - 1
 
     for itrb in range(1, block_size + 1):
         if proposal_manager.exchange_manager.is_exchange_step(itrb):
@@ -134,38 +144,43 @@ def advance_block_ptmcmc(
 class DTMCMCSampler():
     """object to manage the overall chain evolution"""
 
-    def __init__(self, T_ladder_in, like_obj, block_size, store_size,
-                 tracker_manager=None, proposal_manager=None, starting_samples=None,
-                 store_thin=1, n_record=-1):
+    def __init__(self, T_ladder_in: TemperatureLadder, like_obj: AbstractLikelihood, block_size, store_size,
+                 tracker_manager: TrackerManager | None = None, proposal_manager: ProposalManager | None = None, starting_samples=None,
+                 store_thin: int = 1, n_record: int = -1):
         """Create the chain object
-        inputs:
-            block_size: scalar integer, the number of MCMC iterations to do per block
-            store_size: scalar integer, the number of MCMC states to store
-            like_obj: a subclass of the abstract DTMCMC.Likelihood object, that gets likelihoods for a given set of parameters
-            T_ladder_in: a DTMCMC.temperature_helpers.TemperatureLadder object (or suitable replacement)
-            tracker_manager: a DTMCMC.tracker_manager.TrackerManager object (or suitable replacement)
-            proposal_manager: a DTMCMC.proposal_manager.ProposalManager object
-            starting_samples: a (n_chain, n_par) float array of starting samples
-            store_thin: scalar integer, how much to thin the stored samples by (default 1)
-            n_record: scalar integer, how many chains to store the results of (default n_cold)
+
+        Parameters
+        ----------
+        block_size: int
+            the number of MCMC iterations to do per block
+        store_size: int
+            the number of MCMC states to store
+        like_obj: DTMCMC.Likelihood
+            Object that gets likelihoods for a given set of parameters
+        T_ladder_in: TemperatureLadder
+        tracker_manager: TrackerManager
+        proposal_manager: ProposalManager
+        starting_samples: a (n_chain, n_par) float array of starting samples
+        store_thin: scalar integer, how much to thin the stored samples by (default 1)
+        n_record: scalar integer, how many chains to store the results of (default n_cold)
         """
-        self.block_size = block_size
-        self.n_par = like_obj.n_par
-        self.store_size = store_size
-        self.store_thin = store_thin
-        self.store_idx = 0
-        self.store_counter = 0
-        self.like_obj = like_obj
-        self.tracker_manager = tracker_manager
-        self.proposal_manager = proposal_manager
+        self.block_size: int = block_size
+        self.n_par: int = like_obj.n_par
+        self.store_size: int = store_size
+        self.store_thin: int = store_thin
+        self.store_idx: int = 0
+        self.store_counter: int = 0
+        self.like_obj: AbstractLikelihood = like_obj
+        self.tracker_manager: TrackerManager
+        self.proposal_manager: ProposalManager
         self.starting_samples = starting_samples
 
-        self.T_ladder = T_ladder_in
+        self.T_ladder: TemperatureLadder = T_ladder_in
 
         self.betas = self.T_ladder.betas
         self.Ts = self.T_ladder.Ts
-        self.n_chain = self.T_ladder.n_chain
-        self.n_cold = self.T_ladder.n_cold
+        self.n_chain: int = self.T_ladder.n_chain
+        self.n_cold: int = self.T_ladder.n_cold
 
         # how many chains to save in the stored block, default is n_cold
         if n_record == -1:
@@ -177,12 +192,12 @@ class DTMCMCSampler():
 
         self.initialize_iterators()
         self.initialize_state()
-        self.initialize_jumps()
-        self.initialize_trackers()
+        self.initialize_jumps(proposal_manager)
+        self.initialize_trackers(tracker_manager)
 
-    def initialize_trackers(self):
+    def initialize_trackers(self, tracker_manager_in: TrackerManager | None = None):
         """Initialize the various trackers like acceptance rate and cycle times"""
-        if self.tracker_manager is None:
+        if tracker_manager_in is None:
             track_full_exchanges = self.proposal_manager.exchange_manager.track_full_exchanges
             self.tracker_manager = TrackerManager(
                 self.n_cold,
@@ -193,16 +208,18 @@ class DTMCMCSampler():
                 self.proposal_manager.n_jump_types,
                 max(self.store_size // self.block_size, 1),
             )
-        self.logL_means = []
-        self.logL2_means = []
-        self.logL3_means = []
-        self.logL4_means = []
-        self.logL5_means = []
-        self.logL6_means = []
-        self.logL_prod11_means = []
-        self.logL_prod21_means = []
-        self.logL_prod12_means = []
-        self.logL_vars = []
+        else:
+            self.tracker_manager = tracker_manager_in
+        self.logL_means: list[NDArray[np.floating]] = []
+        self.logL2_means: list[NDArray[np.floating]] = []
+        self.logL3_means: list[NDArray[np.floating]] = []
+        self.logL4_means: list[NDArray[np.floating]] = []
+        self.logL5_means: list[NDArray[np.floating]] = []
+        self.logL6_means: list[NDArray[np.floating]] = []
+        self.logL_prod11_means: list[NDArray[np.floating]] = []
+        self.logL_prod21_means: list[NDArray[np.floating]] = []
+        self.logL_prod12_means: list[NDArray[np.floating]] = []
+        self.logL_vars: list[NDArray[np.floating]] = []
 
     def initialize_iterators(self):
         """Initialize needed iterators"""
@@ -218,10 +235,12 @@ class DTMCMCSampler():
         self.samples_store = np.zeros((self.store_size, self.n_record, self.n_par))
         self.logLs_store = np.zeros((self.store_size, self.n_record))
 
-    def initialize_jumps(self):
+    def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None):
         """Anything that needs to be done to initialize the various jumps"""
-        if self.proposal_manager is None:
+        if proposal_manager_in is None:
             self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])
+        else:
+            self.proposal_manager = proposal_manager_in
 
     def initialize_state(self):
         """Initialize the samples"""
