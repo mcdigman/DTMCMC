@@ -23,7 +23,7 @@ vals_derive_norm = vals_derive / np.sum(vals_derive)
 integrand_norm = integrand * vals_derive_norm[np.argmin(np.abs(rs - 10)) - 1] / integrand[np.argmin(np.abs(rs - 10))]
 
 integ_stitch = np.hstack([integrand_norm[:np.argmin(np.abs(rs - 10))], vals_derive_norm[np.argmin(np.abs(rs - 10)) - 1:]])
-integ_stitch = integ_stitch / np.trapz(integ_stitch, rs) * (2 * 10)**5
+integ_stitch = integ_stitch / np.trapezoid(integ_stitch, rs) * (2 * 10)**5
 
 density_final = integ_stitch.copy()
 
@@ -34,11 +34,11 @@ loglikes = loglikes
 
 
 def get_density_pred(beta):
-    density0 = np.trapz(density_final * np.exp(beta * (loglikes - loglikes[0])), rs)
+    density0 = np.trapezoid(density_final * np.exp(beta * (loglikes - loglikes[0])), rs)
 
     loglikes_correct = beta * (loglikes - loglikes[0]) - np.log(density0)
 
-    density1 = np.trapz(density_final * np.exp(loglikes_correct), rs)
+    density1 = np.trapezoid(density_final * np.exp(loglikes_correct), rs)
     assert np.isclose(density1, 1., atol=1.e-14, rtol=1.e-12)
 
     density_res = density_final * np.exp(loglikes_correct)
@@ -57,7 +57,7 @@ def cumulants_from_Ts(Ts):
 
         logL_powers = np.zeros(6)
         for itrp in range(logL_powers.size):
-            logL_powers[itrp] = np.trapz(loglikes**(itrp + 1) * density_res, rs)
+            logL_powers[itrp] = np.trapezoid(loglikes**(itrp + 1) * density_res, rs)
 
         cumulants[:, itrt] = get_cumulants(logL_powers)
     return cumulants
@@ -71,7 +71,7 @@ volume_tot = (2 * 10)**5
 ratio_pred = volume_in / volume_tot
 print('ratio in-out', ratio_got, ratio_pred, ratio_got / ratio_pred)
 
-assert np.isclose(np.trapz(density_final, rs), (2 * 10)**5, atol=1.e-14, rtol=1.e-12)
+assert np.isclose(np.trapezoid(density_final, rs), (2 * 10)**5, atol=1.e-14, rtol=1.e-12)
 point_loc = np.zeros(n_dim)
 for itrr in range(rs.size):
     point_loc[0] = rs[itrr]
@@ -152,8 +152,8 @@ if do_recalc:
     plt.semilogx(Ts_in, cumulants_load[5] * betas_in**6)
     plt.show()
 
-    entropy1 = np.trapz(cumulants[1] * betas_in, betas_in)
-    entropy2 = np.trapz(cumulants_load[1] * betas_in, betas_in)
+    entropy1 = np.trapezoid(cumulants[1] * betas_in, betas_in)
+    entropy2 = np.trapezoid(cumulants_load[1] * betas_in, betas_in)
     print('entropy res', entropy1, entropy2, entropy2 - entropy1, entropy2 / entropy1 - 1.)
 
 
