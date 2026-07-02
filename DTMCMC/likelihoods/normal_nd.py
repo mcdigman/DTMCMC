@@ -29,9 +29,9 @@ class GaussianLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, v):
+    def get_loglike(self, params_in):
         """Get the log likelihood given a set of parameters v"""
-        return get_loglike(v)
+        return get_loglike(params_in)
 
 
 @njit()
