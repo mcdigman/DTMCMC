@@ -8,13 +8,52 @@ authors = [
 ]
 license = { file = "LICENSE" }
 dependencies = [
-    "numpy>2.0.0",
-    "scipy",
-    "numba",
-    "pytest",
-    "h5py"
+    "numpy>=2.4",
+    # scipy 1.16.1 is the first release with cp314 wheels (1.16.0 has none)
+    "scipy>=1.16.1",
+    # numba 0.64.0 is the first release that supports numpy 2.4 (0.62-0.63 cap at <2.4)
+    "numba>=0.64.0",
+    # h5py 3.15.0 is the first release with cp314 wheels (3.14 has none)
+    "h5py>=3.15",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+
+[tool.pyright]
+# Settings for the pyright job in .github/workflows/typecheck.yml. pyright
+# resolves types from the installed environment (the CI job installs .[dev,plots]),
+# so numpy/scipy/matplotlib/h5py are checked for real via their py.typed/stubs.
+# numba ships no py.typed, so missing-import reporting is disabled here --
+# mirroring the --ignore-missing-imports posture of the mypy job.
+pythonVersion = "3.14"
+reportMissingImports = "none"
+# Exclude dot-directories (e.g. the CI job's .venv) from analysis; otherwise
+# pyright would try to type-check the installed dependencies' source.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
+
+[project.optional-dependencies]
+# Development / test tooling: pytest, type stubs for the typed checks, and the
+# linters/type-checkers installed in DTMCMC-dev (also wired up via .pre-commit-config.yaml).
+dev = [
+    "pytest>=9.0",
+    "h5py-stubs",
+    "scipy-stubs",
+    "PyYAML>=6.0.3",
+    "types-PyYAML>=6.0",
+    "jsonschema>=4.18",
+    "ruff",
+    "mypy",
+    "pyright",
+    "pre-commit",
+]
+# Plotting / diagnostic scripts (diagnostic_commentary_helpers.py, run_*_search.py).
+# matplotlib 3.11.0 is the first release with cp314 wheels; 3.8 also caps numpy<2.
+plots = ["matplotlib>=3.11", "corner"]
 
 
 [build-system]

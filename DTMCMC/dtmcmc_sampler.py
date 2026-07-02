@@ -1,7 +1,6 @@
 """C 2023 Matthew C. Digman
 Module with the overall PTMCMC Chain object
 """
-from __future__ import annotations
 
 from typing import TYPE_CHECKING
 

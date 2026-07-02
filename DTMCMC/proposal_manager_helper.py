@@ -2,7 +2,6 @@
 get a default proposal manager object
 """
 
-from __future__ import annotations
 
 import configparser
 from typing import TYPE_CHECKING
