@@ -30,6 +30,11 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
+      # This job runs mypy without installing the project, so third-party imports
+      # are resolved with the blanket --ignore-missing-imports flag. numba's
+      # missing types are additionally ignored via [[tool.mypy.overrides]] in
+      # pyproject.toml (numba ships no py.typed), which mypy reads from the repo
+      # root -- so numba stays ignored even if this job later installs its deps.
       - name: Run mypy
         run: >
           uvx --from "mypy==${{ env.MYPY_VERSION }}" mypy
