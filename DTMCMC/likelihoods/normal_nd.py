@@ -35,13 +35,13 @@ class GaussianLikelihood(RectangularLikelihood):
 
 
 @njit()
-def gen_draws(n_draws, n_par, cutoff, attempt_lim=10000):
+def gen_draws(n_draws, n_par, low_lims, high_lims, attempt_lim=10000):
     """Get posterior draws"""
     draws = np.zeros((n_draws, n_par))
     for itrk in range(n_draws):
         itra = 0
         draw_loc = np.random.normal(0., 1, n_par)
-        while not check_bounds_rectangular(draw_loc, cutoff):
+        while not check_bounds_rectangular(draw_loc, low_lims, high_lims):
             if itra == attempt_lim:
                 msg = 'failed to find valid posterior point'
                 raise RuntimeError(msg)
@@ -52,7 +52,7 @@ def gen_draws(n_draws, n_par, cutoff, attempt_lim=10000):
 
 
 @njit()
-def drawposterior(n, Ts, n_par, cutoff):
+def drawposterior(n, Ts, n_par, low_lims, high_lims):
     """For truncated normal we can draw from the posterior for testing purposes"""
     samples = np.zeros((n, Ts.size, n_par))
     for itrt in range(Ts.size):
@@ -60,7 +60,7 @@ def drawposterior(n, Ts, n_par, cutoff):
             if np.isfinite(Ts[itrt]):
                 sample_loc = np.random.normal(0., np.sqrt(Ts[itrt]), n_par)
                 itrlim = 0
-                while not check_bounds_rectangular(sample_loc, cutoff):
+                while not check_bounds_rectangular(sample_loc, low_lims, high_lims):
                     if itrlim == 100000:
                         print(itrt, itrn, itrlim)
                         msg = 'failed to find valid posterior point'
@@ -69,5 +69,6 @@ def drawposterior(n, Ts, n_par, cutoff):
                     itrlim += 1
                 samples[itrn, itrt] = sample_loc
             else:
-                samples[itrn, itrt] = np.random.uniform(-cutoff, cutoff, n_par)
+                for itrp in range(n_par):
+                    samples[itrn, itrt, itrp] = np.random.uniform(low_lims[itrp], high_lims[itrp])
     return samples
