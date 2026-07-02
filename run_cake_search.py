@@ -544,7 +544,7 @@ for itrb in range(bin_likes.size):
 
 
 dens_pred = np.exp(T_ladder.betas[argT_1] * bin_likes) * bins_match**4 * 2 * np.pi
-dens_pred /= np.trapz(dens_pred, bins_match)
+dens_pred /= np.trapezoid(dens_pred, bins_match)
 
 plt.plot(bins_match, dens_pred)
 plt.show()
