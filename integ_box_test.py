@@ -33,7 +33,7 @@ def rCutFunc(rs):
 
 integrand[rs > cutoff] = rCutFunc(rs[rs > cutoff]) / rCutFunc(cutoff + 1.e-13) * cutoff**(n_dim - 1)
 
-res = 2 * np.pi / (np.pi / 2.) * cumulative_trapezoid(integrand, rs, initial=0.)
+res = 2 * np.pi / (np.pi / 2.) * cumulative_trapezoid(integrand, rs, initial=0)
 
 print(res[-1], np.pi * rs[-1]**2, (2 * cutoff)**2, np.pi * cutoff**2)
 print('answer: ', (2 * cutoff)**n_dim, 'result', res[-1], res[-1] / (2 * cutoff)**n_dim)

@@ -58,9 +58,9 @@ plt.plot(cumulants4[5] * betas**6)
 plt.show()
 
 
-plt.plot(cumulative_trapezoid(cumulants1[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumulative_trapezoid(cumulants2[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumulative_trapezoid(cumulants3[1][::-1] * betas[::-1], betas[::-1], initial=0.))
-plt.plot(cumulative_trapezoid(cumulants4[1][::-1] * betas[::-1], betas[::-1], initial=0.))
+plt.plot(cumulative_trapezoid(cumulants1[1][::-1] * betas[::-1], betas[::-1], initial=0))
+plt.plot(cumulative_trapezoid(cumulants2[1][::-1] * betas[::-1], betas[::-1], initial=0))
+plt.plot(cumulative_trapezoid(cumulants3[1][::-1] * betas[::-1], betas[::-1], initial=0))
+plt.plot(cumulative_trapezoid(cumulants4[1][::-1] * betas[::-1], betas[::-1], initial=0))
 
 plt.show()

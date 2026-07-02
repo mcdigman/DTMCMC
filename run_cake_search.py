@@ -251,8 +251,8 @@ rs_stack = np.hstack(rs_save)[n_burnin:]
 
 counts, bins = np.histogram(rs_stack, 10000, range=[0., np.sqrt(n_par) * like_obj.high_lims[1]], density=True)
 
-integ_true = cumulative_trapezoid(ibf.get_density_pred(1.)[::-1], ibf.rs[::-1], initial=0.)[::-1] + 1
-integ_loc = cumulative_trapezoid(counts[::-1], bins[::-1][1:], initial=0.)[::-1] + 1
+integ_true = cumulative_trapezoid(ibf.get_density_pred(1.)[::-1], ibf.rs[::-1], initial=0)[::-1] + 1
+integ_loc = cumulative_trapezoid(counts[::-1], bins[::-1][1:], initial=0)[::-1] + 1
 interp_true = InterpolatedUnivariateSpline(ibf.rs, integ_true, k=3, ext=2)(bins[:bins.size - 1])
 
 n_use = rs_stack.size
@@ -273,7 +273,7 @@ arg_cut_r = np.argmax(autocorr_rs_lim / autocorr_rs_lim[0] < 0.)
 
 autocorr_len_inferred = 1 + avg_len * np.sum(autocorr_rs_lim[1:arg_cut_r] / autocorr_rs_lim[0])
 
-integ_entropy = -cumulative_trapezoid(cumulants[1][::-1] * mcc.betas[::-1], mcc.betas[::-1], initial=0.)[::-1]
+integ_entropy = -cumulative_trapezoid(cumulants[1][::-1] * mcc.betas[::-1], mcc.betas[::-1], initial=0)[::-1]
 
 arg_cut_r = np.argmax(autocorr_rs_lim / autocorr_rs_lim[0] < 0.)
 
@@ -822,8 +822,8 @@ counts, bins, _ = plt.hist(rs_stack, 10000, range=[0., np.sqrt(n_par) * like_obj
 plt.plot(ibf.rs, ibf.get_density_pred(1.))
 plt.show()
 
-integ_true = cumulative_trapezoid(ibf.get_density_pred(1.)[::-1], ibf.rs[::-1], initial=0.)[::-1] + 1
-integ_loc = cumulative_trapezoid(counts[::-1], bins[::-1][1:], initial=0.)[::-1] + 1
+integ_true = cumulative_trapezoid(ibf.get_density_pred(1.)[::-1], ibf.rs[::-1], initial=0)[::-1] + 1
+integ_loc = cumulative_trapezoid(counts[::-1], bins[::-1][1:], initial=0)[::-1] + 1
 interp_true = InterpolatedUnivariateSpline(ibf.rs, integ_true, k=3, ext=2)(bins[:bins.size - 1])
 
 plt.plot(ibf.rs, integ_true)
@@ -855,7 +855,7 @@ print(np.max(interp_true - integ_loc), np.min(interp_true - integ_loc))
 print(rs_mean, r2s_mean - rs_mean**2)
 print(arg_cut_r * 16 + 1, autocorr_len_inferred, (arg_cut_r * 16 + 1) / autocorr_len_inferred)
 
-integ_entropy = -cumulative_trapezoid(cumulants[1][::-1] * mcc.betas[::-1], mcc.betas[::-1], initial=0.)[::-1]
+integ_entropy = -cumulative_trapezoid(cumulants[1][::-1] * mcc.betas[::-1], mcc.betas[::-1], initial=0)[::-1]
 print(integ_entropy[argT_1])
 
 shuffle_length = 1000
