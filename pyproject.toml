@@ -36,6 +36,16 @@ reportMissingImports = "none"
 # pyright would try to type-check the installed dependencies' source.
 exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
 
+[tool.mypy]
+# The mypy job in .github/workflows/typecheck.yml runs mypy without installing
+# the project, so third-party imports are resolved with --ignore-missing-imports
+# on the command line. numba is called out explicitly here (it ships no py.typed)
+# so that runs which DO have the deps installed (local/editor) still ignore it.
+
+[[tool.mypy.overrides]]
+module = ["numba", "numba.*"]
+ignore_missing_imports = true
+
 [project.optional-dependencies]
 # Development / test tooling: pytest, type stubs for the typed checks, and the
 # linters/type-checkers installed in DTMCMC-dev (also wired up via .pre-commit-config.yaml).
