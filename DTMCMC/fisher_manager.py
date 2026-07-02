@@ -246,7 +246,7 @@ class FisherJumpManager(JumpManager):
         """Create the object"""
         self.strategy_params = FisherStrategyParameters(config)
 
-        jumps = [FisherFullJump(self), SigmaFullJump(self), SigmaRandomSubspaceJump(self)]
+        jumps: list[AbstractJump] = [FisherFullJump(self), SigmaFullJump(self), SigmaRandomSubspaceJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
