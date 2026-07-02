@@ -7,7 +7,7 @@ from numpy.testing import assert_array_equal
 import DTMCMC.temperature_ladder_helpers as tlh
 
 
-def T_prediction_sensibility_check(Ts, T_min=1., T_cold=1, n_cold=1) -> None:
+def T_prediction_sensibility_check(Ts, T_min=1., T_cold=1., n_cold=1) -> None:
     assert np.all(Ts >= 0.)                             # negative temperatures make no sense here
     assert np.all(Ts != 0.)                             # zero temperatures could be meaningful, but the code should not be generating them
     # assert Ts[0] == T_cold
