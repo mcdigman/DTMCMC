@@ -559,32 +559,32 @@ betas_gold = th.Ts_to_betas(Ts_gold)
 
 cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_means(mcc, len(mcc.logL_means) - block_burnin, cut=block_burnin)))[:, 0]
 
-# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[1],mcc.betas,initial=0.)+cumulants[0][0])*mcc.betas**1)
+# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[1],mcc.betas,initial=0)+cumulants[0][0])*mcc.betas**1)
 plt.semilogx(mcc.Ts, cumulants[0] * mcc.betas**1)
 plt.semilogx(Ts_gold, cumulants_gold[0] * betas_gold**1)
 plt.show()
 
 # plt.semilogx(mcc.Ts,np.gradient(cumulants[0],mcc.betas)*mcc.betas**2)
-# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[2],mcc.betas,initial=0.)+cumulants[1][0])*mcc.betas**2)
+# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[2],mcc.betas,initial=0)+cumulants[1][0])*mcc.betas**2)
 plt.semilogx(mcc.Ts, cumulants[1] * mcc.betas**2)
 plt.semilogx(Ts_gold, cumulants_gold[1] * betas_gold**2)
 plt.show()
 
 
 # plt.semilogx(mcc.Ts,np.gradient(cumulants[1],mcc.betas)*mcc.betas**3)
-# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[3],mcc.betas,initial=0.)+cumulants[2][0])*mcc.betas**3)
+# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[3],mcc.betas,initial=0)+cumulants[2][0])*mcc.betas**3)
 plt.semilogx(mcc.Ts, cumulants[2] * mcc.betas**3)
 plt.semilogx(Ts_gold, cumulants_gold[2] * betas_gold**3)
 plt.show()
 
 # plt.semilogx(mcc.Ts,np.gradient(cumulants[2],mcc.betas)*mcc.betas**4)
-# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[4],mcc.betas,initial=0.)+cumulants[3][0])*mcc.betas**4)
+# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[4],mcc.betas,initial=0)+cumulants[3][0])*mcc.betas**4)
 plt.semilogx(mcc.Ts, cumulants[3] * mcc.betas**4)
 plt.semilogx(Ts_gold, cumulants_gold[3] * betas_gold**4)
 plt.show()
 
 # plt.semilogx(mcc.Ts,np.gradient(cumulants[3],mcc.betas)*mcc.betas**5)
-# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[5],mcc.betas,initial=0.)+cumulants[4][0])*mcc.betas**5)
+# plt.semilogx(mcc.Ts,(cumulative_trapezoid(cumulants[5],mcc.betas,initial=0)+cumulants[4][0])*mcc.betas**5)
 plt.semilogx(mcc.Ts, cumulants[4] * mcc.betas**5)
 plt.semilogx(Ts_gold, cumulants_gold[4] * betas_gold**5)
 plt.show()

@@ -89,7 +89,7 @@ plt.show()
 
 # plt.plot(rs,areaFunc(rs)/(2*cutoff)**(n_dim))
 # plt.plot(rs,np.full(n_r,1.))
-# plt.plot(bins[1][1:],cumulative_trapezoid(bins[0],bins[1][1:],initial=0.))
+# plt.plot(bins[1][1:],cumulative_trapezoid(bins[0],bins[1][1:],initial=0))
 # plt.show()
 
 # plt.loglog(np.sqrt(n_dim)*cutoff-bins[1][1:][bins[1][1:]>=cutoff],(bins[0]/bins[1][1:]**(n_dim-1))[bins[1][1:]>=cutoff])
