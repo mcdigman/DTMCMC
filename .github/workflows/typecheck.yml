@@ -1,0 +1,66 @@
+name: Type Check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: typecheck-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+  # mypy runs only here (it is not a pre-commit hook; pyrefly handles type
+  # checking in lint.yml). Keep in sync with the mypy version in the [dev] extra.
+  MYPY_VERSION: "2.1.0"
+  PYRIGHT_VERSION: "1.1.411"
+
+jobs:
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Run mypy
+        run: >
+          uvx --from "mypy==${{ env.MYPY_VERSION }}" mypy
+          --ignore-missing-imports
+          --explicit-package-bases
+          .
+
+  pyright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Unlike the mypy job (which uses --ignore-missing-imports), pyright
+      # resolves types from the installed environment, so install the project
+      # with its typed extras into a venv (the runner's system Python is
+      # externally managed, so --system installs are rejected). numba ships no
+      # py.typed, so its missing-import reports are silenced via
+      # reportMissingImports = "none" in [tool.pyright] (see pyproject.toml).
+      - name: Install project with typed extras
+        run: |
+          uv venv
+          uv pip install ".[dev,plots]"
+
+      - name: Run pyright
+        run: >
+          uvx pyright@${{ env.PYRIGHT_VERSION }}
+          --pythonpath .venv/bin/python

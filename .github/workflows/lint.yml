@@ -1,0 +1,41 @@
+name: Lint
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    # prek is a drop-in replacement for pre-commit and reads the same
+    # .pre-commit-config.yaml. Runs every hook, including pyrefly type checking;
+    # mypy is not a hook anymore, it runs in the dedicated typecheck.yml workflow.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      - name: Cache prek hook environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/prek
+          key: prek-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            prek-${{ runner.os }}-py${{ env.PYTHON_VERSION }}-
+
+      - name: Run prek hooks
+        run: uvx prek run --all-files --show-diff-on-failure --color=always
