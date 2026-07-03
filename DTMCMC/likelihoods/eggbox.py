@@ -3,7 +3,7 @@
 import numba as nb
 import numpy as np
 from numba import njit
-from numba.experimental import jitclass
+from numba.experimental import jitclass  # pyright: ignore[reportPrivateImportUsage]
 
 from DTMCMC.correction_helpers import reflect_into_range
 

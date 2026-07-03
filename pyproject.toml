@@ -37,8 +37,10 @@ project-excludes = [
 pythonVersion = "3.14"
 reportMissingImports = "none"
 # Exclude dot-directories (e.g. the CI job's .venv) from analysis; otherwise
-# pyright would try to type-check the installed dependencies' source.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*", "notebooks", "explorations"]
+# pyright would try to type-check the installed dependencies' source. "build" is
+# the copy of the source that `uv pip install .` creates during the wheel build
+# (CI installs the project); excluding it avoids double-reporting every finding.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build", "notebooks", "explorations"]
 
 [tool.mypy]
 # The mypy job in .github/workflows/typecheck.yml runs mypy without installing
