@@ -4,7 +4,7 @@ from scipy.integrate import cumulative_trapezoid
 
 import DTMCMC.temperature_ladder_helpers as th
 
-Ts = np.load('Ts_cake_random1.npy')
+Ts = np.load('data/Ts_cake_random1.npy')
 betas = th.Ts_to_betas(Ts)
 
 cumulants1 = np.load('data/cumulants_cake_random1.npy')

@@ -30,8 +30,6 @@ density_final = integ_stitch.copy()
 
 loglikes = np.zeros(rs.size)
 
-loglikes = loglikes
-
 
 def get_density_pred(beta):
     density0 = np.trapezoid(density_final * np.exp(beta * (loglikes - loglikes[0])), rs)
@@ -98,7 +96,7 @@ if do_recalc:
     cumulants_combine = cumulants_geo.copy()
     betas_combine = Ts_to_betas(Ts_combine)
 
-    for itrb in range(3):
+    for _itrb in range(3):
         betas_recalc, Ts_recalc = entropy_spaced_betas(8192, 0, Ts_combine, cumulants_combine[1], n_inf_final=1, T_cold=1., correct_last=True)
         Ts_log.append(Ts_recalc)
         cumulants_recalc = cumulants_from_Ts(Ts_recalc)

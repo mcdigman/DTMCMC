@@ -26,7 +26,6 @@ def get_cake_tier_logL(v, amp, width, exponent):
 # @njit()
 def get_loglike(v):
     """Get a 'cake' likelihood"""
-    n_par = v.shape[0]
     amp1 = 0.5
     amp2 = 0.5
     width1 = 4.
