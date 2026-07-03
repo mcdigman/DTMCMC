@@ -56,6 +56,13 @@ exclude = [
 module = ["numba", "numba.*"]
 ignore_missing_imports = true
 
+[tool.pytest.ini_options]
+# Only tests/ holds real unit tests. Without this, pytest's default collection
+# would also pick up scripts under explorations/ whose names match test_*.py /
+# *_test.py (e.g. integ_box_test.py, test_entropy_spacing.py) and execute their
+# plotting / sys.exit() bodies.
+testpaths = ["tests"]
+
 [project.optional-dependencies]
 # Development / test tooling: pytest, type stubs for the typed checks, and the
 # linters/type-checkers installed in DTMCMC-dev (also wired up via .pre-commit-config.yaml).

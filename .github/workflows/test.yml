@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Mirror the pyright job: install the project with its typed/plotting
+      # extras into a venv so the tests run against the real installed package
+      # (the runner's system Python is externally managed, so --system installs
+      # are rejected). The core numpy/scipy/numba/h5py deps come in via the
+      # project's own dependencies; pytest comes from the [dev] extra.
+      - name: Install project with test extras
+        run: |
+          uv venv
+          uv pip install ".[dev,plots]"
+
+      - name: Run tests
+        run: .venv/bin/python -m pytest
