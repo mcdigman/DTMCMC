@@ -16,10 +16,20 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         n_par = 2
 
-        hf_out = h5py.File('hawaii_map.hdf5', 'r')
+        hf_out = h5py.File('data/hawaii_map.hdf5', 'r')
 
         # an input map of hawaii with elevations in meters
-        self.hawaii_grid = np.asarray(hf_out['map']['hawaii'], dtype=np.float64)
+        hawaii_map = hf_out['map']
+        if not isinstance(hawaii_map, h5py.Group):
+            msg = 'expected "map" in hawaii_map.hdf5 to be an HDF5 group'
+            raise TypeError(msg)
+
+        hawaii_dataset = hawaii_map['hawaii']
+        if not isinstance(hawaii_dataset, h5py.Dataset):
+            msg = 'expected "map/hawaii" in hawaii_map.hdf5 to be an HDF5 dataset'
+            raise TypeError(msg)
+
+        self.hawaii_grid = np.asarray(hawaii_dataset, dtype=np.float64)
 
         # rescale the input map as requested
         self.hawaii_grid *= rescale_like
@@ -39,6 +49,6 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, v):
+    def get_loglike(self, params_in):
         """Get the log likelihood given a set of parameters v"""
-        return self.hawaii_interp(v)[0]
+        return self.hawaii_interp(params_in)[0]

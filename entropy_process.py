@@ -20,7 +20,7 @@ def NNEntropy1(samples):
     assert n_par <= n_par_max
     n_samp = samples.shape[0]
     entropy_sum = 0.
-    for itrn in prange(n_samp):
+    for itrn in prange(n_samp): # type: ignore[not-iterable]
         # find the distance to the nearest neighbor to sample itrn
         samples_cur = samples[itrn].copy()
         samples[itrn, :] = par_large  # just something large to make sure this isn't the nearest neighbor without explicitly excising for efficiency
@@ -63,7 +63,7 @@ def NNEntropy2(samples1, samples2):
     n_par = n_par1
     n_samp = samples2.shape[0]
     entropy_sum = 0.
-    for itrn in prange(n_samp):
+    for itrn in prange(n_samp): # type: ignore[not-iterable]
         # find the distance to the nearest neighbor to sample itrn
         samples_cur = samples2[itrn]
         dist_sq_min = dist_large[n_par]

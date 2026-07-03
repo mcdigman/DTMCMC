@@ -4,13 +4,16 @@ in order to be properly recognized by the framework
 """
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
-from numpy.typing import NDArray
 
-from DTMCMC.likelihood import AbstractLikelihood
-from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 # TODO update docs
 # TODO jump name length check

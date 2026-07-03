@@ -24,9 +24,8 @@ def get_cake_tier_logL(v, amp, width, exponent):
 
 
 # @njit()
-def get_loglike(v):
+def get_loglike(params_in):
     """Get a 'cake' likelihood"""
-    n_par = v.shape[0]
     amp1 = 0.5
     amp2 = 0.5
     width1 = 4.
@@ -34,8 +33,8 @@ def get_loglike(v):
     exp1 = 8
     exp2 = 2
 
-    res1 = get_cake_tier_logL(v, amp1, width1, exp1)
-    res2 = get_cake_tier_logL(v, amp2, width2, exp2)
+    res1 = get_cake_tier_logL(params_in, amp1, width1, exp1)
+    res2 = get_cake_tier_logL(params_in, amp2, width2, exp2)
 
     res = np.logaddexp(res1, res2)
     return res
@@ -54,6 +53,6 @@ class CakeLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, v):
+    def get_loglike(self, params_in):
         """Get the log likelihood given a set of parameters v"""
-        return get_loglike(v)
+        return get_loglike(params_in)

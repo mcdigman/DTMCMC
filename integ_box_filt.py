@@ -3,14 +3,14 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.ndimage import gaussian_filter
 
-from cake_likelihood import get_loglike
+from DTMCMC.likelihoods.cake_likelihood import get_loglike
 from DTMCMC.temperature_ladder_helpers import Ts_to_betas, betas_to_Ts, entropy_spaced_betas
 from moment_helpers import get_cumulants
 
 n_dim = 5
 
-rs = np.load('rs_rec_cake1.npy')
-vals = np.load('box_rec_cake1.npy')
+rs = np.load('data/rs_rec_cake1.npy')
+vals = np.load('data/box_rec_cake1.npy')
 
 vals_integ = cumulative_trapezoid(vals, initial=0)
 vals_integ_smooth = gaussian_filter(vals_integ, sigma=100)
@@ -29,8 +29,6 @@ density_final = integ_stitch.copy()
 
 
 loglikes = np.zeros(rs.size)
-
-loglikes = loglikes
 
 
 def get_density_pred(beta):
@@ -65,7 +63,7 @@ def cumulants_from_Ts(Ts):
 
 integrated_curve = cumulative_trapezoid(integ_stitch, rs, initial=0)
 integrated_curve_interp = InterpolatedUnivariateSpline(rs, integrated_curve, k=3, ext=2)
-ratio_got = integrated_curve_interp(10) / integrated_curve_interp(np.sqrt(5) * 10)
+ratio_got = integrated_curve_interp([10.0])[0] / integrated_curve_interp([np.sqrt(5) * 10])[0]
 volume_in = (8 * np.pi**2 * 10**5 / 15)
 volume_tot = (2 * 10)**5
 ratio_pred = volume_in / volume_tot
@@ -81,7 +79,7 @@ for itrr in range(rs.size):
 do_recalc = False
 if do_recalc:
     import matplotlib.pyplot as plt
-    Ts_in = np.load('Ts_cake_alternate1.npy')
+    Ts_in = np.load('data/Ts_cake_alternate1.npy')
     betas_in = Ts_to_betas(Ts_in)
     cumulants = cumulants_from_Ts(Ts_in)
 
@@ -98,7 +96,7 @@ if do_recalc:
     cumulants_combine = cumulants_geo.copy()
     betas_combine = Ts_to_betas(Ts_combine)
 
-    for itrb in range(3):
+    for _itrb in range(3):
         betas_recalc, Ts_recalc = entropy_spaced_betas(8192, 0, Ts_combine, cumulants_combine[1], n_inf_final=1, T_cold=1., correct_last=True)
         Ts_log.append(Ts_recalc)
         cumulants_recalc = cumulants_from_Ts(Ts_recalc)
@@ -114,7 +112,7 @@ if do_recalc:
     cumulants_combine = cumulants_combine[:, argTs_combine]
     betas_combine = Ts_to_betas(Ts_combine)
 
-    cumulants_load = np.load('cumulants_cake_sequential1.npy')
+    cumulants_load = np.load('data/cumulants_cake_sequential1.npy')
 
     for itrb in range(len(Ts_log)):
         plt.semilogy(Ts_log[itrb])
@@ -159,6 +157,7 @@ if do_recalc:
 
 do_interpolant_quality_plots = False
 if do_interpolant_quality_plots:
+    import matplotlib.pyplot as plt
     plt.plot(vals_derive_norm)
     plt.plot(integ_stitch)
     plt.plot(integrand_norm[rs < 10.])
@@ -176,17 +175,17 @@ if do_interpolant_quality_plots:
 
 do_save = False
 if do_save:
-    cumulants1 = np.load('cumulants_cake_gold1.npy')
-    Ts1 = np.load('Ts_cake_gold1.npy')
+    cumulants1 = np.load('data/cumulants_cake_gold1.npy')
+    Ts1 = np.load('data/Ts_cake_gold1.npy')
 
-    cumulants2 = np.load('cumulants_cake_gold2.npy')
-    Ts2 = np.load('Ts_cake_gold2.npy')
+    cumulants2 = np.load('data/cumulants_cake_gold2.npy')
+    Ts2 = np.load('data/Ts_cake_gold2.npy')
 
-    cumulants3 = np.load('cumulants_cake_gold3.npy')
-    Ts3 = np.load('Ts_cake_gold3.npy')
+    cumulants3 = np.load('data/cumulants_cake_gold3.npy')
+    Ts3 = np.load('data/Ts_cake_gold3.npy')
 
-    cumulants4 = np.load('cumulants_cake_gold4.npy')
-    Ts4 = np.load('Ts_cake_gold4.npy')
+    cumulants4 = np.load('data/cumulants_cake_gold4.npy')
+    Ts4 = np.load('data/Ts_cake_gold4.npy')
 
     Ts_full = np.hstack([Ts1, Ts2, Ts3, Ts4])
     cumulants_full = np.hstack([cumulants1, cumulants2, cumulants3, cumulants4])
@@ -199,5 +198,5 @@ if do_save:
     Ts_full = Ts_full[argbetas_full]
     cumulants_full = cumulants_full[:, argbetas_full]
 
-    np.save('cumulants_cake_gold.npy', cumulants_full)
-    np.save('Ts_cake_gold.npy', Ts_full)
+    np.save('data/cumulants_cake_gold.npy', cumulants_full)
+    np.save('data/Ts_cake_gold.npy', Ts_full)

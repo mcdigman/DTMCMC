@@ -19,10 +19,11 @@ from numba import njit
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 
-# import likelihood_gb as trial_likelihood
-import cake_likelihood as trial_likelihood
 import diagnostic_commentary_helpers as dch
 import DTMCMC.exchange_manager as eh
+
+# import likelihood_gb as trial_likelihood
+import DTMCMC.likelihoods.cake_likelihood as trial_likelihood
 import DTMCMC.temperature_ladder_helpers as th
 import integ_box_filt as ibf
 import moment_helpers
@@ -51,7 +52,7 @@ if __name__ == '__main__':
     # create needed objects
     # T_ladder = GeometricTemperatureLadder(n_chain, n_cold=n_cold, T_max=T_max,T_min=80.,T_cold=80.)  # get the temperature ladder object
     # T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_combo2.npy','vars_cake_combo2.npy',n_inf_final=1,T_cold=1.,correct_last=False)
-    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'Ts_cake_gold.npy', 'vars_cake_gold.npy', n_inf_final=1, T_cold=1., correct_last=False)
+    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'data/Ts_cake_gold.npy', 'data/vars_cake_gold.npy', n_inf_final=1, T_cold=1., correct_last=False)
 
     like_obj = trial_likelihood.CakeLikelihood(n_par)
     params_true = like_obj.correct_bounds(params_true)                 # make sure the conventions on the parameters match
@@ -227,8 +228,8 @@ if __name__ == '__main__':
     if do_heat_plot_gold:
     # Ts_old = np.load('Ts_cake_combo2.npy')
     # vars_old = np.load('vars_cake_combo2.npy')
-        Ts_old = np.load('Ts_cake_gold.npy')
-        vars_old = np.load('vars_cake_gold.npy')
+        Ts_old = np.load('data/Ts_cake_gold.npy')
+        vars_old = np.load('data/vars_cake_gold.npy')
         plt.loglog(Ts_old, vars_old)
         plt.loglog(T_ladder.Ts[argTs], (np.mean(np.array(mcc.logL2_means[block_burnin:]), axis=0) - np.mean(np.array(mcc.logL_means[block_burnin:]), axis=0)**2)[argTs])
         plt.show()
@@ -482,21 +483,21 @@ if __name__ == '__main__':
 
     sys.exit()
 
-    Ts_high_high = np.load('Ts_cake_hot.npy')
-    vars_high_high = np.load('vars_cake_hot.npy')
-    means_high_high = np.load('means_cake_hot.npy')
+    Ts_high_high = np.load('data/Ts_cake_hot.npy')
+    vars_high_high = np.load('data/vars_cake_hot.npy')
+    means_high_high = np.load('data/means_cake_hot.npy')
 
-    Ts_mid_high = np.load('Ts_cake_mid_hot1.npy')
-    vars_mid_high = np.load('vars_cake_mid_hot1.npy')
-    means_mid_high = np.load('means_cake_mid_hot1.npy')
+    Ts_mid_high = np.load('data/Ts_cake_mid_hot1.npy')
+    vars_mid_high = np.load('data/vars_cake_mid_hot1.npy')
+    means_mid_high = np.load('data/means_cake_mid_hot1.npy')
 
-    Ts_low_high = np.load('Ts_cake_low_hot1.npy')
-    vars_low_high = np.load('vars_cake_low_hot1.npy')
-    means_low_high = np.load('means_cake_low_hot1.npy')
+    Ts_low_high = np.load('data/Ts_cake_low_hot1.npy')
+    vars_low_high = np.load('data/vars_cake_low_hot1.npy')
+    means_low_high = np.load('data/means_cake_low_hot1.npy')
 
-    Ts_evolve = np.load('Ts_cake_evolve_entropy1.npy')
-    vars_evolve = np.load('vars_cake_evolve_entropy1.npy')
-    means_evolve = np.load('means_cake_evolve_entropy1.npy')
+    Ts_evolve = np.load('data/Ts_cake_evolve_entropy1.npy')
+    vars_evolve = np.load('data/vars_cake_evolve_entropy1.npy')
+    means_evolve = np.load('data/means_cake_evolve_entropy1.npy')
 
     Ts_high_combo = np.hstack([Ts_high_high, Ts_mid_high, Ts_low_high, Ts_evolve])
     vars_high_combo = np.hstack([vars_high_high, vars_mid_high, vars_low_high, vars_evolve])
@@ -553,8 +554,8 @@ if __name__ == '__main__':
 
     sys.exit()
 
-    cumulants_gold = np.load('cumulants_cake_gold.npy')
-    Ts_gold = np.load('Ts_cake_gold.npy')
+    cumulants_gold = np.load('data/cumulants_cake_gold.npy')
+    Ts_gold = np.load('data/Ts_cake_gold.npy')
     betas_gold = th.Ts_to_betas(Ts_gold)
 
     cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_means(mcc, len(mcc.logL_means) - block_burnin, cut=block_burnin)))[:, 0]

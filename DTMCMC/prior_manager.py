@@ -2,11 +2,15 @@
 manager to manage prior-draw based jumps
 """
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import AbstractLikelihood
-from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
+if TYPE_CHECKING:
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 class PriorFullJump(AbstractJump):

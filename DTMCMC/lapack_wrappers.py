@@ -4,11 +4,14 @@ Various jit compatible interfaces to cython lapack functions.
 """
 # ruff: noqa: N806, RUF100, SIM108, RUF052, FBT002, FBT001
 import ctypes
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
 from numba.extending import get_cython_function_address
-from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 _PTR = ctypes.POINTER
 

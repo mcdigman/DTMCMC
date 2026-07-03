@@ -19,7 +19,7 @@ import diagnostic_commentary_helpers as dch
 import DTMCMC.exchange_manager as eh
 
 # import likelihood_gb as trial_likelihood
-import hawaii_likelihood as trial_likelihood
+import DTMCMC.likelihoods.hawaii_likelihood as trial_likelihood
 from DTMCMC.corr_summary_helpers import CorrelationSummary
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager

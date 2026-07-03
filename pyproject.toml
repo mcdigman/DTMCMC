@@ -23,6 +23,10 @@ project-includes = [
     "**/*.py*",
     "**/*.ipynb",
 ]
+project-excludes = [
+    "notebooks/**",
+    "explorations/**",
+]
 
 [tool.pyright]
 # Settings for the pyright job in .github/workflows/typecheck.yml. pyright
@@ -33,18 +37,31 @@ project-includes = [
 pythonVersion = "3.14"
 reportMissingImports = "none"
 # Exclude dot-directories (e.g. the CI job's .venv) from analysis; otherwise
-# pyright would try to type-check the installed dependencies' source.
-exclude = ["**/node_modules", "**/__pycache__", "**/.*"]
+# pyright would try to type-check the installed dependencies' source. "build" is
+# the copy of the source that `uv pip install .` creates during the wheel build
+# (CI installs the project); excluding it avoids double-reporting every finding.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build", "notebooks", "explorations"]
 
 [tool.mypy]
 # The mypy job in .github/workflows/typecheck.yml runs mypy without installing
 # the project, so third-party imports are resolved with --ignore-missing-imports
 # on the command line. numba is called out explicitly here (it ships no py.typed)
 # so that runs which DO have the deps installed (local/editor) still ignore it.
+exclude = [
+    "^notebooks/",
+    "^explorations/",
+]
 
 [[tool.mypy.overrides]]
 module = ["numba", "numba.*"]
 ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+# Only tests/ holds real unit tests. Without this, pytest's default collection
+# would also pick up scripts under explorations/ whose names match test_*.py /
+# *_test.py (e.g. integ_box_test.py, test_entropy_spacing.py) and execute their
+# plotting / sys.exit() bodies.
+testpaths = ["tests"]
 
 [project.optional-dependencies]
 # Development / test tooling: pytest, type stubs for the typed checks, and the
@@ -69,3 +86,10 @@ plots = ["matplotlib>=3.11", "corner"]
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# Only the DTMCMC library is an installable package; data/, notebooks/,
+# explorations/, experiments/, scripts/, and tests/ each carry an __init__.py
+# but are not part of the distribution. Pin discovery so setuptools' flat-layout
+# auto-discovery doesn't error on multiple top-level packages.
+[tool.setuptools.packages.find]
+include = ["DTMCMC*"]

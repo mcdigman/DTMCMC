@@ -48,7 +48,7 @@ def print_diagnostic_commentary(mcc) -> None:
 
     df_predict = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:] * mcc.betas, axis=0) / 2
     df_mean = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, :mcc.n_cold] * mcc.betas[:mcc.n_cold]) / 2
-    df_res, loc_res, scale_res = scipy.stats.chi2.fit(2 * max_logL_found - 2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, 0:mcc.n_cold].flatten(), df_mean)
+    df_res, _loc_res, _scale_res = scipy.stats.chi2.fit(2 * max_logL_found - 2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, 0:mcc.n_cold].flatten(), df_mean)
     print('Cold likelihood distribution estimate %8.5f effective dimensions (best fit: %8.5f): %5d expected if all dimensions are gaussian' % (df_mean, df_res, mcc.n_par))
 
     print('Effective dimension hottest two chains: %8.5f %8.5f' % (df_predict[-2], df_predict[-1]))
@@ -68,7 +68,7 @@ def print_diagnostic_commentary(mcc) -> None:
             if disconnect_down[itrt]:
                 print('Temperature %5d may be completely isolated in likelihood from rest of sampler' % (itrt))
 
-    disconnect_sym = disconnect_up & disconnect_down
+    #disconnect_sym = disconnect_up & disconnect_down
 
     print('%5d disconnects found by mean likelihood' % (np.sum(disconnect_up)))
     if np.any(np.sum(disconnect_up)):
@@ -111,7 +111,7 @@ def print_diagnostic_commentary(mcc) -> None:
     large_exchange_change = np.abs(np.diff(nn_exchanges)) > 0.1
     large_exchange_change_up = np.hstack([large_exchange_change, False])
     large_exchange_change_down = np.hstack([False, large_exchange_change])
-    large_exchange_change_sym = large_exchange_change_up & large_exchange_change_down
+    #large_exchange_change_sym = large_exchange_change_up & large_exchange_change_down
 
     if np.any(large_exchange_change):
         print('Some chains have large changes in their nearest neighbor exchange_rate')

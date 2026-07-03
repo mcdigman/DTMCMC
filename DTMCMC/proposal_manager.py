@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 import DTMCMC.prior_manager as ph
-from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import AbstractLikelihood
-from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+    from DTMCMC.exchange_manager import ExchangeManager
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 class ProposalManager(JumpManager):
