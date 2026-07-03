@@ -77,3 +77,10 @@ plots = ["matplotlib>=3.11", "corner"]
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# Only the DTMCMC library is an installable package; data/, notebooks/,
+# explorations/, experiments/, scripts/, and tests/ each carry an __init__.py
+# but are not part of the distribution. Pin discovery so setuptools' flat-layout
+# auto-discovery doesn't error on multiple top-level packages.
+[tool.setuptools.packages.find]
+include = ["DTMCMC*"]
