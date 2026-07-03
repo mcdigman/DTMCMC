@@ -51,7 +51,7 @@ if __name__ == '__main__':
     # create needed objects
     # T_ladder = GeometricTemperatureLadder(n_chain, n_cold=n_cold, T_max=T_max,T_min=80.,T_cold=80.)  # get the temperature ladder object
     # T_ladder = th.entropy_ladder_fromfile(n_chain,n_cold,'Ts_cake_combo2.npy','vars_cake_combo2.npy',n_inf_final=1,T_cold=1.,correct_last=False)
-    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'Ts_cake_gold.npy', 'vars_cake_gold.npy', n_inf_final=1, T_cold=1., correct_last=False)
+    T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, 'data/Ts_cake_gold.npy', 'data/vars_cake_gold.npy', n_inf_final=1, T_cold=1., correct_last=False)
 
     like_obj = trial_likelihood.CakeLikelihood(n_par)
     params_true = like_obj.correct_bounds(params_true)                 # make sure the conventions on the parameters match
@@ -227,8 +227,8 @@ if __name__ == '__main__':
     if do_heat_plot_gold:
     # Ts_old = np.load('Ts_cake_combo2.npy')
     # vars_old = np.load('vars_cake_combo2.npy')
-        Ts_old = np.load('Ts_cake_gold.npy')
-        vars_old = np.load('vars_cake_gold.npy')
+        Ts_old = np.load('data/Ts_cake_gold.npy')
+        vars_old = np.load('data/vars_cake_gold.npy')
         plt.loglog(Ts_old, vars_old)
         plt.loglog(T_ladder.Ts[argTs], (np.mean(np.array(mcc.logL2_means[block_burnin:]), axis=0) - np.mean(np.array(mcc.logL_means[block_burnin:]), axis=0)**2)[argTs])
         plt.show()
@@ -553,8 +553,8 @@ if __name__ == '__main__':
 
     sys.exit()
 
-    cumulants_gold = np.load('cumulants_cake_gold.npy')
-    Ts_gold = np.load('Ts_cake_gold.npy')
+    cumulants_gold = np.load('data/cumulants_cake_gold.npy')
+    Ts_gold = np.load('data/Ts_cake_gold.npy')
     betas_gold = th.Ts_to_betas(Ts_gold)
 
     cumulants = np.array(moment_helpers.get_cumulants(moment_helpers.get_averaged_means(mcc, len(mcc.logL_means) - block_burnin, cut=block_burnin)))[:, 0]

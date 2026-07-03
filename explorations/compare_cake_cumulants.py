@@ -7,10 +7,10 @@ import DTMCMC.temperature_ladder_helpers as th
 Ts = np.load('Ts_cake_random1.npy')
 betas = th.Ts_to_betas(Ts)
 
-cumulants1 = np.load('cumulants_cake_random1.npy')
-cumulants2 = np.load('cumulants_cake_sequential1.npy')
-cumulants3 = np.load('cumulants_cake_adjacent1.npy')
-cumulants4 = np.load('cumulants_cake_alternate1.npy')
+cumulants1 = np.load('data/cumulants_cake_random1.npy')
+cumulants2 = np.load('data/cumulants_cake_sequential1.npy')
+cumulants3 = np.load('data/cumulants_cake_adjacent1.npy')
+cumulants4 = np.load('data/cumulants_cake_alternate1.npy')
 
 plt.plot(cumulants1[0] * betas**1)
 plt.plot(cumulants2[0] * betas**1)

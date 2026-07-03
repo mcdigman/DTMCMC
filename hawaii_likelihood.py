@@ -16,7 +16,7 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         n_par = 2
 
-        hf_out = h5py.File('hawaii_map.hdf5', 'r')
+        hf_out = h5py.File('data/hawaii_map.hdf5', 'r')
 
         # an input map of hawaii with elevations in meters
         self.hawaii_grid = np.asarray(hf_out['map']['hawaii'], dtype=np.float64)
