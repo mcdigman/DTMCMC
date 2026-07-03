@@ -87,48 +87,48 @@ if __name__ == '__main__':
 
     print('full search time ', str(tf - t0) + 's')
 
-do_sigma_plot = True
-if do_sigma_plot:
-    # samples_got = mcc.samples_store[n_burnin:]
-    # samples_post = trial_likelihood.drawposterior(store_size-n_burnin,mcc.Ts,n_par,like_obj.cutoff)
-    # sigma_got = np.std(samples_got,axis=(0,2))
-    # sigma_post = np.std(samples_post,axis=(0,2))
-    # import matplotlib.pyplot as plt
-    # plt.plot(mcc.Ts,sigma_got)
-    # plt.plot(mcc.Ts,sigma_post)
-    # plt.plot(mcc.Ts,np.sqrt(mcc.Ts))
-    # plt.show()
+    do_sigma_plot = True
+    if do_sigma_plot:
+        # samples_got = mcc.samples_store[n_burnin:]
+        # samples_post = trial_likelihood.drawposterior(store_size-n_burnin,mcc.Ts,n_par,like_obj.cutoff)
+        # sigma_got = np.std(samples_got,axis=(0,2))
+        # sigma_post = np.std(samples_post,axis=(0,2))
+        # import matplotlib.pyplot as plt
+        # plt.plot(mcc.Ts,sigma_got)
+        # plt.plot(mcc.Ts,sigma_post)
+        # plt.plot(mcc.Ts,np.sqrt(mcc.Ts))
+        # plt.show()
 
-    # plt.semilogx(mcc.Ts,1-sigma_got/sigma_post)
+        # plt.semilogx(mcc.Ts,1-sigma_got/sigma_post)
 
-    # plt.show()
+        # plt.show()
 
-    # print(unit_normal_battery(np.reshape(samples_post[:,0],samples_post[:,0].size),do_assert=False))
-    # print(unit_normal_battery(np.reshape(samples_got[:,0],samples_got[:,0].size),do_assert=False))
-    dch.print_diagnostic_commentary(mcc)
+        # print(unit_normal_battery(np.reshape(samples_post[:,0],samples_post[:,0].size),do_assert=False))
+        # print(unit_normal_battery(np.reshape(samples_got[:,0],samples_got[:,0].size),do_assert=False))
+        dch.print_diagnostic_commentary(mcc)
 
-do_corner_plot = True
-if do_corner_plot:
-    # generate a corner plot
-    import corner
-    import matplotlib.pyplot as plt
+    do_corner_plot = True
+    if do_corner_plot:
+        # generate a corner plot
+        import corner
+        import matplotlib.pyplot as plt
 
-    # reformat the samples to make the plots look nicer
-    labels = like_obj.get_labels()
-    samples_format, params_true_format = like_obj.format_samples_output(mcc.samples_store[:, 0, :].copy(), params_true)
+        # reformat the samples to make the plots look nicer
+        labels = like_obj.get_labels()
+        samples_format, params_true_format = like_obj.format_samples_output(mcc.samples_store[:, 0, :].copy(), params_true)
 
-    # create the corner plot figure
-    fig = plt.figure(figsize=(10, 7.5))
-    figure = corner.corner(samples_format, fig=fig, bins=25, hist_kwargs={'density': True}, show_titles=True, title_fmt=None,
-                           title_kwargs={'fontsize': 12}, labels=labels, max_n_ticks=3, label_kwargs={'fontsize': 12}, labelpad=0.15,
-                           smooth=0.25, levels=[0.682, 0.954])
+        # create the corner plot figure
+        fig = plt.figure(figsize=(10, 7.5))
+        figure = corner.corner(samples_format, fig=fig, bins=25, hist_kwargs={'density': True}, show_titles=True, title_fmt=None,
+                               title_kwargs={'fontsize': 12}, labels=labels, max_n_ticks=3, label_kwargs={'fontsize': 12}, labelpad=0.15,
+                               smooth=0.25, levels=[0.682, 0.954])
 
-    # overplot the true parameters
-    corner.overplot_points(figure, params_true_format[None], marker='s', color='tab:blue', markersize=4)
-    corner.overplot_lines(figure, params_true_format, color='tab:blue')
+        # overplot the true parameters
+        corner.overplot_points(figure, params_true_format[None], marker='s', color='tab:blue', markersize=4)
+        corner.overplot_lines(figure, params_true_format, color='tab:blue')
 
-    # adjust the figure to fit the box better
-    fig.subplots_adjust(wspace=0., hspace=0., left=0.05, top=0.95, right=0.99, bottom=0.05)
-    for ax in figure.get_axes():
-        ax.tick_params(which='both', direction='in', bottom=True, top=True, left=True, right=True, labelsize=6)
-    plt.show()
+        # adjust the figure to fit the box better
+        fig.subplots_adjust(wspace=0., hspace=0., left=0.05, top=0.95, right=0.99, bottom=0.05)
+        for ax in figure.get_axes():
+            ax.tick_params(which='both', direction='in', bottom=True, top=True, left=True, right=True, labelsize=6)
+        plt.show()
