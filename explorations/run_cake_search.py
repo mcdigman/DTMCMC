@@ -483,16 +483,16 @@ if __name__ == '__main__':
     sys.exit()
 
     Ts_high_high = np.load('data/Ts_cake_hot.npy')
-    vars_high_high = np.load('vars_cake_hot.npy')
-    means_high_high = np.load('means_cake_hot.npy')
+    vars_high_high = np.load('data/vars_cake_hot.npy')
+    means_high_high = np.load('data/means_cake_hot.npy')
 
-    Ts_mid_high = np.load('Ts_cake_mid_hot1.npy')
+    Ts_mid_high = np.load('data/Ts_cake_mid_hot1.npy')
     vars_mid_high = np.load('data/vars_cake_mid_hot1.npy')
-    means_mid_high = np.load('means_cake_mid_hot1.npy')
+    means_mid_high = np.load('data/means_cake_mid_hot1.npy')
 
-    Ts_low_high = np.load('Ts_cake_low_hot1.npy')
+    Ts_low_high = np.load('data/Ts_cake_low_hot1.npy')
     vars_low_high = np.load('data/vars_cake_low_hot1.npy')
-    means_low_high = np.load('means_cake_low_hot1.npy')
+    means_low_high = np.load('data/means_cake_low_hot1.npy')
 
     Ts_evolve = np.load('data/Ts_cake_evolve_entropy1.npy')
     vars_evolve = np.load('data/vars_cake_evolve_entropy1.npy')

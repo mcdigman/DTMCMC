@@ -63,7 +63,7 @@ def cumulants_from_Ts(Ts):
 
 integrated_curve = cumulative_trapezoid(integ_stitch, rs, initial=0)
 integrated_curve_interp = InterpolatedUnivariateSpline(rs, integrated_curve, k=3, ext=2)
-ratio_got = integrated_curve_interp(10) / integrated_curve_interp(np.sqrt(5) * 10)
+ratio_got = integrated_curve_interp(10) / integrated_curve_interp(np.sqrt(5) * 10) # type: ignore[bad-argument-type]
 volume_in = (8 * np.pi**2 * 10**5 / 15)
 volume_tot = (2 * 10)**5
 ratio_pred = volume_in / volume_tot
@@ -157,6 +157,7 @@ if do_recalc:
 
 do_interpolant_quality_plots = False
 if do_interpolant_quality_plots:
+    import matplotlib.pyplot as plt
     plt.plot(vals_derive_norm)
     plt.plot(integ_stitch)
     plt.plot(integrand_norm[rs < 10.])

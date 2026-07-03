@@ -39,6 +39,6 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, v):
+    def get_loglike(self, params_in):
         """Get the log likelihood given a set of parameters v"""
-        return self.hawaii_interp(v)[0]
+        return self.hawaii_interp(params_in)[0]
