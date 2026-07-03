@@ -168,7 +168,7 @@ class TrackerManager:
             a_yes_unique = a_yes_unique[:, a_any_mask]
             a_no_unique = a_no_unique[:, a_any_mask]
             a_tot_unique = a_tot_unique[:, a_any_mask]
-            jump_labels_need = proposal_manager.get_jump_labels()[a_any_mask]
+            jump_labels_need = [label for label, keep in zip(proposal_manager.get_jump_labels(), a_any_mask, strict=True) if keep]
 
             # build the print string for jump labels
             print('Acceptance Summary:')

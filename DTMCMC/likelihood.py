@@ -3,15 +3,12 @@ abstract class to hold a likelihood object
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 
 class AbstractLikelihood(ABC):

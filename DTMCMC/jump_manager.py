@@ -8,10 +8,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 

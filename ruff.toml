@@ -49,6 +49,12 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[lint.flake8-type-checking]
+# numba resolves annotations at runtime (via inspect/PEP 649 __annotate__), so
+# imports used in @njit/@jitclass signatures must NOT be gated behind
+# `if TYPE_CHECKING` or the first call raises NameError on Python 3.14.
+runtime-evaluated-decorators = ["numba.njit", "numba.jit", "numba.experimental.jitclass"]
+
 [lint.flake8-quotes]
 inline-quotes="single"
 
