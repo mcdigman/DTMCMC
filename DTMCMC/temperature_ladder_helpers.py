@@ -4,12 +4,15 @@ Helpersfor computing the temperature ladder for parallel tempering.
 C 2023 Matthew C. Digman
 """
 
+from typing import TYPE_CHECKING
 from warnings import warn
 
 import numpy as np
-from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:

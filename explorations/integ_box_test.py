@@ -68,7 +68,7 @@ for itrb in range(max_itrb):
     tl = perf_counter()
     print('finished ', itrb, ' at ', tl - t1, 'project fin', (tl - t1) / (itrb + 1) * (max_itrb + 1))
 
-plt.plot(bins_rec_prev2 / np.sum(bins_rec_prev))
+#plt.plot(bins_rec_prev2 / np.sum(bins_rec_prev))
 plt.plot(bins_rec / np.sum(bins_rec))
 plt.show()
 bins_rec_prev = bins_rec.copy()
@@ -80,12 +80,12 @@ import sys
 
 sys.exit()
 
-rloc = bins[1][1:][bins[1][1:] >= cutoff]
-dloc = bins[0][bins[1][1:] >= cutoff]
-# plt.plot(rloc,dloc-np.pi/2*rloc**2/cutoff**3)
-plt.plot(rloc, 8 * cutoff**3 * dloc - 4 * np.pi * rloc**2 + 2 * rloc**2 * np.arccos(cutoff / rloc))
-plt.plot(rloc, 8 * cutoff**3 * dloc - 4 * np.pi * rloc**2)
-plt.show()
+#rloc = bins[1][1:][bins[1][1:] >= cutoff]
+#dloc = bins[0][bins[1][1:] >= cutoff]
+## plt.plot(rloc,dloc-np.pi/2*rloc**2/cutoff**3)
+#plt.plot(rloc, 8 * cutoff**3 * dloc - 4 * np.pi * rloc**2 + 2 * rloc**2 * np.arccos(cutoff / rloc))
+#plt.plot(rloc, 8 * cutoff**3 * dloc - 4 * np.pi * rloc**2)
+#plt.show()
 
 # plt.plot(rs,areaFunc(rs)/(2*cutoff)**(n_dim))
 # plt.plot(rs,np.full(n_r,1.))

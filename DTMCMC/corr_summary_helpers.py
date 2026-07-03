@@ -1,11 +1,15 @@
 """C 2023 Matthew C. Digman
 helpers to summarize the auto and cross-correlations and sampling efficiency for an mcmc run
 """
+from typing import TYPE_CHECKING
+
 import numpy as np
 import scipy.signal
-from numpy.typing import NDArray
 
 from DTMCMC.chain_analysis_helpers import get_autocorr_sum, get_blockwise_vars, get_blockwise_vars_scramble
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 
 def restrict_n_burnin(mcc, n_burnin: int) -> int:

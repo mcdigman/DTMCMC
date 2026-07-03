@@ -59,6 +59,8 @@ min-file-size = 1024
 [lint.per-file-ignores]
 "tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114"]
 "speed_tests/*" = ["C90", "FBT", "ANN", "PLR"]
+"notebooks/*" = ["ARG001", "PERF401", "B007"]
+"explorations/*" = ["B007", "F821", "E402"]
 
 [lint.pydocstyle]
 convention = "numpy"

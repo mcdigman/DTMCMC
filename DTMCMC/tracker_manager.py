@@ -1,11 +1,15 @@
 """C 2023 Matthew C. Digman
 module to store various trackers about the state of chains
 """
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
-from numpy.typing import NDArray
 
-from DTMCMC.proposal_manager import ProposalManager
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from DTMCMC.proposal_manager import ProposalManager
 
 
 # TODO fix cycle and exchange tracking if not sorted
