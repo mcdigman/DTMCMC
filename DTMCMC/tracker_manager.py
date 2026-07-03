@@ -52,10 +52,10 @@ class TrackerManager:
         self.n_block_archive: int = n_block_archive
         self.itrb: int = 0
 
-        self.cycle_archive = []
-        self.accept_archive = []
-        self.exchange_archive = []
-        self.itrn_archive = []
+        self.cycle_archive: list[NDArray[np.int64]] = []
+        self.accept_archive: list[NDArray[np.int64]] = []
+        self.exchange_archive: list[NDArray[np.int64]]= []
+        self.itrn_archive: list[int] = []
 
     def initialize_trackers(self) -> None:
         """Initialize the various trackers like acceptance rate and cycle times."""
@@ -181,7 +181,7 @@ class TrackerManager:
             print(label_str)
             for itrt, T_loc in enumerate(Ts_unique):
                 label_T = '%12e ' % T_loc
-                for itrj in range(jump_labels_need.size):
+                for itrj in range(len(jump_labels_need)):
                     if a_tot_unique[itrt, itrj] == 0:
                         # no trials so print something useful instead of nan
                         label_loc = '%-15s ' % ' No Trials'

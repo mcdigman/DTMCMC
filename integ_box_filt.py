@@ -3,7 +3,7 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.ndimage import gaussian_filter
 
-from cake_likelihood import get_loglike
+from DTMCMC.likelihoods.cake_likelihood import get_loglike
 from DTMCMC.temperature_ladder_helpers import Ts_to_betas, betas_to_Ts, entropy_spaced_betas
 from moment_helpers import get_cumulants
 
@@ -63,7 +63,7 @@ def cumulants_from_Ts(Ts):
 
 integrated_curve = cumulative_trapezoid(integ_stitch, rs, initial=0)
 integrated_curve_interp = InterpolatedUnivariateSpline(rs, integrated_curve, k=3, ext=2)
-ratio_got = integrated_curve_interp(10.0) / integrated_curve_interp(np.sqrt(5) * 10) # type: ignore[bad-argument-type]
+ratio_got = integrated_curve_interp([10.0])[0] / integrated_curve_interp([np.sqrt(5) * 10])[0]
 volume_in = (8 * np.pi**2 * 10**5 / 15)
 volume_tot = (2 * 10)**5
 ratio_pred = volume_in / volume_tot

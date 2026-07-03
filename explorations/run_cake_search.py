@@ -20,7 +20,7 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 # import likelihood_gb as trial_likelihood
-import cake_likelihood as trial_likelihood
+import DTMCMC.likelihoods.cake_likelihood as trial_likelihood
 import diagnostic_commentary_helpers as dch
 import DTMCMC.exchange_manager as eh
 import DTMCMC.temperature_ladder_helpers as th
