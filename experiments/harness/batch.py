@@ -19,6 +19,7 @@ Example sweep file::
 
 import argparse
 import itertools
+import shlex
 import tomllib
 from pathlib import Path
 
@@ -99,7 +100,7 @@ def write_batch(sweep_path: str | Path) -> Path:
     for spec in specs:
         spec_path = specs_dir / f'{spec.name}_seed{spec.seed}.toml'
         spec_path.write_text(dumps_toml(spec.to_dict()))
-        manifest_lines.append(f'python -m experiments.harness.run {spec_path} --out {out_dir}')
+        manifest_lines.append(f'python -m experiments.harness.run {shlex.quote(str(spec_path))} --out {shlex.quote(str(out_dir))}')
 
     manifest_path = out_dir / 'manifest.txt'
     manifest_path.write_text('\n'.join(manifest_lines) + '\n')

@@ -62,6 +62,13 @@ class SpecError(ValueError):
         super().__init__(f'invalid run spec: {detail}')
 
 
+def config_to_text(config: configparser.ConfigParser) -> str:
+    """Serialize a ConfigParser instance as INI text."""
+    buffer = io.StringIO()
+    config.write(buffer)
+    return buffer.getvalue()
+
+
 def _require_table(data: dict[str, object], key: str) -> dict[str, object]:
     """Fetch a required sub-table from parsed TOML data."""
     value = data.get(key)
@@ -251,6 +258,17 @@ class RunSpec:
         if n_chain < n_cold:
             msg = 'ladder.n_chain must be >= ladder.n_cold'
             raise SpecError(msg)
+        if kind == 'explicit':
+            # the actual ladder is built from Ts, so a mismatch with the
+            # declared n_chain would silently run the wrong chain count
+            # and embed contradictory provenance (PR #9 review)
+            Ts_raw = self.ladder.get('Ts')
+            if not isinstance(Ts_raw, list) or not Ts_raw or not all(isinstance(T_loc, int | float) and not isinstance(T_loc, bool) for T_loc in Ts_raw):
+                msg = 'explicit ladder requires a non-empty numeric ladder.Ts list'
+                raise SpecError(msg)
+            if len(Ts_raw) != n_chain:
+                msg = f'explicit ladder.Ts has {len(Ts_raw)} entries but ladder.n_chain is {n_chain}'
+                raise SpecError(msg)
 
         if self.block_size < 2:
             msg = 'run.block_size must be >= 2 (blocks alternate regular and exchange steps)'
@@ -408,7 +426,10 @@ class RunSpec:
         return config
 
     def resolved_config_text(self) -> str:
-        """Get the fully resolved proposal config as INI text (artifact embedding)."""
-        buffer = io.StringIO()
-        self.build_proposal_config().write(buffer)
-        return buffer.getvalue()
+        """Get the fully resolved proposal config as INI text (artifact embedding).
+
+        Builds a fresh ConfigParser; the runner instead serializes the one
+        instance it hands to the sampler, via config_to_text, so the
+        artifact records exactly the config the run used.
+        """
+        return config_to_text(self.build_proposal_config())

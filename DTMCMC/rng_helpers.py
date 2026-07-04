@@ -17,13 +17,18 @@ _seed_guard: dict[str, bool] = {'seeded': False}
 
 
 @njit()
-def seed_numba(seed: int) -> None:
-    """Seed numba's njit-internal RNG stream.
+def _seed_numba(seed: int) -> None:
+    """Seed numba's njit-internal RNG stream; only seed_run may call this.
 
     Seeding must happen inside an @njit function: numba's stream is
     independent of np.random.seed called from Python. The stream is
     per-thread, but the sampler hot loop is single-threaded, so one
     call at run start suffices.
+
+    Private because the once-per-run guard cannot live here: numba
+    cannot type a read of the plain-dict guard state (TypingError at
+    compile), so the guard is enforced in seed_run and direct calls to
+    this helper outside rng_helpers/tests are banned via ruff TID251.
     """
     np.random.seed(seed)
 
@@ -61,7 +66,7 @@ def seed_run(run_seed: int) -> tuple[int, int]:
 
     child_python, child_numba = derive_child_seeds(run_seed)
     np.random.seed(child_python)
-    seed_numba(child_numba)
+    _seed_numba(child_numba)
     _seed_guard['seeded'] = True
     return child_python, child_numba
 

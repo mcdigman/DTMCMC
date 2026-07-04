@@ -89,4 +89,6 @@ repos:
     language: pygrep
     entry: parallel\s*=\s*True
     types: [python]
-    exclude: ^(tests/|explorations/|notebooks/)
+    # exclusions mirror the D5 whitelist exactly (plan §3): rng_helpers
+    # (seeding), entropy_process (prange), tests
+    exclude: ^(tests/|entropy_process\.py$|DTMCMC/rng_helpers\.py$)

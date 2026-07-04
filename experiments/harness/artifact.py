@@ -18,7 +18,7 @@ import socket
 import subprocess
 import time
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -36,30 +36,16 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 
-# root attrs that every artifact must carry (plan D2)
-REQUIRED_ATTRS: tuple[str, ...] = (
+# root attrs written at flush time rather than carried by RunProvenance
+_FLUSH_ATTRS: tuple[str, ...] = (
     'schema_version',
     'finalized',
     'name',
-    'run_seed',
-    'child_seed_python',
-    'child_seed_numba',
-    'git_commit',
-    'git_dirty',
-    'hostname',
-    'version_python',
-    'version_numpy',
-    'version_scipy',
-    'version_numba',
-    'version_h5py',
-    'start_time_utc',
     'flush_time_utc',
     'wall_seconds',
     'n_iterations',
     'n_chain_steps',
     'n_likelihood_evals',
-    'spec_toml',
-    'proposal_config_ini',
 )
 
 REQUIRED_DATASETS: tuple[str, ...] = (
@@ -90,7 +76,15 @@ REQUIRED_DATASETS: tuple[str, ...] = (
 
 @dataclass(frozen=True)
 class RunProvenance:
-    """Run-start provenance recorded in every artifact flush."""
+    """Run-start provenance recorded in every artifact flush.
+
+    Field names double as the artifact attr keys: write_artifact writes
+    every field and REQUIRED_ATTRS is derived from the field list, so a
+    new field cannot be silently dropped from either side. spec_toml and
+    proposal_config_ini are captured once at run start — the INI text from
+    the very ConfigParser instance the sampler was built with — so a
+    mid-run edit of default_config.ini cannot corrupt provenance.
+    """
 
     run_seed: int
     child_seed_python: int
@@ -104,6 +98,12 @@ class RunProvenance:
     version_numba: str
     version_h5py: str
     start_time_utc: str
+    spec_toml: str
+    proposal_config_ini: str
+
+
+# root attrs that every artifact must carry (plan D2)
+REQUIRED_ATTRS: tuple[str, ...] = tuple(prov_field.name for prov_field in fields(RunProvenance)) + _FLUSH_ATTRS
 
 
 def _git_state() -> tuple[str, bool]:
@@ -125,8 +125,8 @@ def _git_state() -> tuple[str, bool]:
     return commit_res.stdout.strip(), status_res.stdout.strip() != ''
 
 
-def collect_provenance(run_seed: int, child_seed_python: int, child_seed_numba: int) -> RunProvenance:
-    """Collect run-start provenance (git state, host, package versions)."""
+def collect_provenance(run_seed: int, child_seed_python: int, child_seed_numba: int, spec_toml: str, proposal_config_ini: str) -> RunProvenance:
+    """Collect run-start provenance (git state, host, versions, resolved config texts)."""
     git_commit, git_dirty = _git_state()
     return RunProvenance(
         run_seed=run_seed,
@@ -141,6 +141,8 @@ def collect_provenance(run_seed: int, child_seed_python: int, child_seed_numba: 
         version_numba=package_version('numba'),
         version_h5py=package_version('h5py'),
         start_time_utc=datetime.now(tz=UTC).isoformat(),
+        spec_toml=spec_toml,
+        proposal_config_ini=proposal_config_ini,
     )
 
 
@@ -178,28 +180,16 @@ def write_artifact(
 
     tmp_path = path.with_name(path.name + '.tmp')
     with h5py.File(str(tmp_path), 'w') as hf:
+        for prov_field in fields(provenance):
+            hf.attrs[prov_field.name] = getattr(provenance, prov_field.name)
         hf.attrs['schema_version'] = SCHEMA_VERSION
         hf.attrs['finalized'] = finalized
         hf.attrs['name'] = spec.name
-        hf.attrs['run_seed'] = provenance.run_seed
-        hf.attrs['child_seed_python'] = provenance.child_seed_python
-        hf.attrs['child_seed_numba'] = provenance.child_seed_numba
-        hf.attrs['git_commit'] = provenance.git_commit
-        hf.attrs['git_dirty'] = provenance.git_dirty
-        hf.attrs['hostname'] = provenance.hostname
-        hf.attrs['version_python'] = provenance.version_python
-        hf.attrs['version_numpy'] = provenance.version_numpy
-        hf.attrs['version_scipy'] = provenance.version_scipy
-        hf.attrs['version_numba'] = provenance.version_numba
-        hf.attrs['version_h5py'] = provenance.version_h5py
-        hf.attrs['start_time_utc'] = provenance.start_time_utc
         hf.attrs['flush_time_utc'] = datetime.now(tz=UTC).isoformat()
         hf.attrs['wall_seconds'] = wall_seconds
         hf.attrs['n_iterations'] = sampler.itrn
         hf.attrs['n_chain_steps'] = sampler.itrn * n_chain
         hf.attrs['n_likelihood_evals'] = n_likelihood_evals
-        hf.attrs['spec_toml'] = spec.to_toml_text()
-        hf.attrs['proposal_config_ini'] = spec.resolved_config_text()
 
         ladder_grp = hf.create_group('ladder')
         ladder_grp.attrs['n_cold'] = sampler.n_cold
@@ -293,6 +283,16 @@ def validate(path: str | Path, mode: str = 'complete') -> list[str]:
             problems.append('n_chain_steps attr inconsistent with n_iterations and ladder size')
         if _attr_int(hf, 'n_likelihood_evals') < 0:
             problems.append('n_likelihood_evals attr is negative')
+
+        # the run's actual geometry must match the embedded spec (PR #9
+        # review): a mismatch means the artifact contradicts its own
+        # provenance, e.g. an explicit ladder built from a wrong-length Ts
+        ladder_table = spec_data.get('ladder')
+        declared_n_chain = ladder_table.get('n_chain') if isinstance(ladder_table, dict) else None
+        if not isinstance(declared_n_chain, int) or isinstance(declared_n_chain, bool):
+            problems.append('embedded spec_toml lacks an integer ladder.n_chain')
+        elif declared_n_chain != n_chain:
+            problems.append(f'ladder/Ts length {n_chain} != embedded spec ladder.n_chain {declared_n_chain}')
 
         if mode == 'complete':
             if not bool(hf.attrs['finalized']):

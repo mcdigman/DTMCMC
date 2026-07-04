@@ -61,6 +61,10 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "numpy.random.default_rng".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
 "numpy.random.RandomState".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
 "numba.prange".msg = 'prange breaks the single-threaded RNG-stream guarantee (D5)'
+# the jitted seeder cannot consult the once-per-run guard (numba cannot type
+# the guard dict), so guard enforcement lives in seed_run and direct calls to
+# the private helper are banned here instead (PR #9 review)
+"DTMCMC.rng_helpers._seed_numba".msg = 'call DTMCMC.rng_helpers.seed_run; the raw numba seeder bypasses the D1 once-per-run guard'
 
 [lint.flake8-type-checking]
 # numba resolves annotations at runtime (via inspect/PEP 649 __annotate__), so

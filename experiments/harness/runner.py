@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 
 if TYPE_CHECKING:
+    import configparser
+    from collections.abc import Callable
+
     from numpy.typing import NDArray
 
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
@@ -34,7 +37,7 @@ from DTMCMC.temperature_ladder_helpers import (
 
 from .artifact import RunProvenance, collect_provenance, write_artifact
 from .paths import chdir_repo_root, resolve
-from .spec import EXCHANGE_STRATEGY_CODES, RunSpec
+from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
 
 
 class LikelihoodLike(Protocol):
@@ -117,19 +120,25 @@ class CountingLikelihood(AbstractLikelihood):
         return np.zeros(self.n_par)
 
 
+# one constructor per spec likelihood name; a test asserts the keys stay in
+# sync with spec.LIKELIHOOD_NAMES (spec.py cannot import these back without a
+# circular import, so drift is caught by CI instead)
+LIKELIHOOD_BUILDERS: dict[str, Callable[..., LikelihoodLike]] = {
+    'gaussian': GaussianLikelihood,
+    'cake': CakeLikelihood,
+    'eggbox': EggboxLikelihood,
+    'hawaii': HawaiiLikelihood,
+}
+
+
 def build_likelihood(spec: RunSpec) -> LikelihoodLike:
     """Construct the likelihood object named by the spec."""
     params: dict[str, Any] = dict(spec.likelihood_params)
-    if spec.likelihood_name == 'gaussian':
-        return GaussianLikelihood(**params)
-    if spec.likelihood_name == 'cake':
-        return CakeLikelihood(**params)
-    if spec.likelihood_name == 'eggbox':
-        return EggboxLikelihood(**params)
-    if spec.likelihood_name == 'hawaii':
-        return HawaiiLikelihood(**params)
-    msg = f'unknown likelihood {spec.likelihood_name!r}'
-    raise ValueError(msg)
+    builder = LIKELIHOOD_BUILDERS.get(spec.likelihood_name)
+    if builder is None:
+        msg = f'unknown likelihood {spec.likelihood_name!r}'
+        raise ValueError(msg)
+    return builder(**params)
 
 
 def _scalar(value: object) -> float:
@@ -140,52 +149,76 @@ def _scalar(value: object) -> float:
     return float(value)
 
 
+def _build_geometric_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a geometric ladder from the spec's ladder table."""
+    ladder = spec.ladder
+    return GeometricTemperatureLadder(
+        spec.n_chain,
+        n_cold=spec.n_cold,
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        T_min=_scalar(ladder.get('T_min', 1.)),
+        T_max=_scalar(ladder.get('T_max', 1.e15)),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+    )
+
+
+def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct an entropy ladder from reference data files named by the spec."""
+    ladder = spec.ladder
+    return entropy_ladder_fromfile(
+        spec.n_chain,
+        spec.n_cold,
+        str(resolve(str(ladder['Ts_file']))),
+        str(resolve(str(ladder['vars_file']))),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        correct_last=bool(ladder.get('correct_last', False)),
+    )
+
+
+def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a ladder directly from the spec's Ts list.
+
+    RunSpec validation guarantees Ts is a numeric list of length n_chain.
+    """
+    Ts_raw = spec.ladder['Ts']
+    if not isinstance(Ts_raw, list):
+        msg = 'explicit ladder requires a Ts list'
+        raise TypeError(msg)
+    return TemperatureLadder(spec.n_cold, np.asarray(Ts_raw, dtype=np.float64))
+
+
+# one builder per spec ladder kind; a test asserts the keys stay in sync with
+# spec.LADDER_KINDS (see LIKELIHOOD_BUILDERS note)
+LADDER_BUILDERS: dict[str, Callable[[RunSpec], TemperatureLadder]] = {
+    'geometric': _build_geometric_ladder,
+    'entropy_file': _build_entropy_file_ladder,
+    'explicit': _build_explicit_ladder,
+}
+
+
 def build_ladder(spec: RunSpec) -> TemperatureLadder:
     """Construct the temperature ladder described by the spec."""
-    ladder = spec.ladder
-    kind = ladder['kind']
-    n_chain = spec.n_chain
-    n_cold = spec.n_cold
-
-    if kind == 'geometric':
-        return GeometricTemperatureLadder(
-            n_chain,
-            n_cold=n_cold,
-            T_cold=float(_scalar(ladder.get('T_cold', 1.))),
-            T_min=float(_scalar(ladder.get('T_min', 1.))),
-            T_max=float(_scalar(ladder.get('T_max', 1.e15))),
-            n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
-        )
-    if kind == 'entropy_file':
-        return entropy_ladder_fromfile(
-            n_chain,
-            n_cold,
-            str(resolve(str(ladder['Ts_file']))),
-            str(resolve(str(ladder['vars_file']))),
-            n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
-            T_cold=float(_scalar(ladder.get('T_cold', 1.))),
-            correct_last=bool(ladder.get('correct_last', False)),
-        )
-    if kind == 'explicit':
-        Ts_raw = ladder['Ts']
-        if not isinstance(Ts_raw, list):
-            msg = 'explicit ladder requires a Ts list'
-            raise TypeError(msg)
-        return TemperatureLadder(n_cold, np.asarray(Ts_raw, dtype=np.float64))
-    msg = f'unknown ladder kind {kind!r}'
-    raise ValueError(msg)
+    kind = spec.ladder['kind']
+    builder = LADDER_BUILDERS.get(str(kind))
+    if builder is None:
+        msg = f'unknown ladder kind {kind!r}'
+        raise ValueError(msg)
+    return builder(spec)
 
 
-def build_sampler(spec: RunSpec) -> tuple[DTMCMCSampler, CountingLikelihood]:
+def build_sampler(spec: RunSpec, config: configparser.ConfigParser | None = None) -> tuple[DTMCMCSampler, CountingLikelihood]:
     """Build the sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
     starting samples, DE-buffer fills, and Fisher initialization all draw
-    from the run streams.
+    from the run streams. Pass the config explicitly to share one instance
+    between the sampler and the artifact provenance (run_from_spec does).
     """
     like_obj = CountingLikelihood(build_likelihood(spec))
     T_ladder = build_ladder(spec)
-    config = spec.build_proposal_config()
+    if config is None:
+        config = spec.build_proposal_config()
 
     starting_samples = np.zeros((T_ladder.n_chain, like_obj.n_par))
     for itrt in range(T_ladder.n_chain):
@@ -227,9 +260,18 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
     start_monotonic = time.monotonic()
 
     child_seed_python, child_seed_numba = seed_run(spec.seed)
-    provenance: RunProvenance = collect_provenance(spec.seed, child_seed_python, child_seed_numba)
 
-    sampler, like_obj = build_sampler(spec)
+    # one ConfigParser instance is shared between the sampler and the
+    # artifact provenance, captured as text once at run start, so the
+    # artifact records exactly the config the run used even if
+    # default_config.ini changes mid-run (PR #9 review)
+    config = spec.build_proposal_config()
+    provenance: RunProvenance = collect_provenance(
+        spec.seed, child_seed_python, child_seed_numba,
+        spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config),
+    )
+
+    sampler, like_obj = build_sampler(spec, config=config)
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)

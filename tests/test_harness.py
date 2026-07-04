@@ -6,6 +6,7 @@ guard (D1); artifact provenance completeness (D2); spec TOML round-trip;
 counting-proxy eval accounting; and batch sweep expansion.
 """
 
+import shlex
 import tomllib
 from typing import Any
 
@@ -13,12 +14,13 @@ import h5py
 import numpy as np
 import pytest
 
+import DTMCMC.rng_helpers as rng_helpers
 from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.batch import write_batch
 from experiments.harness.paths import default_config_path, repo_root
-from experiments.harness.runner import build_sampler, run_from_spec
-from experiments.harness.spec import RunSpec, SpecError, dumps_toml
+from experiments.harness.runner import LADDER_BUILDERS, LIKELIHOOD_BUILDERS, build_ladder, build_sampler, run_from_spec
+from experiments.harness.spec import LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
 
 TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'name': 'tiny_gaussian_test',
@@ -100,6 +102,7 @@ def test_dumps_toml_roundtrip_tricky_values() -> None:
     (('run', 'n_steps'), 100, 'multiple of'),
     (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
     (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
+    (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),
 ])
 def test_spec_validation_errors(field_path, bad_value, match) -> None:
     """Malformed specs raise SpecError with a pointed message."""
@@ -182,7 +185,7 @@ def test_counting_proxy_matches_artifact(tmp_path) -> None:
     """
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children)
+    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
 
     sampler, like_obj = build_sampler(spec)
     evals_after_init = like_obj.n_evals
@@ -210,7 +213,7 @@ def test_partial_artifact_validates_as_partial_only(tmp_path) -> None:
     """A non-finalized artifact passes partial validation but not complete."""
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children)
+    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
 
     sampler, like_obj = build_sampler(spec)
     sampler.advance_block()
@@ -243,7 +246,7 @@ def test_batch_expansion(tmp_path) -> None:
 
     seen: set[tuple[int, int]] = set()
     for line in manifest_lines:
-        spec_file = line.split()[3]
+        spec_file = shlex.split(line)[3]
         spec = RunSpec.from_toml(spec_file)
         assert spec.n_steps == 128
         seen.add((spec.n_chain, spec.seed))
@@ -254,3 +257,63 @@ def test_paths_anchored_to_repo_root() -> None:
     """Path resolution is CWD-independent and finds the shipped config."""
     assert default_config_path().is_file()
     assert (repo_root() / 'DTMCMC').is_dir()
+
+
+def test_numba_seeder_is_private() -> None:
+    """PR #9 review: the raw numba seeder must not be a public entry point.
+
+    The once-per-run guard cannot live inside the jitted body (numba
+    cannot type the guard dict), so seed_run must be the only public
+    seeding API; the helper is private and TID251-banned elsewhere.
+    """
+    public_names = {name for name in dir(rng_helpers) if not name.startswith('_')}
+    assert 'seed_numba' not in public_names
+    assert hasattr(rng_helpers, '_seed_numba')
+
+
+def test_builder_registries_match_spec_names() -> None:
+    """PR #9 review: runner builder registries stay in sync with spec constants."""
+    assert set(LIKELIHOOD_BUILDERS) == set(LIKELIHOOD_NAMES)
+    assert set(LADDER_BUILDERS) == set(LADDER_KINDS)
+
+
+def _explicit_ladder_data(n_chain: int, Ts: list[float]) -> dict[str, Any]:
+    """Copy the tiny spec with an explicit ladder of the given geometry."""
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['ladder'] = {'kind': 'explicit', 'n_chain': n_chain, 'n_cold': 1, 'Ts': Ts}
+    return data
+
+
+def test_explicit_ladder_length_mismatch_raises() -> None:
+    """PR #9 review: a Ts list contradicting ladder.n_chain fails at spec time."""
+    with pytest.raises(SpecError, match=r'3 entries but ladder\.n_chain is 6'):
+        RunSpec.from_dict(_explicit_ladder_data(6, [1.0, 2.0, 10.0]))
+
+
+def test_explicit_ladder_matching_length_builds() -> None:
+    """An explicit ladder with consistent geometry builds the declared chain count."""
+    spec = RunSpec.from_dict(_explicit_ladder_data(3, [1.0, 2.0, 10.0]))
+    ladder = build_ladder(spec)
+    assert ladder.n_chain == spec.n_chain == 3
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_ladder_mismatch_detected(tmp_path) -> None:
+    """PR #9 review: validate() flags a ladder that contradicts the embedded spec."""
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    sampler, like_obj = build_sampler(spec)
+
+    artifact_path = tmp_path / 'tampered.h5'
+    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=False, wall_seconds=0.0)
+    assert validate(artifact_path, mode='partial') == []
+
+    with h5py.File(str(artifact_path), 'a') as hf:
+        ladder_grp = hf['ladder']
+        assert isinstance(ladder_grp, h5py.Group)
+        del ladder_grp['Ts']
+        ladder_grp.create_dataset('Ts', data=np.array([1.0, 2.0, 10.0]))
+
+    problems = validate(artifact_path, mode='partial')
+    assert any('ladder.n_chain' in problem for problem in problems)
