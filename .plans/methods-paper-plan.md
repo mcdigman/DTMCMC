@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-03
 - **Branch:** `experimental`
-- **Status:** DRAFT rev 3 (incorporates PR #8 review rounds 1–2) — awaiting approval before Phase 1 begins
+- **Status:** Final approved draft (incorporates PR #8 review rounds 1–2) — Approved to begin Phase 1.
 - **Doc role:** the contract for phased implementation. Each phase is executed in its own
   session/PR against this document. Items marked **[EXPLORATORY]** fix an interface and a
   success criterion but deliberately leave internals to be iterated against pilot runs;
