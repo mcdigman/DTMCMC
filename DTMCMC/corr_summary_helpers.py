@@ -39,7 +39,7 @@ def autocorr_helper(mcc, itrp: int, n_burnin_thin: int) -> tuple[NDArray[np.floa
 
 def get_crosscorr_sum(mcc, n_burnin_thin: int, itrp: int, autocorr_lim: NDArray[np.floating], autocorr_cut: int, obs_var: NDArray[np.floating], n_eff_pred_auto: NDArray[np.floating]) -> tuple[NDArray[np.floating], int, float]:
     """Estimate the average cross correlations"""
-    n_use: int = mcc.store_size + 1 - n_burnin_thin
+    n_use: int = mcc.store_size - n_burnin_thin
     n_cold: int = mcc.n_cold
     n_cross_eval: int = min(64, n_cold)  # don't go too large or it takes a very long time
     n_chain: int = mcc.n_chain
@@ -238,7 +238,7 @@ class CorrelationSummary:
         n_par: int = mcc.n_par
         n_cold: int = mcc.n_cold
         n_burnin_thin: int = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
-        n_use: int = mcc.store_size + 1 - n_burnin_thin
+        n_use: int = mcc.store_size - n_burnin_thin
         n_tot: int = n_use * n_cold
         block_size: int = mcc.block_size // mcc.store_thin
         N_blocks: int = mcc.store_size // block_size
@@ -303,7 +303,7 @@ class CorrelationSummary:
         n_par: int = mcc.n_par
         n_cold: int = mcc.n_cold
         n_chain: int = mcc.n_chain
-        n_use: int = mcc.store_size + 1 - n_burnin_thin
+        n_use: int = mcc.store_size - n_burnin_thin
         n_eff_summary_print(n_par, n_use, n_cold, n_chain, mcc.store_thin, np.array(self.n_eff_preds),
                                    np.array(self.n_eff_preds_empirical), np.array(self.obs_vars), np.array(self.obs_means))
 
