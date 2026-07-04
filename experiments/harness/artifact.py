@@ -71,6 +71,8 @@ REQUIRED_DATASETS: tuple[str, ...] = (
     'trackers/exchange_archive',
     'trackers/esd_record',
     'trackers/esd_archive',
+    'trackers/esd_exchange',
+    'trackers/esd_exchange_archive',
     'trackers/itrn_archive',
     'events/rt_events',
     'flow/up_counts',
@@ -238,6 +240,8 @@ def write_artifact(
         trackers_grp.create_dataset('exchange_archive', data=_stack_archive(tracker.exchange_archive, tracker.exchange_tracker.shape))
         trackers_grp.create_dataset('esd_record', data=tracker.esd_record)
         trackers_grp.create_dataset('esd_archive', data=np.asarray(tracker.esd_archive) if tracker.esd_archive else np.zeros((0, *tracker.esd_record.shape)))
+        trackers_grp.create_dataset('esd_exchange', data=tracker.esd_exchange)
+        trackers_grp.create_dataset('esd_exchange_archive', data=np.asarray(tracker.esd_exchange_archive) if tracker.esd_exchange_archive else np.zeros((0, tracker.esd_exchange.shape[0])))
         trackers_grp.create_dataset('itrn_archive', data=np.asarray(tracker.itrn_archive, dtype=np.int64))
 
         # round-trip event log: rows of (walker id, iteration, direction)
@@ -296,6 +300,14 @@ def validate(path: str | Path, mode: str = 'complete') -> list[str]:
 
     problems: list[str] = []
     with h5py.File(str(artifact_path), 'r') as hf:
+        # a schema mismatch explains every downstream difference at once, so
+        # report it alone instead of a pile of missing-dataset messages
+        if 'schema_version' not in hf.attrs:
+            return ["missing root attr 'schema_version'"]
+        found_schema = _attr_int(hf, 'schema_version')
+        if found_schema != SCHEMA_VERSION:
+            return [f'artifact schema version {found_schema} != supported {SCHEMA_VERSION}']
+
         problems.extend(f'missing root attr {attr!r}' for attr in REQUIRED_ATTRS if attr not in hf.attrs)
         problems.extend(f'missing dataset {dataset!r}' for dataset in REQUIRED_DATASETS if dataset not in hf)
 

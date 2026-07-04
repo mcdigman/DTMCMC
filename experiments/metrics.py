@@ -82,12 +82,28 @@ def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_block
     """Frozen C1 effective-sample estimator (n_eff_preds_empirical, plan §6).
 
     Variance ratio of scrambled to sequential block means, per parameter,
-    on cold-chain samples of shape (n_rows, n_cold, n_par). Sequential
-    blocks are contiguous runs of block_size rows across all cold chains
-    at Generator-chosen starts; scrambled blocks draw the same number of
-    entries independently across (row, chain). Same estimator as
-    DTMCMC.corr_summary_helpers builds, reimplemented Generator-first so
-    analysis stays off the run RNG streams (plan D5).
+    on cold-chain samples of shape (n_rows, n_cold, n_par). Conventions,
+    pinned because this definition underlies the paper's primary metric:
+
+    - Callers pass exactly the rows the estimate is over: post-burn-in,
+      post-thinning cold-chain samples. n_tot = n_rows * n_cold of the
+      passed array, nothing else.
+    - Sequential blocks are contiguous runs of block_size rows across all
+      cold chains at Generator-chosen starts uniform over
+      [0, n_rows - block_size], inclusive: every row can appear.
+    - Scrambled blocks draw block_size * n_cold entries independently
+      and uniformly across (row, chain), with replacement.
+    - Per-run aggregation over parameters is the minimum, provided by
+      scramble_block_n_eff_min.
+
+    Same estimator as the engine's n_eff_preds_empirical
+    (DTMCMC.corr_summary_helpers), reimplemented Generator-first so
+    analysis stays off the run RNG streams (plan D5). Two deliberate
+    deviations from the engine original: the sequential-block start bound
+    is inclusive (the original's np.random.randint high bound silently
+    excludes the final row from every sequential block — noted on the
+    issue #11 audit), and n_tot is defined on the passed array rather
+    than via store bookkeeping.
     """
     n_rows, n_cold, n_par = samples.shape
     if n_rows <= block_size:
@@ -98,7 +114,7 @@ def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_block
     seq_means = np.zeros((n_blocks, n_par))
     scr_means = np.zeros((n_blocks, n_par))
     for itrb in range(n_blocks):
-        start = int(rng.integers(0, n_rows - block_size))
+        start = int(rng.integers(0, n_rows - block_size + 1))
         seq_means[itrb] = samples[start:start + block_size, :, :].mean(axis=(0, 1))
         row_idx = rng.integers(0, n_rows, size=block_size * n_cold)
         chain_idx = rng.integers(0, n_cold, size=block_size * n_cold)
@@ -110,6 +126,17 @@ def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_block
     nonzero = seq_var > 0.
     n_eff[nonzero] = scr_var[nonzero] / seq_var[nonzero] * n_tot
     return n_eff
+
+
+def scramble_block_n_eff_min(samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator) -> float:
+    """The C1 primary statistic: minimum over parameters of the frozen estimator.
+
+    Plan §6 freezes the aggregation rule — per-parameter n_eff on the
+    cold chains, aggregated by minimum over parameters, evaluated per
+    run — so the pre-registered quantity has a named function rather
+    than a convention callers must remember.
+    """
+    return float(np.min(scramble_block_n_eff(samples, block_size, n_blocks, rng)))
 
 
 @dataclass

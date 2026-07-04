@@ -124,6 +124,7 @@ def advance_block_ptmcmc(
                 logLs,
                 T_ladder,
                 tracker_manager.exchange_tracker,
+                tracker_manager.esd_exchange,
                 chain_track,
             )
         else:

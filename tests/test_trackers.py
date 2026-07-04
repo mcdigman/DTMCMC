@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
+import DTMCMC.exchange_manager as em
 from DTMCMC.dtmcmc_sampler import mcmc_decision_helper
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT, TrackerManager
@@ -169,6 +170,38 @@ def test_esd_accumulation_direct() -> None:
     assert accept_record[1, 0, 0] == 1
 
 
+def test_esd_exchange_accumulation_direct() -> None:
+    """Accepted swaps accumulate |delta|^2 per slot; hand-computed answer.
+
+    Sequential targeting on two chains with a large likelihood gap makes
+    the swap certain (the Metropolis-Hastings log-ratio is +4.5, and
+    log(u) <= 0 always), so both slots record the squared distance
+    between the swapped states.
+    """
+    n_chain = 2
+    samples = np.zeros((3, n_chain, 2))
+    samples[1] = [[0., 0.], [3., 4.]]
+    logLs = np.zeros((3, n_chain))
+    logLs[1] = [0., 5.]
+    betas = np.array([1., 0.1])
+    chain_track = np.zeros((3, n_chain), dtype=np.int64)
+    chain_track[1] = [0, 1]
+    exchange_tracker = np.zeros((2, 2, n_chain), dtype=np.int64)
+    esd_exchange = np.zeros(n_chain)
+
+    em.do_ptmcmc_exchange(1, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track, em.SEQUENTIAL_TARGETS, False)
+
+    assert_array_equal(chain_track[2], [1, 0])
+    assert_array_equal(samples[2], [[3., 4.], [0., 0.]])
+    assert esd_exchange[0] == pytest.approx(25.)
+    assert esd_exchange[1] == pytest.approx(25.)
+
+    # null targeting proposes nothing: no displacement accumulates
+    esd_null = np.zeros(n_chain)
+    em.do_ptmcmc_exchange(1, samples, logLs, n_chain, betas, exchange_tracker, esd_null, chain_track, em.NULL_TARGETS, False)
+    assert_array_equal(esd_null, [0., 0.])
+
+
 def test_trackers_on_real_run() -> None:
     """Integration: event log and counters agree on a real sampler run."""
     reset_seed_guard_for_tests()
@@ -197,3 +230,9 @@ def test_trackers_on_real_run() -> None:
     assert flow_up.shape == (spec.n_blocks, spec.n_chain)
     assert np.all(flow_up <= flow_labeled)
     assert np.all(flow_labeled <= spec.block_size)
+
+    # exchange displacement accumulates exactly where swaps were accepted
+    # (exchange_tracker[0, 0, t] counts accepted exchanges per slot)
+    accepted_exchanges = tracker.exchange_tracker[0, 0]
+    assert np.all(tracker.esd_exchange >= 0.)
+    assert_array_equal(tracker.esd_exchange > 0., accepted_exchanges > 0)

@@ -95,6 +95,7 @@ class TrackerManager:
         self.accept_archive: list[NDArray[np.int64]] = []
         self.exchange_archive: list[NDArray[np.int64]]= []
         self.esd_archive: list[NDArray[np.floating]] = []
+        self.esd_exchange_archive: list[NDArray[np.floating]] = []
         self.itrn_archive: list[int] = []
 
         # round-trip event log: (walker id, iteration, direction) rows,
@@ -126,6 +127,10 @@ class TrackerManager:
         # [0] accumulates |delta|^2 over all proposals, [1] over accepted ones
         self.esd_record = np.zeros((2, self.n_chain, self.n_jump_types))
 
+        # squared state displacement accepted exchanges produce per slot;
+        # rejected swaps move nothing, so only accepted swaps accumulate
+        self.esd_exchange = np.zeros(self.n_chain)
+
         if self.track_full_exchanges:
             self.exchange_tracker = np.zeros((2, self.n_chain, self.n_chain), dtype=np.int64)
         else:
@@ -144,6 +149,7 @@ class TrackerManager:
             self.accept_archive.append(self.accept_record.copy())
             self.exchange_archive.append(self.exchange_tracker.copy())
             self.esd_archive.append(self.esd_record.copy())
+            self.esd_exchange_archive.append(self.esd_exchange.copy())
             self.itrn_archive.append(itrn + self.block_size)
 
     def process_chain_cycles(self, itrn: int, chain_track) -> None:

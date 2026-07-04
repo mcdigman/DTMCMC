@@ -34,7 +34,12 @@ from DTMCMC.likelihoods import eggbox as eggbox_module
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# cake tier constants matching DTMCMC/likelihoods/cake_likelihood.py
+# cake tier constants matching DTMCMC/likelihoods/cake_likelihood.py, where
+# they are currently function-local and cannot be imported; a test
+# reconstructs the engine logL from these values so any drift fails CI.
+# TODO(Phase 3): the tunable-cake work promotes the tier params to
+# constructor args with identical defaults — import them from
+# cake_likelihood then and delete these copies (single-sourcing).
 CAKE_AMPS: tuple[float, float] = (0.5, 0.5)
 CAKE_WIDTHS: tuple[float, float] = (4., 0.1)
 CAKE_EXPONENTS: tuple[float, float] = (8., 2.)

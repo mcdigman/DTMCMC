@@ -12,8 +12,10 @@ use fixed seeds and are deterministic.
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
+from scipy.special import gamma as gamma_func
 
 from DTMCMC.likelihoods import eggbox as eggbox_module
+from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import EntropyTemperatureLadder, GeometricTemperatureLadder
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
@@ -32,8 +34,12 @@ from experiments.metrics import (
     round_trip_rate,
     round_trip_times,
     scramble_block_n_eff,
+    scramble_block_n_eff_min,
 )
 from experiments.reference_samplers import (
+    CAKE_AMPS,
+    CAKE_EXPONENTS,
+    CAKE_WIDTHS,
     cake_moment_r2,
     draw_cake,
     draw_eggbox,
@@ -112,6 +118,28 @@ def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) ->
     geometric_ladder = GeometricTemperatureLadder(Ts.size, 1, 1., 1., float(Ts[-1]), n_inf_final=0)
 
     assert_allclose(np.log(entropy_ladder.Ts), np.log(geometric_ladder.Ts), atol=0.1)
+
+
+def test_cake_constants_match_engine() -> None:
+    """The reference sampler's tier constants reproduce the engine logL exactly.
+
+    CAKE_AMPS/WIDTHS/EXPONENTS are copies of function-local constants in
+    cake_likelihood.py (single-sourced in Phase 3); this reconstruction
+    fails the moment either side drifts.
+    """
+    n_par = 5
+    like_obj = CakeLikelihood(n_par=n_par, cutoff=10)
+    rng = get_rng(23)
+    points = rng.uniform(-9., 9., size=(64, n_par))
+
+    dim_part = gamma_func(1. + n_par / 2.) / np.pi**(n_par / 2.)
+    for point in points:
+        r2 = float((point**2).sum())
+        tier_logs = [
+            np.log(amp * dim_part / (2.**(n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))) - r2**(exponent / 2.) / (2. * width**exponent)
+            for amp, width, exponent in zip(CAKE_AMPS, CAKE_WIDTHS, CAKE_EXPONENTS, strict=True)
+        ]
+        assert like_obj.get_loglike(point) == pytest.approx(np.logaddexp(tier_logs[0], tier_logs[1]), rel=1.e-12)
 
 
 def test_truncated_gaussian_reference() -> None:
@@ -235,6 +263,21 @@ def test_scramble_block_n_eff_calibration() -> None:
     repeat = np.repeat(rng.standard_normal((n_rows // 64, n_cold, n_par)), 64, axis=0)
     n_eff_corr = scramble_block_n_eff(repeat, 64, 256, get_rng(17))
     assert np.all(n_eff_corr < n_tot / 8.)
+
+    # the frozen C1 aggregation (plan §6): minimum over parameters, per run
+    assert scramble_block_n_eff_min(white, 64, 256, get_rng(16)) == pytest.approx(float(n_eff_white.min()))
+
+    # inclusive start bound: block_size == n_rows - 1 leaves exactly two
+    # valid starts, and both rows 0 and n_rows-1 must be reachable
+    tiny = np.arange(8, dtype=np.float64).reshape(8, 1, 1)
+    starts_seen = set()
+    probe_rng = get_rng(18)
+    for _ in range(64):
+        start = int(probe_rng.integers(0, 8 - 7 + 1))
+        starts_seen.add(start)
+    assert starts_seen == {0, 1}
+    # and the estimator itself accepts that geometry without error
+    scramble_block_n_eff(tiny, 7, 16, get_rng(19))
 
 
 def test_de_spectrum_and_effective_rank() -> None:
