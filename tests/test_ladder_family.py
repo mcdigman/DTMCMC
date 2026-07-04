@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
+from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import InterpolatedUnivariateSpline
 
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
@@ -23,8 +24,10 @@ from DTMCMC.temperature_ladder_helpers import (
     GeometricTemperatureLadder,
     LengthTemperatureLadder,
     Ts_to_betas,
+    get_spacing_integrated,
     predicted_swap_acceptance,
     standardize_input_stats,
+    standardize_input_vars,
 )
 from experiments.harness.runner import build_ladder
 from experiments.harness.spec import RunSpec
@@ -50,13 +53,65 @@ def gold_inputs() -> tuple[np.ndarray, np.ndarray]:
 
 
 @pytest.mark.parametrize(('n_chain', 'n_cold', 'n_inf_final', 'T_cold', 'correct_last'), ENTROPY_REGRESSION_CONFIGS)
-def test_entropy_ladder_exact_reproduction(gold_inputs, n_chain, n_cold, n_inf_final, T_cold, correct_last) -> None:
-    """Acceptance 1: the refactored machinery reproduces the frozen fixture exactly."""
+def test_entropy_ladder_reproduces_frozen_fixture(gold_inputs, n_chain, n_cold, n_inf_final, T_cold, correct_last) -> None:
+    """Acceptance 1a: the refactored machinery reproduces the frozen fixture values.
+
+    The fixture was generated on darwin-arm64; scipy spline/trapezoid
+    arithmetic differs at ulp level across platforms, so values are
+    pinned to rtol 1e-10 here and the bit-exactness of the refactor
+    itself is proven platform-independently by
+    test_generalized_machinery_bit_exact_vs_original.
+    """
     Ts_in, vars_in = gold_inputs
     fixture = np.load(FIXTURE_PATH)
     key = f'{n_chain}_{n_cold}_{n_inf_final}_{T_cold}_{correct_last}'
     ladder = EntropyTemperatureLadder(n_chain, Ts_in, vars_in, n_cold=n_cold, T_cold=T_cold, n_inf_final=n_inf_final, correct_last=correct_last)
-    assert_array_equal(ladder.Ts, fixture[key])
+    assert_allclose(ladder.Ts, fixture[key], rtol=1.e-10, atol=0.)
+
+
+def _original_heat_capacity_integrated(logL_vars_use: np.ndarray, betas_use: np.ndarray, correct_last: bool) -> np.ndarray:
+    """Verbatim pre-Phase-3 get_heat_capacity_integrated (frozen copy).
+
+    Copied from DTMCMC/temperature_ladder_helpers.py at commit 715cd38 so
+    the generalized machinery's (p=1, q=1) path can be proven bit-exact
+    against the original arithmetic on any platform.
+    """
+    heat_capacity_integrand = -np.abs(logL_vars_use) * betas_use
+    heat_capacity_integrand[~np.isfinite(heat_capacity_integrand)] = 0.
+
+    heat_capacity_integ = cumulative_trapezoid(heat_capacity_integrand[::-1], betas_use[::-1], initial=0)[::-1]
+
+    if correct_last and betas_use[-1] == 0. and betas_use.size > 1:
+        heat_capacity_integ[:heat_capacity_integ.size - 1] -= betas_use[-2]**2 / 2 * logL_vars_use[-1]
+
+    heat_capacity_integ -= heat_capacity_integ[0]
+
+    for itrn in range(1, heat_capacity_integ.size):
+        if heat_capacity_integ[itrn] < heat_capacity_integ[itrn - 1]:
+            heat_capacity_integ[itrn:] += heat_capacity_integ[itrn - 1] - heat_capacity_integ[itrn]
+
+        if heat_capacity_integ[itrn] <= heat_capacity_integ[itrn - 1]:
+            if heat_capacity_integ[itrn - 1] == 0.:
+                heat_capacity_integ[itrn:] += 1.e-15
+            else:
+                heat_capacity_integ[itrn:] += 1.e-14 * heat_capacity_integ[itrn - 1]
+
+    return heat_capacity_integ
+
+
+@pytest.mark.parametrize('correct_last', [False, True])
+def test_generalized_machinery_bit_exact_vs_original(gold_inputs, correct_last) -> None:
+    """Acceptance 1b: the (p=1, q=1) generalized integral is bit-exact vs the original.
+
+    Platform-independent: both implementations run in-process on the same
+    standardized gold inputs, so any arithmetic change in the refactor
+    fails this regardless of libm.
+    """
+    Ts_in, vars_in = gold_inputs
+    betas_use, vars_use = standardize_input_vars(Ts_to_betas(Ts_in), vars_in)
+    original = _original_heat_capacity_integrated(vars_use.copy(), betas_use.copy(), correct_last)
+    generalized = get_spacing_integrated(vars_use.copy(), betas_use.copy(), correct_last, p=1., q=1.)
+    assert_array_equal(generalized, original)
 
 
 def test_gaussian_null_case_ladders_coincide() -> None:
