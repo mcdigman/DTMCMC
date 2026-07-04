@@ -36,6 +36,7 @@ from DTMCMC.temperature_ladder_helpers import (
     LengthTemperatureLadder,
     TemperatureLadder,
     entropy_ladder_fromfile,
+    filter_ladder_inputs,
 )
 from experiments.metrics import de_buffer_difference_spectrum
 
@@ -183,22 +184,23 @@ def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
-def _load_ladder_inputs(spec: RunSpec, *file_keys: str) -> list[np.ndarray]:
-    """Load ladder input arrays named by the spec, filtered to Ts >= 1.
+def _load_ladder_inputs(spec: RunSpec, *stat_file_keys: str) -> tuple[np.ndarray, ...]:
+    """Load Ts plus stat arrays named by the spec, with the from-file filter.
 
-    Applies the same Ts >= 1 input filter as entropy_ladder_fromfile so
-    the file-driven ladder arms stay comparable.
+    The Ts array is always loaded from 'Ts_file' explicitly (no
+    positional first-key contract) and the shared engine helper
+    filter_ladder_inputs applies the Ts >= 1 from-file convention, so
+    every file-driven ladder arm filters identically.
     """
-    arrays = [np.load(resolve(str(spec.ladder[key]))) for key in file_keys]
-    Ts_in = arrays[0]
-    keep = Ts_in >= 1.
-    return [array[keep].copy() for array in arrays]
+    Ts_in = np.load(resolve(str(spec.ladder['Ts_file'])))
+    stats = [np.load(resolve(str(spec.ladder[key]))) for key in stat_file_keys]
+    return filter_ladder_inputs(Ts_in, *stats)
 
 
 def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
     """Construct a thermodynamic-length ladder from reference data files."""
     ladder = spec.ladder
-    Ts_in, vars_in = _load_ladder_inputs(spec, 'Ts_file', 'vars_file')
+    Ts_in, vars_in = _load_ladder_inputs(spec, 'vars_file')
     return LengthTemperatureLadder(
         spec.n_chain,
         Ts_in,
@@ -213,7 +215,7 @@ def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
 def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
     """Construct a predicted-acceptance ladder from reference data files."""
     ladder = spec.ladder
-    Ts_in, means_in, vars_in = _load_ladder_inputs(spec, 'Ts_file', 'means_file', 'vars_file')
+    Ts_in, means_in, vars_in = _load_ladder_inputs(spec, 'means_file', 'vars_file')
     return AcceptanceTemperatureLadder(
         spec.n_chain,
         Ts_in,

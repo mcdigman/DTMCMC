@@ -58,6 +58,18 @@ class CakeLikelihood(RectangularLikelihood):
         self.widths = tuple(widths)
         self.exponents = tuple(exponents)
 
+        # the log-normalizations cost two gamma calls per tier, so hoist
+        # them out of the per-evaluation path; the expressions are
+        # identical to get_cake_tier_logL's, so values are bit-identical
+        # (guarded by the golden-run test)
+        dim_part = gamma(1 + n_par / 2) / (np.pi**(n_par / 2))
+        self._tier_lognorms = tuple(
+            np.log(amp * dim_part / (2**(n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent)))
+            for amp, width, exponent in zip(self.amps, self.widths, self.exponents, strict=True)
+        )
+        self._tier_coefs = tuple(-1 / (2 * width**exponent) for width, exponent in zip(self.widths, self.exponents, strict=True))
+        self._tier_powers = tuple(exponent / 2 for exponent in self.exponents)
+
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)
 
@@ -65,4 +77,11 @@ class CakeLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in):
         """Get the log likelihood given a set of parameters v"""
-        return get_loglike(params_in, self.amps, self.widths, self.exponents)
+        r2_got = 0.
+        for itrp in range(params_in.shape[0]):
+            r2_got += params_in[itrp]**2
+
+        res = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got**self._tier_powers[0]
+        for itrm in range(1, len(self.amps)):
+            res = np.logaddexp(res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got**self._tier_powers[itrm])
+        return res

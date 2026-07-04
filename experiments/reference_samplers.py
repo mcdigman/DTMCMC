@@ -66,25 +66,31 @@ def cake_moment_r2(n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tupl
     amps. Box truncation at the default cutoff is negligible (the tier-1
     tail beyond r=10 carries weight ~exp(-760)).
     """
+    amps_arr = np.asarray(amps, dtype=np.float64)
+    assert float(amps_arr.sum()) > 0.
+    # the engine accepts arbitrary amps; the posterior tier weights are
+    # always amp_i / sum(amps), so normalize rather than assume sum = 1
+    weights = amps_arr / amps_arr.sum()
     total = 0.
-    for amp, width, exponent in zip(amps, widths, exponents, strict=True):
-        total += amp * width**2 * 2.**(2. / exponent) * gamma_func((n_par + 2.) / exponent) / gamma_func(n_par / exponent)
-    return total
+    for weight, width, exponent in zip(weights, widths, exponents, strict=True):
+        total += weight * width**2 * 2.**(2. / exponent) * gamma_func((n_par + 2.) / exponent) / gamma_func(n_par / exponent)
+    return float(total)
 
 
 def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float = 10., amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> NDArray[np.floating]:
     """Exact draws from the cake posterior at T=1 in the [-cutoff, cutoff]^n box.
 
     Tier parameters default to the engine's cake; custom values sample
-    the tunable cake family exactly. The amps are the tiers' mixture
-    weights (each tier integrates to exactly its amp in the engine's
-    normalization), so they must sum to 1.
+    the tunable cake family exactly. The engine accepts arbitrary amps
+    (each tier integrates to exactly its amp, so the posterior tier
+    weights are amp_i / sum(amps)); normalizing here keeps every
+    engine-valid cake exactly sampleable.
     """
     amps_arr = np.asarray(amps, dtype=np.float64)
     widths_arr = np.asarray(widths, dtype=np.float64)
     exponents_arr = np.asarray(exponents, dtype=np.float64)
-    assert np.isclose(float(amps_arr.sum()), 1.), 'cake amps must sum to 1 for exact mixture sampling'
-    tier_cdf = np.cumsum(amps_arr)
+    assert float(amps_arr.sum()) > 0.
+    tier_cdf = np.cumsum(amps_arr / amps_arr.sum())
 
     out = np.zeros((n_draws, n_par))
     n_got = 0

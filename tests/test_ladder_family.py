@@ -24,6 +24,9 @@ from DTMCMC.temperature_ladder_helpers import (
     GeometricTemperatureLadder,
     LengthTemperatureLadder,
     Ts_to_betas,
+    acceptance_spaced_betas,
+    entropy_spaced_betas,
+    filter_ladder_inputs,
     get_spacing_integrated,
     predicted_swap_acceptance,
     standardize_input_stats,
@@ -163,13 +166,13 @@ def test_acceptance_predictor_vs_brute_force(beta1, delta_beta) -> None:
 
 
 @pytest.fixture(scope='module')
-def cake1_inputs() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load the matched cake1 (Ts, means, vars) reference arrays."""
-    Ts_in = np.load(DATA_DIR / 'Ts_cake1.npy')
-    means_in = np.load(DATA_DIR / 'means_cake1.npy')
-    vars_in = np.load(DATA_DIR / 'vars_cake1.npy')
-    keep = Ts_in >= 1.
-    return Ts_in[keep], means_in[keep], vars_in[keep]
+def cake1_inputs() -> tuple[np.ndarray, ...]:
+    """Load the matched cake1 (Ts, means, vars) arrays with the from-file filter."""
+    return filter_ladder_inputs(
+        np.load(DATA_DIR / 'Ts_cake1.npy'),
+        np.load(DATA_DIR / 'means_cake1.npy'),
+        np.load(DATA_DIR / 'vars_cake1.npy'),
+    )
 
 
 def test_acceptance_ladder_equal_acceptance(cake1_inputs) -> None:
@@ -222,6 +225,115 @@ def test_all_ladder_kinds_constructible_from_spec(ladder_table) -> None:
     ladder = build_ladder(spec)
     assert ladder.n_chain == ladder_table['n_chain']
     assert np.all(ladder.Ts[np.isfinite(ladder.Ts)] > 0.)
+
+
+def _gaussian_ladder_stats(n_par: int, Ts_max: float = 64., n_points: int = 17, include_inf: bool = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Analytic Gaussian-target ladder inputs, optionally with a prior rung."""
+    Ts_in = np.geomspace(1., Ts_max, n_points)
+    betas = 1. / Ts_in
+    means = -n_par / (2. * betas)
+    variances = n_par / (2. * betas**2)
+    if include_inf:
+        # a beta = 0 (infinite temperature) entry with finite prior stats
+        Ts_in = np.append(Ts_in, np.inf)
+        means = np.append(means, -200.)
+        variances = np.append(variances, 1.e4)
+    return Ts_in, means, variances
+
+
+def test_acceptance_ladder_prunes_unrequested_inf() -> None:
+    """PR #14 review: n_inf_final=0 must yield all-finite rungs even with a beta=0 input."""
+    Ts_in, means, variances = _gaussian_ladder_stats(4, include_inf=True)
+    ladder = AcceptanceTemperatureLadder(9, Ts_in, means, variances, n_cold=1, T_cold=1., n_inf_final=0)
+    assert ladder.Ts.size == 9
+    assert np.all(np.isfinite(ladder.Ts))
+
+
+def test_acceptance_inf_edge_outside_contract() -> None:
+    """PR #14 review: the equal-acceptance contract covers finite rungs only.
+
+    With finite inputs and n_inf_final=1, the hottest walked rung is
+    replaced by infinity (the entropy ladder's plugging convention), so
+    the finite-to-infinite edge is deliberately unconstrained; the
+    remaining finite adjacent pairs all sit at the achieved target.
+    """
+    Ts_in, means, variances = _gaussian_ladder_stats(4)
+    n_chain = 9
+    ladder = AcceptanceTemperatureLadder(n_chain, Ts_in, means, variances, n_cold=1, T_cold=1., n_inf_final=1)
+    assert np.sum(~np.isfinite(ladder.Ts)) == 1
+
+    betas_use, means_use, vars_use = standardize_input_stats(Ts_to_betas(Ts_in), means, variances)
+    mean_interp = InterpolatedUnivariateSpline(betas_use[::-1], means_use[::-1], k=1, ext=3)
+    var_interp = InterpolatedUnivariateSpline(betas_use[::-1], vars_use[::-1], k=1, ext=3)
+
+    def interp_scalar(spline: InterpolatedUnivariateSpline, beta_loc: float) -> float:
+        return float(spline(np.asarray([beta_loc]))[0])
+
+    finite_Ts = ladder.Ts[np.isfinite(ladder.Ts)]
+    betas = 1. / finite_Ts
+    acceptances = np.array([
+        predicted_swap_acceptance(
+            betas[itrt], betas[itrt + 1],
+            interp_scalar(mean_interp, betas[itrt]), interp_scalar(mean_interp, betas[itrt + 1]),
+            interp_scalar(var_interp, betas[itrt]), interp_scalar(var_interp, betas[itrt + 1]),
+        )
+        for itrt in range(finite_Ts.size - 1)
+    ])
+    assert acceptances.size == finite_Ts.size - 1
+    assert_allclose(acceptances, ladder.achieved_acceptance, atol=0.02)
+
+
+def test_sort_mode_zero_forwarded_by_ladder_classes() -> None:
+    """PR #14 review: the wrapper classes must honor sort_mode=0 (unsorted)."""
+    Ts_in, means, variances = _gaussian_ladder_stats(4)
+
+    for ladder_class, lower_Ts in (
+        (EntropyTemperatureLadder(9, Ts_in, variances, n_cold=1, T_cold=4., n_inf_final=0, sort_mode=0),
+         entropy_spaced_betas(9, 1, Ts_in, variances, n_inf_final=0, T_cold=4., sort_mode=0)[1]),
+        (LengthTemperatureLadder(9, Ts_in, variances, n_cold=1, T_cold=4., n_inf_final=0, sort_mode=0),
+         entropy_spaced_betas(9, 1, Ts_in, variances, n_inf_final=0, T_cold=4., sort_mode=0, p=0.5, q=0.)[1]),
+        (AcceptanceTemperatureLadder(9, Ts_in, means, variances, n_cold=1, T_cold=4., n_inf_final=0, sort_mode=0),
+         acceptance_spaced_betas(9, 1, Ts_in, means, variances, n_inf_final=0, T_cold=4., sort_mode=0)[1]),
+    ):
+        # T_cold=4 sits mid-range, so the unsorted (cold-first) order is
+        # genuinely different from sorted — the class must preserve it
+        assert not np.all(np.diff(lower_Ts) >= 0.)
+        assert_array_equal(ladder_class.Ts, lower_Ts)
+
+
+def test_predicted_acceptance_stays_in_probability_range() -> None:
+    """PR #14 review: the predictor must never leave [0, 1].
+
+    Includes the reported repro (beta1=0, beta2=1e-6, huge variances)
+    where s^2/2 and log_ndtr(-z) cancel catastrophically without the
+    asymptotic branch, returning 1.5.
+    """
+    repro = predicted_swap_acceptance(0., 1.e-6, 0., 0., 1.e30, 1.e30)
+    assert 0. <= repro <= 1.
+    assert repro == pytest.approx(0.5, abs=0.01)
+
+    for beta1 in (0., 1.e-6, 0.5, 1.):
+        for beta2 in (0., 1.e-6, 0.5, 1.):
+            for mean_delta in (0., 1.e6, -1.e6):
+                for var in (1.e-6, 1., 1.e30):
+                    a = predicted_swap_acceptance(beta1, beta2, 0., mean_delta, var, var)
+                    assert 0. <= a <= 1., (beta1, beta2, mean_delta, var, a)
+
+
+def test_cake_reference_normalizes_amps() -> None:
+    """PR #14 review: engine-valid non-normalized amps keep an exact reference.
+
+    The engine's posterior tier weights are amp_i/sum(amps), so scaling
+    all amps must leave both the analytic moment and the draws unchanged.
+    """
+    n_par = 5
+    widths, exponents = (2., 0.5), (4., 2.)
+    scaled = cake_moment_r2(n_par, amps=(1.4, 0.6), widths=widths, exponents=exponents)
+    normalized = cake_moment_r2(n_par, amps=(0.7, 0.3), widths=widths, exponents=exponents)
+    assert scaled == pytest.approx(normalized, rel=1.e-14)
+
+    draws = draw_cake(20000, n_par, get_rng(31), amps=(1.4, 0.6), widths=widths, exponents=exponents)
+    assert_allclose((draws**2).sum(axis=1).mean(), scaled, rtol=0.05)
 
 
 def test_tunable_cake_family() -> None:

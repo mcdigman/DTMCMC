@@ -210,14 +210,14 @@ class GeometricTemperatureLadder(TemperatureLadder):
         TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
 
 
-def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Convert the input betas and variances to a standardized form.
+def _standardize_stats_core(betas_in: NDArray[np.floating], stats_in: list[NDArray[np.floating]], nonfinite_msg: str) -> tuple[NDArray[np.floating], list[NDArray[np.floating]]]:
+    """Shared standardization core: unique finite betas, averaged duplicate stats.
 
-    Needed so that the heat capacity integration can work correctly.
+    Sorts betas descending and keeps only finite ones (a zero-temperature
+    chain cannot enter the spacing integrals), averages every stat over
+    duplicate temperatures, and excises entries where any stat is
+    non-finite (with a caller-supplied warning).
     """
-    assert len(betas_in.shape) == 1
-    assert len(logL_vars_in.shape) == 1
-    assert betas_in.shape == logL_vars_in.shape
     # need to sort the input temperatures and get only unique ones so we can interpolate
     betas_use = np.unique(betas_in)[::-1]
     # Note that using partition functions the lowest order taylor approximation
@@ -228,19 +228,35 @@ def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray
     # chains from the heat capacity integrals
     betas_use = betas_use[np.isfinite(betas_use)]
 
-    logL_vars_use = np.zeros(betas_use.size)
-
+    stats_use: list[NDArray[np.floating]] = [np.zeros(betas_use.size) for _ in stats_in]
     for itrf in range(betas_use.size):
-        # if there were duplicate temps, average the likelihood variances
-        logL_vars_use[itrf] = np.mean(logL_vars_in[betas_use[itrf] == betas_in])
+        # if there were duplicate temps, average the statistics
+        duplicate_sel = betas_use[itrf] == betas_in
+        for itrs, stat_in in enumerate(stats_in):
+            stats_use[itrs][itrf] = np.mean(stat_in[duplicate_sel])
 
-    if np.any(~np.isfinite(logL_vars_use)):
-        # Handle non-finite variance just by excising those points
-        warn('Nonfinite variance requested, results may not be meaningful', stacklevel=2)
-        betas_use = betas_use[np.isfinite(logL_vars_use)]
-        logL_vars_use = logL_vars_use[np.isfinite(logL_vars_use)]
+    finite_mask = np.full(betas_use.size, True)
+    for stat_use in stats_use:
+        finite_mask &= np.isfinite(stat_use)
+    if np.any(~finite_mask):
+        # Handle non-finite statistics just by excising those points
+        warn(nonfinite_msg, stacklevel=3)
+        betas_use = betas_use[finite_mask]
+        stats_use = [stat_use[finite_mask] for stat_use in stats_use]
 
-    return betas_use, logL_vars_use
+    return betas_use, stats_use
+
+
+def standardize_input_vars(betas_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    """Convert the input betas and variances to a standardized form.
+
+    Needed so that the heat capacity integration can work correctly.
+    """
+    assert len(betas_in.shape) == 1
+    assert len(logL_vars_in.shape) == 1
+    assert betas_in.shape == logL_vars_in.shape
+    betas_use, stats_use = _standardize_stats_core(betas_in, [logL_vars_in], 'Nonfinite variance requested, results may not be meaningful')
+    return betas_use, stats_use[0]
 
 
 def get_spacing_integrated(logL_vars_use: NDArray[np.floating], betas_use: NDArray[np.floating], correct_last: bool, p: float = 1., q: float = 1.) -> NDArray[np.floating]:
@@ -363,6 +379,68 @@ def entropy_spacing(n_chain_need: int, betas_in: NDArray[np.floating], logL_vars
     return T_grid_got
 
 
+def _plug_cold_and_inf(
+        Ts_got: NDArray[np.floating],
+        betas_in: NDArray[np.floating],
+        n_chain_space: int,
+        n_chain_need: int,
+        n_cold: int,
+        n_inf_final: int,
+        T_cold: float,
+        sort_mode: int,
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    """Shared cold/infinite-rung plugging and sorting for spaced ladders.
+
+    Every spaced ladder family (entropy, length, acceptance) applies the
+    same conventions after spacing its rungs: overwrite the hottest
+    n_inf_final rungs with infinity, snap the rung nearest T_cold to
+    T_cold exactly (this deliberately distorts the adjacent spacing
+    interval when T_cold sits far from the input range — the documented
+    cost of the cold plug, identical across families so arm comparisons
+    stay apples-to-apples), pad n_cold-1 duplicate cold rungs, and apply
+    sort_mode.
+    """
+    if n_inf_final > 0:
+        Ts_got[n_chain_space - n_inf_final:] = np.inf
+        assert np.all(np.isfinite(Ts_got[:n_chain_space - n_inf_final])) or np.all(betas_in == 0.)
+
+    # TODO add option to do include cold spacing adaptively or not
+    if n_cold > 0:
+        # shift the generated value that is closest to the original cold value
+        # need special handling if the 'cold' temperature is infinity
+        if ~np.isfinite(T_cold):
+            if Ts_got.size > 1:
+                arg_cold = max(Ts_got.size - n_inf_final - 1, 0)
+            else:
+                arg_cold = 0
+            assert arg_cold >= 0
+        else:
+            arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
+        Ts_got[arg_cold] = T_cold
+        if arg_cold != 0:
+            # put cold values first for now
+            Ts_got = np.hstack([Ts_got[arg_cold], Ts_got[:arg_cold], Ts_got[arg_cold + 1:]])
+
+    if n_cold > 1:
+        Ts_got = np.hstack([np.full(n_cold - 1, T_cold), Ts_got])
+
+    assert Ts_got.size == n_chain_need
+
+    betas_got = Ts_to_betas(Ts_got)
+
+    if sort_mode == 0:
+        pass
+    elif sort_mode == 1:
+        idx_sort = np.argsort(Ts_got)
+        Ts_got = Ts_got[idx_sort].copy()
+        betas_got = betas_got[idx_sort].copy()
+    else:
+        msg = f'Unrecognized option sort_mode {sort_mode}'
+        raise ValueError(msg)
+
+    return betas_got, Ts_got
+
+
 def entropy_spaced_betas(
         n_chain_need: int,
         n_cold: int,
@@ -428,45 +506,7 @@ def entropy_spaced_betas(
 
     assert np.all(Ts_got >= 0.)
 
-    if n_inf_final > 0:
-        Ts_got[n_chain_space - n_inf_final:] = np.inf
-        assert np.all(np.isfinite(Ts_got[:n_chain_space - n_inf_final])) or np.all(betas_in == 0.)
-
-    # TODO add option to do include cold spacing adaptively or not
-    if n_cold > 0:
-        # shift the generated value that is closest to the original cold value
-        # need special handling if the 'cold' temperature is infinity
-        if ~np.isfinite(T_cold):
-            if Ts_got.size > 1:
-                arg_cold = max(Ts_got.size - n_inf_final - 1, 0)
-            else:
-                arg_cold = 0
-            assert arg_cold >= 0
-        else:
-            arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
-        Ts_got[arg_cold] = T_cold
-        if arg_cold != 0:
-            # put cold values first for now
-            Ts_got = np.hstack([Ts_got[arg_cold], Ts_got[:arg_cold], Ts_got[arg_cold + 1:]])
-
-    if n_cold > 1:
-        Ts_got = np.hstack([np.full(n_cold - 1, T_cold), Ts_got])
-
-    assert Ts_got.size == n_chain_need
-
-    betas_got = Ts_to_betas(Ts_got)
-
-    if sort_mode == 0:
-        pass
-    elif sort_mode == 1:
-        idx_sort = np.argsort(Ts_got)
-        Ts_got = Ts_got[idx_sort].copy()
-        betas_got = betas_got[idx_sort].copy()
-    else:
-        msg = f'Unrecognized option sort_mode {sort_mode}'
-        raise ValueError(msg)
-
-    return betas_got, Ts_got
+    return _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode)
 
 
 class EntropyTemperatureLadder(TemperatureLadder):
@@ -521,7 +561,7 @@ class EntropyTemperatureLadder(TemperatureLadder):
             correct_last=correct_last,
             sort_mode=sort_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
 
 
 class LengthTemperatureLadder(TemperatureLadder):
@@ -532,6 +572,15 @@ class LengthTemperatureLadder(TemperatureLadder):
     (thermodynamic length) rule. Same inputs and conventions as
     EntropyTemperatureLadder, deliberately, so ladder-family comparisons
     are apples-to-apples.
+
+    Unlike the entropy integrand (whose beta^1 factor suppresses the
+    hot end), sqrt(Var) is nonzero at beta = 0: if the inputs include an
+    infinite-temperature entry, its statistics contribute finite length
+    to the (0, beta_min] segment and rungs legitimately place hotter
+    than the hottest finite input. Exclude infinite-temperature rows
+    from the inputs (e.g. via filter_ladder_inputs, as the harness's
+    file-driven paths do) when the prior rung should not influence the
+    spacing.
     """
 
     def __init__(
@@ -561,7 +610,7 @@ class LengthTemperatureLadder(TemperatureLadder):
             p=0.5,
             q=0.,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
 
 
 def standardize_input_stats(betas_in: NDArray[np.floating], logL_means_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
@@ -575,24 +624,8 @@ def standardize_input_stats(betas_in: NDArray[np.floating], logL_means_in: NDArr
     assert len(betas_in.shape) == 1
     assert betas_in.shape == logL_means_in.shape
     assert betas_in.shape == logL_vars_in.shape
-
-    betas_use = np.unique(betas_in)[::-1]
-    betas_use = betas_use[np.isfinite(betas_use)]
-
-    logL_means_use = np.zeros(betas_use.size)
-    logL_vars_use = np.zeros(betas_use.size)
-    for itrf in range(betas_use.size):
-        logL_means_use[itrf] = np.mean(logL_means_in[betas_use[itrf] == betas_in])
-        logL_vars_use[itrf] = np.mean(logL_vars_in[betas_use[itrf] == betas_in])
-
-    finite_mask = np.isfinite(logL_means_use) & np.isfinite(logL_vars_use)
-    if np.any(~finite_mask):
-        warn('Nonfinite logL statistics requested, results may not be meaningful', stacklevel=2)
-        betas_use = betas_use[finite_mask]
-        logL_means_use = logL_means_use[finite_mask]
-        logL_vars_use = logL_vars_use[finite_mask]
-
-    return betas_use, logL_means_use, logL_vars_use
+    betas_use, stats_use = _standardize_stats_core(betas_in, [logL_means_in, logL_vars_in], 'Nonfinite logL statistics requested, results may not be meaningful')
+    return betas_use, stats_use[0], stats_use[1]
 
 
 def predicted_swap_acceptance(beta1: float, beta2: float, mean1: float, mean2: float, var1: float, var2: float) -> float:
@@ -602,14 +635,26 @@ def predicted_swap_acceptance(beta1: float, beta2: float, mean1: float, mean2: f
     with Gaussian logL marginals it has mean m = -(beta1-beta2)*(mean1-mean2)
     and variance s^2 = (beta1-beta2)^2*(var1+var2), giving
     E[min(1, e^r)] = Phi(m/s) + exp(m + s^2/2)*Phi(-(m+s^2)/s),
-    evaluated log-stably. Each term is at most 1, so the exponent of the
-    second term is clamped at 0 against roundoff.
+    evaluated log-stably. For large z = m/s + s the exact expression
+    suffers catastrophic cancellation (s^2/2 and log_ndtr(-z) are equal
+    huge magnitudes: at s ~ 1e9 both round to +-1e18 and their float sum
+    is 0, driving the result above 1), so that regime uses the
+    well-conditioned asymptotic exp(m + s^2/2)*Phi(-z) ->
+    exp(-(m/s)^2/2)/(z*sqrt(2*pi)), with relative error O(1/z^2). The
+    result is clamped into [0, 1].
     """
     m: float = -(beta1 - beta2) * (mean1 - mean2)
     s: float = float(np.sqrt((beta1 - beta2)**2 * (var1 + var2)))
     if s < 1.e-150:
         return float(min(1., np.exp(min(m, 0.))))
-    return float(ndtr(m / s) + np.exp(min(m + s * s / 2. + log_ndtr(-(m + s * s) / s), 0.)))
+    u: float = m / s
+    z: float = u + s
+    if z > 30.:
+        second_term: float = float(np.exp(-u * u / 2.) / (z * np.sqrt(2. * np.pi)))
+    else:
+        # z bounded above means m <= s*(30 - s) stays moderate: no cancellation
+        second_term = float(np.exp(min(m + s * s / 2. + log_ndtr(-z), 0.)))
+    return float(min(1., ndtr(u) + second_term))
 
 
 def acceptance_spaced_betas(
@@ -630,8 +675,20 @@ def acceptance_spaced_betas(
     the hot end — each next rung is where the Gaussian closed-form
     acceptance to its predecessor equals the target a* — with an outer
     bisection on a* so exactly the required number of rungs spans the
-    input range. Returns (betas, Ts, achieved a*); cold duplicates and
-    infinite chains are plugged with the entropy-ladder conventions.
+    input range. Returns (betas, Ts, achieved a*).
+
+    Contract (mirrors the entropy ladder's conventions exactly): the
+    equal-acceptance property holds *among the finite spaced rungs*.
+    Infinite rungs are plugged afterwards, outside the spacing contract
+    (as the entropy ladder's inf rungs sit outside its equal-dS
+    contract), so the hottest-finite-to-infinite edge is not constrained
+    to a*. Likewise the rung nearest T_cold is snapped to T_cold, which
+    distorts its adjacent interval when T_cold sits far from the input
+    range — the shared, documented cost of the cold plug (see
+    _plug_cold_and_inf). If the inputs include a beta = 0 (infinite
+    temperature) entry but no infinite output rung is requested, the
+    walk anchors there and the anchor rung is pruned, mirroring the
+    entropy machinery's prune handling.
     """
     if n_cold > n_chain_need:
         msg = 'n cold cannot be more than total number of chains'
@@ -675,6 +732,12 @@ def acceptance_spaced_betas(
     # clamped interpolants keep the acceptance well-defined out there
     beta_upper: float = beta_cold_end * 10. + 1.
 
+    # if the input includes beta = 0 but no infinite output rung is
+    # requested, walk one extra rung anchored at beta = 0 and trim it
+    # afterwards — mirroring the entropy machinery's prune handling
+    needs_prune: bool = n_inf_final == 0 and beta_hot == 0.
+    n_walk: int = n_chain_space + 1 if needs_prune else n_chain_space
+
     def interp_scalar(spline: InterpolatedUnivariateSpline, beta_loc: float) -> float:
         return float(spline(np.asarray([beta_loc]))[0])
 
@@ -686,9 +749,9 @@ def acceptance_spaced_betas(
         )
 
     def walk_positions(a_target: float) -> NDArray[np.floating]:
-        positions = np.zeros(n_chain_space)
+        positions = np.zeros(n_walk)
         positions[0] = beta_hot
-        for itrs in range(1, n_chain_space):
+        for itrs in range(1, n_walk):
             beta_prev = positions[itrs - 1]
             if acceptance_from(beta_prev, beta_upper) >= a_target:
                 # even the largest permitted step stays above target
@@ -716,38 +779,16 @@ def acceptance_spaced_betas(
     positions[-1] = beta_cold_end
     assert np.all(np.diff(positions) > 0.)
 
+    if needs_prune:
+        # trim the beta = 0 anchor rung: no infinite rung was requested
+        assert positions[0] == 0.
+        positions = positions[1:]
+
     # coldest first, mirroring the entropy machinery's conventions
     Ts_got = betas_to_Ts(positions[::-1].copy())
+    assert Ts_got.size == n_chain_space
 
-    if n_inf_final > 0:
-        Ts_got[n_chain_space - n_inf_final:] = np.inf
-
-    if n_cold > 0:
-        if ~np.isfinite(T_cold):
-            arg_cold = max(Ts_got.size - n_inf_final - 1, 0) if Ts_got.size > 1 else 0
-        else:
-            arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
-        Ts_got[arg_cold] = T_cold
-        if arg_cold != 0:
-            Ts_got = np.hstack([Ts_got[arg_cold], Ts_got[:arg_cold], Ts_got[arg_cold + 1:]])
-
-    if n_cold > 1:
-        Ts_got = np.hstack([np.full(n_cold - 1, T_cold), Ts_got])
-
-    assert Ts_got.size == n_chain_need
-
-    betas_got = Ts_to_betas(Ts_got)
-
-    if sort_mode == 0:
-        pass
-    elif sort_mode == 1:
-        idx_sort = np.argsort(Ts_got)
-        Ts_got = Ts_got[idx_sort].copy()
-        betas_got = betas_got[idx_sort].copy()
-    else:
-        msg = f'Unrecognized option sort_mode {sort_mode}'
-        raise ValueError(msg)
-
+    betas_got, Ts_got = _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode)
     return betas_got, Ts_got, a_star
 
 
@@ -789,7 +830,19 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             sort_mode=sort_mode,
         )
         self.achieved_acceptance: float = a_star
-        TemperatureLadder.__init__(self, n_cold, Ts)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+
+
+def filter_ladder_inputs(Ts_in: NDArray[np.floating], *stats_in: NDArray[np.floating], T_min: float = 1.) -> tuple[NDArray[np.floating], ...]:
+    """Apply the from-file input convention: keep only rungs with Ts >= T_min.
+
+    The single source of the Ts >= 1 filter used by every file-driven
+    ladder path (entropy_ladder_fromfile and the harness builders). The
+    ladder classes themselves deliberately do not filter: sub-T=1 inputs
+    are legitimate for cold-edge rungs and annealing anchors.
+    """
+    keep = Ts_in >= T_min
+    return tuple(array[keep].copy() for array in (Ts_in, *stats_in))
 
 
 def entropy_ladder_fromfile(
@@ -818,8 +871,7 @@ def entropy_ladder_fromfile(
     assert Ts_in.size > 0
     assert logL_vars_in.size > 0
 
-    logL_vars_in = logL_vars_in[Ts_in >= 1.].copy()
-    Ts_in = Ts_in[Ts_in >= 1.].copy()
+    Ts_in, logL_vars_in = filter_ladder_inputs(Ts_in, logL_vars_in)
 
     assert np.all(logL_vars_in >= 0.)
     assert np.all(Ts_in >= 0.)
