@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-03
 - **Branch:** `experimental`
-- **Status:** DRAFT — awaiting review before Phase 1 begins
+- **Status:** DRAFT rev 2 (incorporates PR #8 review) — awaiting approval before Phase 1 begins
 - **Doc role:** the contract for phased implementation. Each phase is executed in its own
   session/PR against this document. Items marked **[EXPLORATORY]** fix an interface and a
   success criterion but deliberately leave internals to be iterated against pilot runs;
@@ -45,8 +45,11 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   are wrong. Motivates round-trip time as the architecture-level autocorrelation.
 - **S4** Asymptotic-bias vs `de_size`/`de_thin` (referee-proofing the "asymptotic detailed
   balance with self-inclusive buffer" claim).
-- **S5** Multiple-walkers-per-temperature vs more-temperatures. Zero engine cost (duplicate
-  entries in the `Ts` array are already supported); run only if time permits.
+- **S5** Multiple-walkers-per-temperature vs more-temperatures. Duplicate entries in the
+  `Ts` array already work for proposals and exchanges (equal-T swaps always accept), but
+  cycle tracking treats only slot `-1` as the hot extreme, so the round-trip metric needs
+  hot-*set* semantics (all slots at T_max) plus fixtures — budgeted in the E10 go/no-go,
+  not zero cost. Run only if time permits.
 
 ## 2. Verified starting state (2026-07-03)
 
@@ -98,11 +101,17 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
 - **D1 — Seeding.** A run seed `s` deterministically derives two child seeds:
   `np.random.seed(child_a)` for the Python stream and a new `@njit` helper
   (`DTMCMC/rng_helpers.py::seed_numba(child_b)`) for the numba stream, called once at run
-  start. Both child seeds recorded in the artifact. No other code may reseed mid-run.
+  start. Both child seeds recorded in the artifact. **Nothing may reseed after run start:**
+  the seed helper raises on a second call (an explicit test-only reset exists for the tests
+  that legitimately reseed), and lint bans reseeding APIs outside `rng_helpers.py` (D5).
 - **D2 — Artifacts.** One HDF5 file per run. Root attrs (provenance): git commit hash +
   dirty flag, run-spec dump (full resolved config, INI/TOML text), run seed + child seeds,
   package versions (python, numpy, scipy, numba, h5py), hostname, start/end timestamps,
-  wall-clock seconds, total steps and likelihood-evaluation count. Datasets: temperature
+  wall-clock seconds, iteration/chain-step/likelihood-evaluation counters (§5 glossary;
+  evals are counted where they happen at runtime, never derived from iteration counts via an
+  assumed exchange cadence — the cadence is owned by `ExchangeManager.is_exchange_step` and
+  may change in future A/B tests), and a `finalized` flag (complete vs partial artifact).
+  Datasets: temperature
   ladder(s) (incl. history if adaptive), per-block logL moment arrays, tracker archives
   (accept/exchange/cycle + block indices), round-trip event log, thinned cold-chain samples,
   checkpoint metrics (NN-KL, buffer spectra), and anything a figure needs. Figures are
@@ -112,13 +121,19 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   per-seed differences (§7). (Streams diverge after the first differing accept, so CRN mainly
   buys identical initialization and reduced between-seed variance; still worthwhile.)
 - **D4 — Engine/experiment separation.** Changes inside `DTMCMC/` are minimal and surgical
-  (rng helper, tracker extensions, ladder-family functions). Everything else lives in
+  (rng helper, tracker extensions, ladder-family functions, the Phase 5
+  `apply_ladder_update` hook). Everything else lives in
   `experiments/`. The adaptive controller starts in `experiments/` and is promoted into the
   package only after the paper's needs stabilize.
 - **D5 — RNG-stream discipline.** No engine change may add, remove, or reorder random draws
-  in the sampling path. Metrics are pure observers. Enforced by the bit-exact golden-run
-  test (§8); any intentional re-blessing of the golden output must be justified in the
-  commit message.
+  in the sampling path. Metrics are pure observers. Enforced by (a) the golden-run test
+  (§8) — digest blessed on the CI platform, since numba/libm codegen is not bit-identical
+  across architectures, plus a run-twice-in-job determinism check — and (b) ruff banned-API
+  (TID251) rules against `numpy.random.seed`/`default_rng`/`RandomState` and
+  `numba.prange`/`parallel=True` (per-thread streams), with per-file whitelists:
+  `rng_helpers.py` (seeding), `entropy_process.py` (prange; currently serial under plain
+  `@njit`), and `tests/` (reseeding is the point of the golden/determinism/freeze tests).
+  Any intentional re-blessing of the golden digest must be justified in the commit message.
 - **D6 — Adaptive-ladder semantics.** Ladder updates happen only at block boundaries.
   On update: chain states remap to nearest new temperature; logLs carried over (they are
   T-independent); DE buffer columns are **not reset** — each new temperature inherits the
@@ -151,22 +166,34 @@ New package `experiments/harness/`:
   ConfigParser sections), exchange strategy, `n_chain`, `n_cold`, `block_size`, total steps,
   storage/thinning, seed. Serializable to/from TOML; the resolved spec text is embedded in
   the artifact.
-- `paths.py`: repo-root-anchored resolution for `data/` and config files (fixes CWD
-  fragility without touching engine defaults).
+- `paths.py`: repo-root-anchored resolution for `data/` and config files. Mechanism for
+  engine-internal relative paths (`hawaii_map.hdf5`): the runner chdirs to the repo root at
+  startup (safe under one-process-per-run); the proposal-manager config is read by the
+  harness from a resolved path and passed as an explicit `ConfigParser` (the parameter
+  already exists), not via CWD.
 - `artifact.py`: HDF5 writer/reader implementing D2, with a `validate(path)` function
   (schema + provenance completeness check).
 - `runner.py`: single-run entry point (`python -m experiments.harness.run spec.toml --seed N
-  --out dir/`): builds objects from spec, seeds both streams (D1), advances, writes artifact
-  incrementally (crash-tolerant: partial artifacts are valid up to last flushed block).
+  --out dir/`): builds objects from spec, seeds both streams (D1), advances, flushes the
+  artifact per checkpoint. No crash-tolerance guarantees beyond that — a run that dies is
+  simply rerun (runs cost ≤ ~1 CPU-h); `validate(mode='partial'|'complete')` distinguishes
+  via the `finalized` flag (D2).
 - `batch.py`: expands a sweep file (grid × seeds) into independent single-run invocations
   (one process per run; GNU-parallel/cluster-array friendly manifest output).
-- Engine change: `DTMCMC/rng_helpers.py` (@njit seed helper + child-seed derivation). ~30 lines.
+- Engine change: `DTMCMC/rng_helpers.py` (@njit seed helper + child-seed derivation +
+  once-per-run guard with test-only reset). ~30 lines.
 
 Acceptance criteria:
-1. Tiny Gaussian spec runs end-to-end in <60 s and produces a validating artifact.
-2. Same spec + same seed twice → identical `logLs_store` (bit-exact); different seed → different.
-3. Artifact provenance attrs complete per D2 (checked by `validate`).
-4. Existing tests, lint, typecheck stay green; no diff outside `DTMCMC/rng_helpers.py` in engine.
+1. Tiny Gaussian spec runs end-to-end in <180 s **including JIT compilation** and produces a
+   validating artifact.
+2. Same spec + same seed twice → identical `logLs_store` (bit-exact, same platform);
+   different seed → different; a second seed call within one run raises (D1 guard).
+3. Artifact provenance attrs complete per D2 (`validate(mode='complete')`).
+4. Existing tests, lint, typecheck stay green and their CI jobs cover `experiments/`
+   (packaging continues to exclude it); no engine diff outside `DTMCMC/rng_helpers.py` and
+   the ruff TID251 config.
+5. TID251 behavior confirmed on our ruff version (it must flag attribute usage like
+   `np.random.seed(...)`, not only imports); if it does not, an equivalent prek hook substitutes.
 
 ### Phase 2 — Metrics and trackers
 
@@ -200,13 +227,18 @@ metrics.
 
 Acceptance criteria:
 1. **Golden-run test added first**: short fixed-seed cake run; stored digest of
-   `logLs_store` + final state; bit-exact comparison in CI. All subsequent Phase 2 commits keep it green.
+   `logLs_store` + final state; digest blessed from a CI run (per-platform digests permitted
+   for local dev) plus a run-twice-in-job determinism check. All subsequent Phase 2 commits
+   keep it green.
 2. Cycle/round-trip logic unit-tested on synthetic `chain_track` sequences with hand-computed
-   answers (incl. n_cold>1 and duplicate-temperature cases).
-3. Gaussian invariants test: Var(logL) ≈ n_par/2 at every T within tolerance; entropy ladder
-   built from measured vars ≈ geometric ladder.
+   answers (incl. n_cold>1 and duplicate-temperature cases — the S5/E10 prerequisite).
+3. Gaussian invariants test: heat capacity C(T) = β²·Var(logL) ≈ n_par/2 at every tested T
+   within tolerance (Var(logL) itself grows as n_par·T²/2), with the prior cutoff chosen so
+   truncation is negligible over the tested range (cutoff/√T ≥ 4); entropy ladder built from
+   measured vars ≈ geometric ladder.
 4. Reference samplers validated (moments + NN-KL(self) ≈ 0 within estimator noise).
-5. Throughput regression <5% vs Phase 1 (metrics must be cheap).
+5. Throughput regression <5% vs Phase 1, measured locally on a fixed benchmark spec
+   (best-of-3); CI timing is not used for this criterion.
 
 ### Phase 3 — Ladder family
 
@@ -253,7 +285,14 @@ Purpose: fix every number the production battery needs. Deliverable:
 
 ### Phase 5 — Adaptive burn-in controller **[EXPLORATORY internals, fixed interface]**
 
-`experiments/adaptive.py`: wrapper (or subclass) around `DTMCMCSampler`:
+`experiments/adaptive.py`: controller around `DTMCMCSampler`, mutating engine state only
+through one new engine hook `DTMCMCSampler.apply_ladder_update(new_ladder, remap_rule)`
+(~30 lines, RNG-neutral, golden-guarded). The hook rebinds the ladder **and the
+`betas`/`Ts` aliases** (`self.betas = self.T_ladder.betas` at `dtmcmc_sampler.py:180` makes
+external ladder swaps a stale-alias footgun), remaps chain states/logLs and DE-buffer
+columns per D6, and segments trackers: archive-flush, then reset `cycle_tracker` to its
+initialized state (in-flight extreme-visit records refer to the old ladder and must not
+straddle an update).
 
 - Interface (fixed): `AdaptiveLadderController(mode='entropy'|'length'|'acceptance',
   update_every_blocks, forgetting, freeze_criterion, T_min_factor)` with
@@ -266,8 +305,9 @@ Purpose: fix every number the production battery needs. Deliverable:
 - Ladder history (every update: Ts, trigger stats, block index) recorded in the artifact.
 
 Acceptance criteria:
-1. Post-freeze equivalence: a frozen adaptive sampler and a fixed-ladder sampler initialized
-   with the frozen state produce statistically indistinguishable output (and share the code path).
+1. Post-freeze equivalence is **bit-exact**: copy the frozen sampler's full state (samples,
+   logLs, DE buffer, trackers) into a fresh fixed-ladder sampler, reseed both streams
+   identically (test-only reset), advance one block, require identical output.
 2. On cake 5D, the adaptive entropy ladder converges to within tolerance of the gold ladder
    (interpolated ΔS profile comparison), without human input.
 3. Golden test still green (adaptive code must not touch fixed-ladder paths).
@@ -280,30 +320,38 @@ Acceptance criteria:
 
 ## 5. Experiment registry
 
-Compute estimates use measured throughput (§2), scale ∝ n_chain, single-core runs,
-embarrassingly parallel. Seed counts marked * are placeholders finalized in Phase 4.
+Units glossary: an **iteration** advances all chains by one step (regular or exchange); a
+**chain-step** = iteration × `n_chain`; **likelihood evaluations** are counted at runtime
+(exchange iterations evaluate none, so evals < chain-steps; the ratio is owned by
+`ExchangeManager.is_exchange_step` and is never hard-coded into analysis — proposal/exchange
+cadence is itself a legitimate future A/B variable). Compute estimates use measured
+throughput (§2), scale ∝ n_chain, single-core runs, embarrassingly parallel. Seed counts
+marked * are placeholders finalized in Phase 4.
 
 | ID | Claim | Design | Est. CPU-h |
 |----|-------|--------|-----------|
-| E1 | C1 | cake 5D; arms = {geometric-default, geometric-tuned, length, acceptance, entropy}; n_chain ∈ {8,12,16,24,32,48}; 5×10⁶ steps; 20* paired seeds | ~60 |
+| E1 | C1 | cake 5D; arms = {geometric-default, geometric-tuned, length, acceptance, entropy}; n_chain ∈ {8,12,16,24,32,48}; 5×10⁶ iterations; 20* paired seeds | ~60 |
 | E2 | C2 | E1 runs reanalyzed + same sweep on cake 8D, eggbox 5D, Gaussian {5,20}D (entropy + geometric arms only) | ~120 |
-| E3 | C3 | arms = {adaptive-entropy, adaptive-acceptance, pilot+fixed-entropy (pilot evals charged), fixed-geometric ×2}; cake 5D + eggbox; ~2×10⁶ steps; 20* paired seeds | ~15 |
+| E3 | C3 | arms = {adaptive-entropy, adaptive-acceptance, pilot+fixed-entropy (pilot evals charged), fixed-geometric ×2}; cake 5D + eggbox; ~2×10⁶ iterations; 20* paired seeds | ~15 |
 | E4 | C4 | per-(T, jump-type) expected squared displacement + acceptance overlaid on C(T); cake 5D/8D + eggbox; entropy ladder at 2–3 chain densities; 10* seeds | ~15 |
 | E5 | C4 | mixture ablations {full, no-DE, DE-only, no-prior} at fixed budget; plus rank-deficient-buffer collapse/recovery on Gaussian (DE-only + ε-Fisher, recovery time vs ε); buffer spectra + NN-KL checkpoints | ~25 |
 | E6 | S1 | Gaussian n_par ∈ {2,8,32,64}: measured ⟨logL⟩(T), Var(logL)(T) vs analytic; NN-entropy offset; DE-heavy vs balanced mixtures | ~15 |
 | E7 | S2 | exchange strategies × {entropy ladder, geometric}; cake 5D; round-trip + edge-effect metrics; 10* seeds | ~15 |
 | E8 | S4 | bias vs de_size ∈ {10³,10⁴,10⁵,6×10⁵} × de_thin on Gaussian/cake; NN-KL + moment errors | ~15 |
-| E9 | support | gold references: long cake 5D/8D runs (~5×10⁷ steps, few seeds) for ladder inputs + high-precision evidence; exact-sampler references for Gaussian/eggbox/cake | ~10 |
-| E10 | S5 | duplicate-temperature arms (deferred; decision in Phase 4) | ~15 |
+| E9 | support | gold references: long cake 5D/8D runs (~5×10⁷ iterations, few seeds) for ladder inputs + high-precision evidence; exact-sampler references for Gaussian/eggbox/cake | ~10 |
+| E10 | S5 | duplicate-temperature arms (requires hot-set cycle semantics per S5; deferred; decision in Phase 4) | ~15 |
 
 Worst-case total ≈ **300 CPU-h** — a weekend on a 16-core workstation, or trivial as a
 cluster array job. E1/E2 dominate and parallelize perfectly.
 
 ## 6. Primary metrics
 
-- **C1/C2:** round trips per walker per 10⁶ chain-steps (from the Phase 2 event log).
-  Secondary: min link swap acceptance, n_eff per likelihood eval, radial-CDF error (cake),
-  mode-occupancy χ² and time-to-all-modes (eggbox), evidence error vs E9 reference, NN-KL.
+- **C1 (co-primary):** round trips per walker per 10⁶ chain-steps (Phase 2 event log) **and**
+  n_eff per likelihood evaluation; superiority claimed only where both hold (conjunction
+  rule, §7).
+- **C2:** round trips per walker per 10⁶ chain-steps.
+  Secondary for both: min link swap acceptance, radial-CDF error (cake), mode-occupancy χ²
+  and time-to-all-modes (eggbox), evidence error vs E9 reference, NN-KL.
 - **C3:** likelihood evaluations to reach (a) first completed round trip, (b) ladder ΔS
   profile within ε of gold, (c) NN-KL below threshold. Thresholds frozen in Phase 4.
 - **C4:** ratio of DE to Fisher expected squared displacement as a function of |T − T_c|;
@@ -315,8 +363,10 @@ For each claim: paired per-seed differences of the primary metric between the na
 each sweep point; report the median paired difference with bootstrap 95% CI (10⁴ resamples)
 and a Wilcoxon signed-rank test as robustness check. Superiority is claimed only where the
 CI excludes zero, and claimed *as a regime statement* over the sweep region where it holds
-(e.g., "for ΔS/link < X"). Primary claims are tested on primary metrics only; all secondary
-metrics are reported as exploratory. Curve-collapse (C2) is quantified by comparing
+(e.g., "for ΔS/link < X"). C1's two co-primaries use a conjunction rule: full superiority is
+claimed only where both paired CIs exclude zero (conservative under multiplicity; each
+metric is also reported separately). Primary claims are tested on primary metrics only; all
+secondary metrics are reported as exploratory. Curve-collapse (C2) is quantified by comparing
 between-likelihood dispersion of knee locations under ΔS/link vs raw n_chain axes.
 
 ## 8. Reviewability contract
@@ -326,8 +376,9 @@ between-likelihood dispersion of knee locations under ΔS/link vs raw n_chain ax
 2. **Golden-run test** (from Phase 2 on): fixed-seed short run, bit-exact digest of
    `logLs_store` + final state, in CI. Re-blessing requires explicit justification.
 3. **RNG discipline** (D5): metrics/trackers are observers; no draws added/removed/reordered.
-4. Physics-invariant tests: Gaussian Var(logL)=n_par/2; ladder coincidence on constant-C
-   inputs; acceptance predictor vs brute force; synthetic cycle-count fixtures.
+4. Physics-invariant tests: Gaussian heat capacity C(T)=β²·Var(logL)=n_par/2; ladder
+   coincidence on constant-C inputs; acceptance predictor vs brute force; synthetic
+   cycle-count fixtures.
 5. Artifact-first figures (D7); artifacts carry full provenance (D2).
 6. Pre-registration (D8): §6–7 frozen before Phase 6.
 
@@ -348,5 +399,6 @@ between-likelihood dispersion of knee locations under ΔS/link vs raw n_chain ax
 ## 10. Questions deferred to pilots (Phase 4)
 
 Forgetting factor and update cadence; freeze criterion; DE-buffer remap A/B; knee estimator;
-final seed counts and run lengths; feedback-ladder arm go/no-go; NN-KL snapshot size; E10
-go/no-go; whether S2 cold-edge (T<1 rungs) merits promotion into E1 arms.
+final seed counts and run lengths; E1's geometric-tuned arm definition (T_max/spacing
+hand-tuned in Phase 4, documented in the pilot report); feedback-ladder arm go/no-go; NN-KL
+snapshot size; E10 go/no-go; whether S2 cold-edge (T<1 rungs) merits promotion into E1 arms.
