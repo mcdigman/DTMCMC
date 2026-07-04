@@ -32,6 +32,7 @@ from .paths import repo_root
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from experiments.adaptive import LadderUpdateRecord
 
     from .spec import RunSpec
 
@@ -190,6 +191,7 @@ def write_artifact(
     finalized: bool,
     wall_seconds: float,
     checkpoints: CheckpointLog | None = None,
+    ladder_history: list[LadderUpdateRecord] | None = None,
 ) -> None:
     """Write the full run artifact, atomically replacing any previous flush."""
     tracker = sampler.tracker_manager
@@ -217,6 +219,16 @@ def write_artifact(
         ladder_grp.attrs['n_cold'] = sampler.n_cold
         ladder_grp.create_dataset('Ts', data=sampler.Ts)
         ladder_grp.create_dataset('betas', data=sampler.betas)
+
+        if ladder_history is not None and len(ladder_history) > 0:
+            # adaptive runs: one row per ladder update (plan D2/Phase 5)
+            history_grp = ladder_grp.create_group('history')
+            history_grp.attrs['frozen'] = ladder_history[-1].frozen_after
+            history_grp.create_dataset('Ts', data=np.asarray([record.Ts for record in ladder_history]))
+            history_grp.create_dataset('block_index', data=np.asarray([record.block_index for record in ladder_history], dtype=np.int64))
+            history_grp.create_dataset('t_cold_window', data=np.asarray([record.t_cold_window for record in ladder_history]))
+            history_grp.create_dataset('max_dlog_t', data=np.asarray([record.max_dlog_t for record in ladder_history]))
+            history_grp.create_dataset('n_pool_points', data=np.asarray([record.n_pool_points for record in ladder_history], dtype=np.int64))
 
         moments_grp = hf.create_group('moments')
         moments_grp.create_dataset('logL_means', data=_stack_blocks(sampler.logL_means, n_chain))

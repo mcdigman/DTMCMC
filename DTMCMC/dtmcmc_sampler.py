@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numba import njit
 
+from DTMCMC.de_manager import DEJumpManager
+from DTMCMC.fisher_manager import FisherJumpManager, set_scales
 from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
+from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
 
 if TYPE_CHECKING:
@@ -378,6 +381,45 @@ class DTMCMCSampler:
         self.block_main()
         self.block_end()
         self.block_advance_iterators()
+
+    def apply_ladder_update(self, new_ladder: TemperatureLadder, remap_rule: str = 'at_or_hotter') -> None:
+        """Swap the temperature ladder at a block boundary (plan D6).
+
+        RNG-neutral: pure deterministic state remapping, no draws. The
+        hook rebinds the ladder AND the betas/Ts aliases (the __init__
+        aliases make external ladder swaps a stale-alias footgun) plus
+        every jump manager's ladder reference, remaps chain states to the
+        nearest new temperature (logLs carry over: they are
+        T-independent), remaps DE-buffer columns per remap_rule (default
+        at-or-hotter per D6), refreshes the temperature-dependent Fisher
+        scales from the existing diagonals (matrices themselves may stay
+        stale by up to fisher_downsample blocks, per D6), and segments
+        the trackers. Walker identities restart with the new segment,
+        matching the cycle-tracker reset.
+        """
+        assert new_ladder.n_chain == self.n_chain
+        assert new_ladder.n_cold == self.n_cold
+
+        self.tracker_manager.segment_for_ladder_update(self.itrn)
+
+        state_sources = remap_ladder_indices(self.Ts, new_ladder.Ts, 'nearest')
+        self.samples[0] = self.samples[0][state_sources]
+        self.logLs[0] = self.logLs[0][state_sources]
+        self.chain_track[0] = np.arange(0, self.n_chain)
+
+        buffer_sources = remap_ladder_indices(self.Ts, new_ladder.Ts, remap_rule)
+        for manager in self.proposal_manager.managers:
+            if isinstance(manager, DEJumpManager):
+                manager.de_buffer[:, :, :] = manager.de_buffer[:, buffer_sources, :]
+
+        self.T_ladder = new_ladder
+        self.betas = new_ladder.betas
+        self.Ts = new_ladder.Ts
+        self.proposal_manager.T_ladder = new_ladder
+        for manager in self.proposal_manager.managers:
+            manager.T_ladder = new_ladder
+            if isinstance(manager, FisherJumpManager):
+                manager.sigma_scales, manager.gamma_mults = set_scales(self.n_par, new_ladder, manager.sigma_diags)
 
     def preblock_operations(self) -> None:
         """Any operations to be done before each block even starts, like resetting acceptance rate trackers at the end of burn in"""

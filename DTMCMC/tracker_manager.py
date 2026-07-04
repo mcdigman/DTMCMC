@@ -162,6 +162,27 @@ class TrackerManager:
         self.flow_up_archive.append(flow_up_count)
         self.flow_labeled_archive.append(flow_labeled_count)
 
+    def segment_for_ladder_update(self, itrn: int) -> None:
+        """Archive tracker state and reset cycle tracking at a ladder update.
+
+        Counts must not straddle a ladder change (plan D6): the current
+        tracker snapshots are archived with the update iteration, then
+        the cycle tracker returns to its initialized state — in-flight
+        extreme-visit records refer to the old ladder. Cumulative
+        accept/exchange/ESD records stay cumulative; segmentation for
+        them is recovered by differencing archive entries.
+        """
+        self.cycle_archive.append(self.cycle_tracker.copy())
+        self.accept_archive.append(self.accept_record.copy())
+        self.exchange_archive.append(self.exchange_tracker.copy())
+        self.esd_archive.append(self.esd_record.copy())
+        self.esd_exchange_archive.append(self.esd_exchange.copy())
+        self.itrn_archive.append(itrn)
+
+        self.cycle_tracker[:] = 0
+        self.cycle_tracker[0][self.n_cold:] = -1
+        self.cycle_tracker[1][:self.n_chain - 1] = -1
+
     def get_rt_events(self) -> NDArray[np.int64]:
         """Get the full round-trip event log as an (n_events, 3) array."""
         if len(self.rt_event_log) == 0:

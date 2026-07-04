@@ -833,6 +833,36 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
         TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
 
 
+def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:
+    """Old-ladder source index feeding each new-ladder slot on a ladder update.
+
+    The D6 remap semantics, engine-owned so the apply_ladder_update hook
+    and the adaptive controller share one definition:
+
+    - 'nearest': nearest old temperature in log T (used for chain states).
+    - 'at_or_hotter': the coolest old temperature at-or-hotter than the
+      new one, falling back to the hottest old rung (the D6 DE-buffer
+      default: DE recovers much faster from overdispersion than
+      underdispersion, confirmed by the Phase 4 remap A/B pilot).
+
+    Infinite temperatures are clipped to 1e300 for the log comparison.
+    """
+    sources = np.zeros(Ts_new.size, dtype=np.int64)
+    Ts_old_clip = np.minimum(Ts_old, 1.e300)
+    log_old = np.log(Ts_old_clip)
+    for itrt in range(Ts_new.size):
+        T_new_clip = min(Ts_new[itrt], 1.e300)
+        if remap_rule == 'at_or_hotter':
+            hotter = np.flatnonzero(Ts_old_clip >= T_new_clip)
+            sources[itrt] = int(hotter[np.argmin(Ts_old_clip[hotter])]) if hotter.size else int(np.argmax(Ts_old_clip))
+        elif remap_rule == 'nearest':
+            sources[itrt] = int(np.argmin(np.abs(log_old - np.log(T_new_clip))))
+        else:
+            msg = f'unknown remap rule {remap_rule!r}'
+            raise ValueError(msg)
+    return sources
+
+
 def filter_ladder_inputs(Ts_in: NDArray[np.floating], *stats_in: NDArray[np.floating], T_min: float = 1.) -> tuple[NDArray[np.floating], ...]:
     """Apply the from-file input convention: keep only rungs with Ts >= T_min.
 

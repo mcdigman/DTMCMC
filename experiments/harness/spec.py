@@ -52,6 +52,10 @@ PROPOSAL_SECTIONS: frozenset[str] = frozenset({
     'LadderHistoryJumpManager',
 })
 
+# adaptive controller modes; a test pins this to experiments.adaptive's
+# ADAPTIVE_MODES (spec stays a pure-data layer, so no runtime import)
+ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
+
 _BARE_KEY_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
 
@@ -236,6 +240,7 @@ class RunSpec:
     exchange_strategy: str = 'sequential'
     track_full_exchanges: bool = False
     proposal_overrides: dict[str, dict[str, TomlValue]] = field(default_factory=dict)
+    adaptive: dict[str, TomlValue] | None = None
 
     def __post_init__(self) -> None:
         """Validate cross-field constraints."""
@@ -297,6 +302,14 @@ class RunSpec:
             for key, value in entries.items():
                 _check_toml_value(value, f'proposals.{section}.{key}')
 
+        if self.adaptive is not None:
+            adaptive_mode = self.adaptive.get('mode')
+            if adaptive_mode not in ADAPTIVE_MODES:
+                msg = f'unknown adaptive mode {adaptive_mode!r}; known: {sorted(ADAPTIVE_MODES)}'
+                raise SpecError(msg)
+            for key, value in self.adaptive.items():
+                _check_toml_value(value, f'adaptive.{key}')
+
     @property
     def n_chain(self) -> int:
         """Total number of chains, from the ladder table."""
@@ -354,6 +367,14 @@ class RunSpec:
                 raise SpecError(msg)
             proposal_overrides[section] = {key: _check_toml_value(value, f'proposals.{section}.{key}') for key, value in entries.items()}
 
+        adaptive_raw = data.get('adaptive')
+        adaptive: dict[str, TomlValue] | None = None
+        if adaptive_raw is not None:
+            if not isinstance(adaptive_raw, dict):
+                msg = '[adaptive] must be a table'
+                raise SpecError(msg)
+            adaptive = {key: _check_toml_value(value, f'adaptive.{key}') for key, value in adaptive_raw.items()}
+
         return cls(
             name=_require_str(data, 'name', 'spec'),
             seed=_require_int(data, 'seed', 'spec'),
@@ -368,6 +389,7 @@ class RunSpec:
             exchange_strategy=_require_str(exchange, 'strategy', 'exchange') if 'strategy' in exchange else 'sequential',
             track_full_exchanges=_opt_bool(exchange, 'track_full_exchanges', 'exchange', False),
             proposal_overrides=proposal_overrides,
+            adaptive=adaptive,
         )
 
     @classmethod
@@ -379,7 +401,7 @@ class RunSpec:
 
     def to_dict(self) -> dict[str, object]:
         """Get the nested-dict (TOML-shaped) form of this spec."""
-        return {
+        data: dict[str, object] = {
             'name': self.name,
             'seed': self.seed,
             'likelihood': {'name': self.likelihood_name, **self.likelihood_params},
@@ -397,6 +419,9 @@ class RunSpec:
             },
             'proposals': {section: dict(entries) for section, entries in self.proposal_overrides.items()},
         }
+        if self.adaptive is not None:
+            data['adaptive'] = dict(self.adaptive)
+        return data
 
     def to_toml_text(self) -> str:
         """Serialize the fully resolved spec as TOML text (artifact embedding)."""

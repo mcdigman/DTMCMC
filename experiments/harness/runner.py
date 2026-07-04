@@ -38,6 +38,7 @@ from DTMCMC.temperature_ladder_helpers import (
     entropy_ladder_fromfile,
     filter_ladder_inputs,
 )
+from experiments.adaptive import AdaptiveLadderController
 from experiments.metrics import de_buffer_difference_spectrum
 
 from .artifact import CheckpointLog, RunProvenance, collect_provenance, write_artifact
@@ -260,16 +261,25 @@ def build_ladder(spec: RunSpec) -> TemperatureLadder:
     return builder(spec)
 
 
-def build_sampler(spec: RunSpec, config: configparser.ConfigParser | None = None) -> tuple[DTMCMCSampler, CountingLikelihood]:
+def build_sampler(
+    spec: RunSpec,
+    config: configparser.ConfigParser | None = None,
+    like_obj: CountingLikelihood | None = None,
+    T_ladder: TemperatureLadder | None = None,
+) -> tuple[DTMCMCSampler, CountingLikelihood]:
     """Build the sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
     starting samples, DE-buffer fills, and Fisher initialization all draw
     from the run streams. Pass the config explicitly to share one instance
-    between the sampler and the artifact provenance (run_from_spec does).
+    between the sampler and the artifact provenance (run_from_spec does);
+    pass like_obj/T_ladder to override the spec-built ones (the adaptive
+    path supplies its prior-anchored initial ladder).
     """
-    like_obj = CountingLikelihood(build_likelihood(spec))
-    T_ladder = build_ladder(spec)
+    if like_obj is None:
+        like_obj = CountingLikelihood(build_likelihood(spec))
+    if T_ladder is None:
+        T_ladder = build_ladder(spec)
     if config is None:
         config = spec.build_proposal_config()
 
@@ -302,6 +312,18 @@ def build_sampler(spec: RunSpec, config: configparser.ConfigParser | None = None
     return sampler, like_obj
 
 
+def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderController:
+    """Construct the adaptive controller from a spec [adaptive] table."""
+    return AdaptiveLadderController(
+        mode=str(adaptive_table['mode']),
+        update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
+        forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
+        freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
+        T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
+        n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
+    )
+
+
 def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None) -> Path:
     """Execute one run end to end and return the artifact path.
 
@@ -324,7 +346,17 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
         spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config),
     )
 
-    sampler, like_obj = build_sampler(spec, config=config)
+    controller = None
+    like_obj: CountingLikelihood | None = None
+    initial_ladder: TemperatureLadder | None = None
+    if spec.adaptive is not None:
+        controller = build_adaptive_controller(spec.adaptive)
+        like_obj = CountingLikelihood(build_likelihood(spec))
+        # prior-draw anchoring consumes run-stream draws and counted evals,
+        # deliberately: adaptive burn-in is charged in full (plan C3)
+        initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+
+    sampler, like_obj = build_sampler(spec, config=config, like_obj=like_obj, T_ladder=initial_ladder)
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -344,17 +376,21 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
 
     for itr_block in range(spec.n_blocks):
         sampler.advance_block()
+        if controller is not None:
+            controller.post_block(sampler)
         blocks_done = itr_block + 1
         if blocks_done % spec.checkpoint_every_blocks == 0 and blocks_done < spec.n_blocks:
             record_checkpoint_metrics()
             write_artifact(
                 artifact_path, spec, sampler, like_obj.n_evals, provenance,
                 finalized=False, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
+                ladder_history=controller.history if controller is not None else None,
             )
 
     record_checkpoint_metrics()
     write_artifact(
         artifact_path, spec, sampler, like_obj.n_evals, provenance,
         finalized=True, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
+        ladder_history=controller.history if controller is not None else None,
     )
     return artifact_path
