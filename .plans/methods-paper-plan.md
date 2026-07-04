@@ -2,7 +2,7 @@
 
 - **Date:** 2026-07-03
 - **Branch:** `experimental`
-- **Status:** DRAFT rev 2 (incorporates PR #8 review) — awaiting approval before Phase 1 begins
+- **Status:** DRAFT rev 3 (incorporates PR #8 review rounds 1–2) — awaiting approval before Phase 1 begins
 - **Doc role:** the contract for phased implementation. Each phase is executed in its own
   session/PR against this document. Items marked **[EXPLORATORY]** fix an interface and a
   success criterion but deliberately leave internals to be iterated against pilot runs;
@@ -130,10 +130,14 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   (§8) — digest blessed on the CI platform, since numba/libm codegen is not bit-identical
   across architectures, plus a run-twice-in-job determinism check — and (b) ruff banned-API
   (TID251) rules against `numpy.random.seed`/`default_rng`/`RandomState` and
-  `numba.prange`/`parallel=True` (per-thread streams), with per-file whitelists:
-  `rng_helpers.py` (seeding), `entropy_process.py` (prange; currently serial under plain
-  `@njit`), and `tests/` (reseeding is the point of the golden/determinism/freeze tests).
-  Any intentional re-blessing of the golden digest must be justified in the commit message.
+  `numba.prange`, plus a prek grep hook for `parallel=True` (a decorator kwarg, not an API
+  path, so TID251 cannot match it) — both guarding per-thread streams — with per-file
+  whitelists: `rng_helpers.py` (seeding), `entropy_process.py` (prange; currently serial
+  under plain `@njit`), and `tests/` (reseeding is the point of the golden/determinism/freeze
+  tests). Analysis code (e.g., §7 bootstrap) obtains Generators via
+  `rng_helpers.get_rng(seed)` with the seed recorded in analysis outputs — reproducible
+  analysis, no new whitelist. Any intentional re-blessing of the golden digest must be
+  justified in the commit message.
 - **D6 — Adaptive-ladder semantics.** Ladder updates happen only at block boundaries.
   On update: chain states remap to nearest new temperature; logLs carried over (they are
   T-independent); DE buffer columns are **not reset** — each new temperature inherits the
@@ -177,7 +181,10 @@ New package `experiments/harness/`:
   --out dir/`): builds objects from spec, seeds both streams (D1), advances, flushes the
   artifact per checkpoint. No crash-tolerance guarantees beyond that — a run that dies is
   simply rerun (runs cost ≤ ~1 CPU-h); `validate(mode='partial'|'complete')` distinguishes
-  via the `finalized` flag (D2).
+  via the `finalized` flag (D2). The likelihood object is wrapped in a counting proxy, so
+  every `get_loglike` call — initialization, proposals, Fisher refreshes, history jumps
+  (which evaluate inside proposal generation, so a history proposal costs two evals) —
+  increments the artifact eval counter by construction rather than by enumerating call sites.
 - `batch.py`: expands a sweep file (grid × seeds) into independent single-run invocations
   (one process per run; GNU-parallel/cluster-array friendly manifest output).
 - Engine change: `DTMCMC/rng_helpers.py` (@njit seed helper + child-seed derivation +
@@ -194,6 +201,9 @@ Acceptance criteria:
    the ruff TID251 config.
 5. TID251 behavior confirmed on our ruff version (it must flag attribute usage like
    `np.random.seed(...)`, not only imports); if it does not, an equivalent prek hook substitutes.
+6. Counting-proxy test: the artifact eval counter equals the proxy count on a run exercising
+   initialization, exchange and non-exchange iterations, and a Fisher refresh (history jumps
+   added to the fixture if/when enabled).
 
 ### Phase 2 — Metrics and trackers
 
@@ -288,7 +298,7 @@ Purpose: fix every number the production battery needs. Deliverable:
 `experiments/adaptive.py`: controller around `DTMCMCSampler`, mutating engine state only
 through one new engine hook `DTMCMCSampler.apply_ladder_update(new_ladder, remap_rule)`
 (~30 lines, RNG-neutral, golden-guarded). The hook rebinds the ladder **and the
-`betas`/`Ts` aliases** (`self.betas = self.T_ladder.betas` at `dtmcmc_sampler.py:180` makes
+`betas`/`Ts` aliases** (`self.betas = self.T_ladder.betas` in `DTMCMCSampler.__init__` makes
 external ladder swaps a stale-alias footgun), remaps chain states/logLs and DE-buffer
 columns per D6, and segments trackers: archive-flush, then reset `cycle_tracker` to its
 initialized state (in-flight extreme-visit records refer to the old ladder and must not
@@ -306,8 +316,11 @@ straddle an update).
 
 Acceptance criteria:
 1. Post-freeze equivalence is **bit-exact**: copy the frozen sampler's full state (samples,
-   logLs, DE buffer, trackers) into a fresh fixed-ladder sampler, reseed both streams
-   identically (test-only reset), advance one block, require identical output.
+   logLs, DE buffer, trackers, and proposal-manager state incl. Fisher matrices/scales and
+   jump weights — Fisher state can be stale by up to `fisher_downsample` blocks, so
+   recomputing it from the copied samples would not match) into a fresh fixed-ladder
+   sampler, reseed both streams identically (test-only reset), advance one block, require
+   identical output.
 2. On cake 5D, the adaptive entropy ladder converges to within tolerance of the gold ladder
    (interpolated ΔS profile comparison), without human input.
 3. Golden test still green (adaptive code must not touch fixed-ladder paths).
@@ -348,7 +361,12 @@ cluster array job. E1/E2 dominate and parallelize perfectly.
 
 - **C1 (co-primary):** round trips per walker per 10⁶ chain-steps (Phase 2 event log) **and**
   n_eff per likelihood evaluation; superiority claimed only where both hold (conjunction
-  rule, §7).
+  rule, §7). The n_eff estimator is frozen as the scramble-block empirical estimator
+  (`n_eff_preds_empirical`: variance ratio of scrambled to sequential block means), computed
+  per parameter on the cold chains, aggregated by minimum over parameters, evaluated per run
+  (so §7 pairing applies); spectral/autocorrelation estimators are diagnostics only (S3).
+  The burn-in fraction is a Phase 4 calibration constant, fixed before production and
+  identical across arms.
 - **C2:** round trips per walker per 10⁶ chain-steps.
   Secondary for both: min link swap acceptance, radial-CDF error (cake), mode-occupancy χ²
   and time-to-all-modes (eggbox), evidence error vs E9 reference, NN-KL.
