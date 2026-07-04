@@ -1,47 +1,45 @@
 #!/usr/bin/env python3
-"""Tokenize-based guard for an "add type annotations" refactor.
+"""Tokenize + AST guard for an "add type annotations" refactor.
 
-This is the enforcement engine behind ``type_annotation_diff_guard.sh``. It
-compares the OLD (base ref) and NEW (working tree) version of every changed
-``.py`` file at the Python *token* level and fails unless every difference is
-an allowed addition:
+Enforcement engine behind ``type_annotation_diff_guard.sh``. It compares the
+OLD (base ref) and NEW (working tree) version of every changed ``.py`` file and
+fails unless every difference is an allowed addition:
 
     1. A type annotation added to a parameter, return, or variable
        (``x`` -> ``x: T``,  ``)`` -> ``) -> T``,  ``v =`` -> ``v: T =``)
-    2. A newly created ``if TYPE_CHECKING:`` block header
+    2. A newly created ``if TYPE_CHECKING:`` block whose body is imports only
     3. A newly added ``import`` / ``from ... import`` statement
 
-Everything else -- a renamed identifier, an edited comment or docstring, a
-mutated string literal, a new statement, a suppression comment, reordered
-imports, a deleted line -- is a violation.
+Everything else -- a renamed identifier, an edited comment/docstring/string, a
+new statement, a suppression comment, reordered/deleted imports, a deleted
+line, or *re-indenting existing code under a new block* -- is a violation.
 
-Why tokenize instead of regex-over-word-diff
----------------------------------------------
-Adding annotations/imports only ever *inserts* tokens; it never removes or
-rewrites an existing token. Therefore the OLD token stream must be an ordered
-subsequence of the NEW token stream. Running ``difflib.SequenceMatcher`` over
-the two streams then yields ONLY ``equal`` and ``insert`` opcodes for a valid
-refactor: any ``delete`` or ``replace`` opcode is proof that existing code was
-touched. Each ``insert`` run is classified as annotation / import /
-TYPE_CHECKING-header or rejected.
+Design
+------
+* SYNTAX GATE: the new source must ``ast.parse`` cleanly. Tokenizing alone is
+  lexical, so it accepts ``total = x: int + y`` or a bare ``if TYPE_CHECKING:``
+  header; parsing rejects those.
+* STRUCTURE: adding annotations/imports only ever *inserts* tokens, so the old
+  token stream must be an ordered subsequence of the new one.
+  ``difflib.SequenceMatcher`` then yields only ``equal``/``insert`` opcodes for
+  a valid refactor; any ``delete``/``replace`` proves existing code changed.
+  INDENT/DEDENT are kept (normalized to type only) so re-indenting existing
+  code under a new block shows up as an orphan inserted INDENT and is rejected.
+* CONTENT: each inserted annotation's type expression is ``ast.parse``d and
+  walked, so the banned-name / generic-subscript policy is applied
+  structurally -- including inside string forward references
+  (``x: "Any"``) -- while ``Literal["object"]`` string *values* are left alone.
 
-Because comments and string literals are their own tokens, comment/docstring
-mutations are caught structurally (no regex), and because the banned-word and
-generic-subscript policy runs over NAME tokens (not raw text), a string like
-``Literal["object"]`` is not mistaken for the ``object`` type.
-
-Deliberate blind spot
----------------------
-Token comparison ignores non-token whitespace, so a purely cosmetic reflow
-that changes no token (e.g. ``a,b`` -> ``a, b``, or wrapping a bracketed
-expression across lines) is NOT flagged. Any reflow that changes a real token
-(a trailing comma, added parentheses, a split string) IS flagged. This is the
-only non-annotation change the guard can overlook.
+Deliberate non-goals
+--------------------
+Non-token whitespace is ignored (blank lines, ``a,b`` -> ``a, b``, wrapping a
+bracketed expression). Pure formatting drift is out of scope here; enforce it
+with a separate ``ruff format --check`` gate.
 
 Exit codes: 0 clean, 1 violations, 2 usage/environment error.
 """
 
-
+import ast
 import io
 import subprocess
 import sys
@@ -53,8 +51,9 @@ from pathlib import Path
 
 # --- annotation / import content policy --------------------------------------
 
-# Names that may never appear in an annotation or be imported.
-BANNED = {'Any', 'object', 'unknown', 'Unknown', 'ndarray'}
+# Names that may never appear in an annotation. `unknown` is matched
+# case-insensitively (UNKNOWN/Unknown/unknown); the rest are exact.
+BANNED = {'Any', 'object', 'ndarray'}
 
 # Deprecated capitalized generics (PEP 585 / 604 replace them).
 DEPRECATED = {'List', 'Dict', 'Tuple', 'Set', 'FrozenSet', 'Optional', 'Union', 'Type'}
@@ -68,17 +67,14 @@ NEED_SUBSCRIPT = {
 }
 
 # Symbols that must not be imported (importing them only enables a banned use).
-IMPORT_BANNED = BANNED | DEPRECATED | {'cast'}
+IMPORT_BANNED = BANNED | DEPRECATED | {'cast', 'Unknown', 'unknown'}
 
-# tokens that carry no code/comment/string content -- dropped before comparing
-_LAYOUT = frozenset({
-    tokmod.NL, tokmod.INDENT, tokmod.DEDENT,
-    tokmod.ENCODING, tokmod.ENDMARKER,
-})
+# tokens dropped before comparison (pure layout: blank lines, encoding markers)
+_LAYOUT = frozenset({tokmod.NL, tokmod.ENCODING, tokmod.ENDMARKER})
 
-# tokens allowed to make up a type expression (NAME/STRING/NUMBER handled separately)
+# tokens allowed to delimit a type expression at the token level
 _TYPE_OPS = frozenset({'.', '[', ']', '(', ')', ',', '|', '*', '...'})
-_OPEN = {'(': ')', '[': ']', '{': '}'}
+_OPEN = {'(', '[', '{'}
 _CLOSE = {')', ']', '}'}
 
 
@@ -92,17 +88,21 @@ class Violation:
 
 
 def _keys_and_toks(src: str):
-    """Return (comparison keys, TokenInfo list) with layout tokens filtered.
+    """Return (comparison keys, TokenInfo list).
 
-    NEWLINE is kept (it delimits statements) but normalized so line-ending
-    differences do not register as changes.
+    NL / ENCODING / ENDMARKER are dropped so pure whitespace is ignored.
+    NEWLINE and INDENT/DEDENT are kept but normalized to type only, so
+    indentation *width* changes are ignored while indentation *structure*
+    changes (an extra nesting level) remain visible.
     """
     keys: list[tuple[int, str]] = []
     toks: list[tokenize.TokenInfo] = []
     for t in tokenize.generate_tokens(io.StringIO(src).readline):
         if t.type in _LAYOUT:
             continue
-        s = '' if t.type == tokmod.NEWLINE else t.string
+        s = t.string
+        if t.type in (tokmod.NEWLINE, tokmod.INDENT, tokmod.DEDENT):
+            s = ''
         keys.append((t.type, s))
         toks.append(t)
     return keys, toks
@@ -118,27 +118,6 @@ def _bracket_context(new_toks: list[tokenize.TokenInfo], upto: int) -> str | Non
             elif t.string in _CLOSE and stack:
                 stack.pop()
     return stack[-1] if stack else None
-
-
-def _check_type_tokens(type_toks, path, line, src, out: list[Violation]) -> None:
-    """Apply banned/deprecated/subscript policy to an annotation's tokens."""
-    for i, t in enumerate(type_toks):
-        if t.type != tokmod.NAME:
-            continue
-        name = t.string
-        if name in BANNED:
-            out.append(Violation(path, line, 'BANNED-TYPE',
-                                 f'banned type `{name}` in annotation', src))
-        elif name in DEPRECATED:
-            out.append(Violation(path, line, 'DEPRECATED-GENERIC',
-                                 f'deprecated capitalized generic `{name}` '
-                                 f'(use lowercase / X | None)', src))
-        elif name in NEED_SUBSCRIPT:
-            nxt = type_toks[i + 1] if i + 1 < len(type_toks) else None
-            if not (nxt and nxt.type == tokmod.OP and nxt.string == '['):
-                out.append(Violation(path, line, 'GENERIC-NO-ARGS',
-                                     f'unparametrized generic `{name}` '
-                                     f'(needs [...])', src))
 
 
 def _consume_type(run, start):
@@ -158,7 +137,7 @@ def _consume_type(run, start):
                 depth += 1
             elif t.string in (')', ']'):
                 if depth == 0:
-                    break  # closing bracket belongs to the enclosing context
+                    break
                 depth -= 1
             elif t.string == ',' and depth == 0:
                 break
@@ -168,7 +147,80 @@ def _consume_type(run, start):
     return j
 
 
-def _classify_insert(run, run_abs_start, new_toks, path, out: list[Violation]) -> None:
+def _slice_src(lines, start, end) -> str:
+    """Exact source text between (row, col) ``start`` and ``end`` (1-based rows)."""
+    (sr, sc), (er, ec) = start, end
+    if sr == er:
+        return lines[sr - 1][sc:ec]
+    parts = [lines[sr - 1][sc:]]
+    parts.extend(lines[r - 1] for r in range(sr + 1, er))
+    parts.append(lines[er - 1][:ec])
+    return ''.join(parts)
+
+
+def _dotted_final(node) -> str | None:
+    """Final identifier of a Name or dotted Attribute (``np.ndarray`` -> ndarray)."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _check_name(name: str, *, subscripted: bool, path, line, src, out) -> None:
+    if name.lower() == 'unknown' or name in BANNED:
+        out.append(Violation(path, line, 'BANNED-TYPE',
+                             f'banned type `{name}` in annotation', src))
+    elif name in DEPRECATED:
+        out.append(Violation(path, line, 'DEPRECATED-GENERIC',
+                             f'deprecated capitalized generic `{name}` '
+                             f'(use lowercase / X | None)', src))
+    elif name in NEED_SUBSCRIPT and not subscripted:
+        out.append(Violation(path, line, 'GENERIC-NO-ARGS',
+                             f'unparametrized generic `{name}` (needs [...])', src))
+
+
+def _ann_policy(node, path, line, src, out) -> None:
+    """Walk a parsed annotation expression and apply the type policy."""
+    if isinstance(node, ast.Name):
+        _check_name(node.id, subscripted=False, path=path, line=line, src=src, out=out)
+    elif isinstance(node, ast.Attribute):
+        final = _dotted_final(node)
+        if final:
+            _check_name(final, subscripted=False, path=path, line=line, src=src, out=out)
+    elif isinstance(node, ast.Subscript):
+        base = _dotted_final(node.value)
+        if base == 'Literal':
+            return  # Literal["object"] etc. -- the slice holds values, not types
+        if base:
+            _check_name(base, subscripted=True, path=path, line=line, src=src, out=out)
+        _ann_policy(node.slice, path, line, src, out)
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        _ann_policy(node.left, path, line, src, out)
+        _ann_policy(node.right, path, line, src, out)
+    elif isinstance(node, (ast.Tuple, ast.List)):
+        for elt in node.elts:
+            _ann_policy(elt, path, line, src, out)
+    elif isinstance(node, ast.Starred):
+        _ann_policy(node.value, path, line, src, out)
+    elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+        # string forward reference -- parse and police its contents
+        try:
+            inner = ast.parse(node.value, mode='eval').body
+        except SyntaxError:
+            return
+        _ann_policy(inner, path, line, src, out)
+
+
+def _policy_on_type_text(text: str, path, line, src, out) -> None:
+    try:
+        tree = ast.parse(text.strip(), mode='eval')
+    except SyntaxError:
+        return  # the whole-file ast.parse gate already rejected broken syntax
+    _ann_policy(tree.body, path, line, src, out)
+
+
+def _classify_insert(run, run_abs_start, new_toks, lines, path, out) -> None:
     """Classify one inserted token run; append a Violation per illegal piece."""
     i = 0
     n = len(run)
@@ -177,17 +229,34 @@ def _classify_insert(run, run_abs_start, new_toks, path, out: list[Violation]) -
         line = t.start[0]
         src = t.line.rstrip('\n')
 
-        # statement separators between stacked insertions
-        if t.type == tokmod.NEWLINE:
+        if t.type in (tokmod.NEWLINE, tokmod.DEDENT):
             i += 1
             continue
 
-        # ---- inline annotation:  : T   or   -> T --------------------------
+        # inserted INDENT: legitimate only when its matching DEDENT is also in
+        # this run (a fully-inserted block body). An orphan INDENT means
+        # existing code was re-indented (e.g. moved under TYPE_CHECKING).
+        if t.type == tokmod.INDENT:
+            depth = 1
+            k = i + 1
+            while k < n and depth:
+                if run[k].type == tokmod.INDENT:
+                    depth += 1
+                elif run[k].type == tokmod.DEDENT:
+                    depth -= 1
+                k += 1
+            if depth:
+                out.append(Violation(path, line, 'REINDENT',
+                                     'existing code re-indented under a new '
+                                     'block (scope change)', src))
+            i += 1
+            continue
+
+        # inline annotation:  : T   or   -> T
         if t.type == tokmod.OP and t.string in (':', '->'):
             if t.string == ':':
                 ctx = _bracket_context(new_toks, run_abs_start + i)
                 if ctx in ('[', '{'):
-                    # a colon inside [] or {} is a slice/dict, i.e. real code
                     out.append(Violation(path, line, 'NON-ANNOTATION',
                                          'inserted `:` is a slice/dict colon, '
                                          'not an annotation', src))
@@ -199,34 +268,36 @@ def _classify_insert(run, run_abs_start, new_toks, path, out: list[Violation]) -
                 out.append(Violation(path, line, 'NON-ANNOTATION',
                                      f'`{t.string}` inserted without a type', src))
             else:
-                _check_type_tokens(type_toks, path, line, src, out)
+                text = _slice_src(lines, type_toks[0].start, type_toks[-1].end)
+                _policy_on_type_text(text, path, line, src, out)
             i = end
             continue
 
-        # ---- new import statement ----------------------------------------
+        # new import statement
         if t.type == tokmod.NAME and t.string in ('import', 'from'):
             j = i
             names_after_import = False
-            bad_comment = False
             while j < n and run[j].type != tokmod.NEWLINE:
                 tk = run[j]
                 if tk.type == tokmod.COMMENT:
-                    bad_comment = True
-                if tk.type == tokmod.NAME and tk.string == 'import':
+                    out.append(Violation(path, line, 'COMMENT',
+                                         'comment added on a new import line', src))
+                elif tk.type == tokmod.OP and tk.string == '*':
+                    out.append(Violation(path, tk.start[0], 'WILDCARD-IMPORT',
+                                         'wildcard import can introduce banned '
+                                         'names', src))
+                elif tk.type == tokmod.NAME and tk.string == 'import':
                     names_after_import = True
                 elif (names_after_import and tk.type == tokmod.NAME
                         and tk.string in IMPORT_BANNED):
                     out.append(Violation(path, tk.start[0], 'BANNED-IMPORT',
-                                         f'import of banned symbol '
-                                         f'`{tk.string}`', src))
+                                         f'import of banned symbol `{tk.string}`',
+                                         src))
                 j += 1
-            if bad_comment:
-                out.append(Violation(path, line, 'COMMENT',
-                                     'comment added on a new import line', src))
             i = j
             continue
 
-        # ---- if TYPE_CHECKING: header ------------------------------------
+        # if TYPE_CHECKING: header (its body is validated as separate inserts)
         if (t.type == tokmod.NAME and t.string == 'if'
                 and i + 2 < n
                 and run[i + 1].type == tokmod.NAME
@@ -235,46 +306,50 @@ def _classify_insert(run, run_abs_start, new_toks, path, out: list[Violation]) -
             i += 3
             continue
 
-        # ---- anything else is disallowed new content ---------------------
+        # anything else is disallowed new content
         if t.type == tokmod.COMMENT:
             out.append(Violation(path, line, 'COMMENT',
                                  f'comment added: `{t.string}`', src))
         else:
             out.append(Violation(path, line, 'NEW-CODE',
-                                 f'non-annotation token inserted: '
-                                 f'`{t.string}`', src))
+                                 f'non-annotation token inserted: `{t.string}`',
+                                 src))
         i += 1
 
 
 def analyze(path: str, old_src: str, new_src: str) -> list[Violation]:
     out: list[Violation] = []
+
+    # SYNTAX GATE -- reject anything that does not parse (lexically-valid but
+    # ungrammatical annotation insertions, bare block headers, etc.)
+    try:
+        ast.parse(new_src)
+    except SyntaxError as e:
+        return [Violation(path, e.lineno or 0, 'SYNTAX',
+                          f'new version does not parse: {e.msg}')]
+
     try:
         old_keys, _ = _keys_and_toks(old_src)
-    except (tokenize.TokenError, SyntaxError, IndentationError) as e:
-        return [Violation(path, 0, 'TOKENIZE',
-                          f'base version does not tokenize: {e}')]
-    try:
         new_keys, new_toks = _keys_and_toks(new_src)
-    except (tokenize.TokenError, SyntaxError, IndentationError) as e:
-        return [Violation(path, 0, 'TOKENIZE',
-                          f'new version does not tokenize (syntax broken?): {e}')]
+    except (tokenize.TokenError, IndentationError) as e:
+        return [Violation(path, 0, 'TOKENIZE', f'could not tokenize: {e}')]
 
+    lines = new_src.splitlines(keepends=True)
     sm = SequenceMatcher(a=old_keys, b=new_keys, autojunk=False)
     for tag, _i1, _i2, j1, j2 in sm.get_opcodes():
         if tag == 'equal':
             continue
         if tag in ('delete', 'replace'):
-            # A valid annotation-only edit is always a pure `insert`; any
-            # delete/replace means an existing token was removed or changed.
+            # a valid annotation-only edit is always a pure insert; any
+            # delete/replace means an existing token was removed or changed
             tk = new_toks[j1] if j1 < len(new_toks) else None
-            line = tk.start[0] if tk else 0
-            src = tk.line.rstrip('\n') if tk else ''
             out.append(Violation(
-                path, line, 'MUTATED',
+                path, tk.start[0] if tk else 0, 'MUTATED',
                 'existing code removed or changed (rename / comment / '
-                'docstring / string / deletion)', src))
+                'docstring / string / deletion)',
+                tk.line.rstrip('\n') if tk else ''))
         elif tag == 'insert':
-            _classify_insert(new_toks[j1:j2], j1, new_toks, path, out)
+            _classify_insert(new_toks[j1:j2], j1, new_toks, lines, path, out)
     return out
 
 
@@ -296,8 +371,6 @@ def main(argv: list[str]) -> int:
     base = argv[1]
 
     violations: list[Violation] = []
-
-    # brand-new untracked .py files are not part of an annotation refactor
     violations.extend(
         Violation(f, 0, 'NEW-FILE', 'new/untracked .py file')
         for f in _git(['ls-files', '--others', '--exclude-standard',
@@ -313,8 +386,7 @@ def main(argv: list[str]) -> int:
                                         'file added; refactor annotates '
                                         'existing code only'))
         elif code.startswith('D'):
-            violations.append(Violation(parts[1], 0, 'DELETED',
-                                        'file deleted'))
+            violations.append(Violation(parts[1], 0, 'DELETED', 'file deleted'))
         elif code.startswith(('R', 'C')):
             violations.append(Violation(parts[-1], 0, 'RENAMED',
                                         f'file renamed/copied from {parts[1]}'))
@@ -322,8 +394,7 @@ def main(argv: list[str]) -> int:
             path = parts[1]
             old = _old_source(base, path)
             try:
-                with Path(path).open(encoding='utf-8') as fh:
-                    new = fh.read()
+                new = Path(path).read_text(encoding='utf-8')
             except OSError as e:
                 violations.append(Violation(path, 0, 'IO', str(e)))
                 continue

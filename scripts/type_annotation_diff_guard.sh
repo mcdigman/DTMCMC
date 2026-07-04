@@ -55,10 +55,29 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$SCRIPT_DIR/type_annotation_diff_guard.py"
 
-# Use the project interpreter (>=3.14 floor) so tokenizing matches file syntax.
-# Fall back to a bare python3 if the env is unavailable.
+# The engine needs a Python that can parse the repo's syntax (>=3.14 floor).
+# Prefer a direct interpreter on PATH (no cache-lock issues); fall back to the
+# project mamba env only if none is new enough. Environment problems exit 2 so
+# they are never mistaken for a diff failure (exit 1).
+ge314() { "$1" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 14) else 1)' >/dev/null 2>&1; }
+
+for cand in python3.14 python3 python; do
+    if command -v "$cand" >/dev/null 2>&1 && ge314 "$cand"; then
+        exec "$cand" "$PY" "$BASE"
+    fi
+done
+
 if command -v mamba >/dev/null 2>&1; then
     mamba run -n DTMCMC-dev python "$PY" "$BASE"
-else
-    python3 "$PY" "$BASE"
+    rc=$?
+    # mamba could not launch the interpreter (missing env, cache lock, etc.):
+    # surface as an environment error, not a diff failure.
+    if [ "$rc" -ge 3 ] || { [ "$rc" -ne 0 ] && ! command -v python3 >/dev/null 2>&1; }; then
+        echo "error: could not run guard via 'mamba run -n DTMCMC-dev'" >&2
+        exit 2
+    fi
+    exit "$rc"
 fi
+
+echo "error: no Python interpreter >= 3.14 found to run the guard" >&2
+exit 2
