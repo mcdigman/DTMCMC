@@ -31,7 +31,9 @@ from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
+    AcceptanceTemperatureLadder,
     GeometricTemperatureLadder,
+    LengthTemperatureLadder,
     TemperatureLadder,
     entropy_ladder_fromfile,
 )
@@ -181,6 +183,48 @@ def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
+def _load_ladder_inputs(spec: RunSpec, *file_keys: str) -> list[np.ndarray]:
+    """Load ladder input arrays named by the spec, filtered to Ts >= 1.
+
+    Applies the same Ts >= 1 input filter as entropy_ladder_fromfile so
+    the file-driven ladder arms stay comparable.
+    """
+    arrays = [np.load(resolve(str(spec.ladder[key]))) for key in file_keys]
+    Ts_in = arrays[0]
+    keep = Ts_in >= 1.
+    return [array[keep].copy() for array in arrays]
+
+
+def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a thermodynamic-length ladder from reference data files."""
+    ladder = spec.ladder
+    Ts_in, vars_in = _load_ladder_inputs(spec, 'Ts_file', 'vars_file')
+    return LengthTemperatureLadder(
+        spec.n_chain,
+        Ts_in,
+        vars_in,
+        n_cold=spec.n_cold,
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+        correct_last=bool(ladder.get('correct_last', False)),
+    )
+
+
+def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a predicted-acceptance ladder from reference data files."""
+    ladder = spec.ladder
+    Ts_in, means_in, vars_in = _load_ladder_inputs(spec, 'Ts_file', 'means_file', 'vars_file')
+    return AcceptanceTemperatureLadder(
+        spec.n_chain,
+        Ts_in,
+        means_in,
+        vars_in,
+        n_cold=spec.n_cold,
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+    )
+
+
 def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
     """Construct a ladder directly from the spec's Ts list.
 
@@ -198,6 +242,8 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
 LADDER_BUILDERS: dict[str, Callable[[RunSpec], TemperatureLadder]] = {
     'geometric': _build_geometric_ladder,
     'entropy_file': _build_entropy_file_ladder,
+    'length_file': _build_length_file_ladder,
+    'acceptance_file': _build_acceptance_file_ladder,
     'explicit': _build_explicit_ladder,
 }
 
