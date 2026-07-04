@@ -12,10 +12,24 @@ if TYPE_CHECKING:
     from DTMCMC.proposal_manager import ProposalManager
 
 
+# direction codes for the round-trip event log
+RT_ARRIVED_COLD = 0  # walker touched the cold extreme having last been at the hot extreme
+RT_ARRIVED_HOT = 1   # walker touched the hot extreme having last been at the cold extreme
+
+
 # TODO fix cycle and exchange tracking if not sorted
 @njit()
-def process_chain_cycles(cycle_tracker, itrn: int, block_size: int, chain_track, n_cold: int) -> None:
-    """Process whether the sampler has undergone any partial cold-hot cycles."""
+def process_chain_cycles(cycle_tracker, itrn: int, block_size: int, chain_track, n_cold: int, rt_event_buffer, flow_up_count, flow_labeled_count) -> int:
+    """Process whether the sampler has undergone any partial cold-hot cycles.
+
+    Also logs each extreme-touch transition as a (walker id, iteration,
+    direction) event into rt_event_buffer (returning the number written)
+    and accumulates per-temperature flow counts: for every step, each
+    resident walker whose last extreme visit was cold counts as an
+    up-mover at its temperature index. Pure observer: no random draws.
+    """
+    n_chain = chain_track.shape[1]
+    n_events = 0
     for itrb in range(1, block_size + 1, 1):
 
         # check if any current cold chains have been hot more recently than it was last cold
@@ -24,12 +38,20 @@ def process_chain_cycles(cycle_tracker, itrn: int, block_size: int, chain_track,
             chain_idx = chain_track[itrb, itrj]
             if cycle_tracker[0][chain_idx] < cycle_tracker[1][chain_idx] and cycle_tracker[0][chain_idx] > -1:
                 cycle_tracker[2][chain_idx] += 1
+                rt_event_buffer[n_events, 0] = chain_idx
+                rt_event_buffer[n_events, 1] = itrn + itrb
+                rt_event_buffer[n_events, 2] = RT_ARRIVED_COLD
+                n_events += 1
 
         # check if the current hot chain has been cold more recently than it was last hot
         # if so, a cold->hot cycle has occurred
         chain_idx = chain_track[itrb, -1]
         if cycle_tracker[1][chain_idx] < cycle_tracker[0][chain_idx] and cycle_tracker[1][chain_idx] > -1:
             cycle_tracker[3][chain_idx] += 1
+            rt_event_buffer[n_events, 0] = chain_idx
+            rt_event_buffer[n_events, 1] = itrn + itrb
+            rt_event_buffer[n_events, 2] = RT_ARRIVED_HOT
+            n_events += 1
 
         # track which chain is currently hot
         cycle_tracker[1][chain_track[itrb, -1]] = itrn + itrb
@@ -37,6 +59,19 @@ def process_chain_cycles(cycle_tracker, itrn: int, block_size: int, chain_track,
         # track which chains are currently one of the cold chains
         for itrj in range(n_cold):
             cycle_tracker[0][chain_track[itrb, itrj]] = itrn + itrb
+
+        # flow fraction f(T): with this step's timestamps in place, count
+        # resident walkers by the direction of their last extreme visit
+        for itrt in range(n_chain):
+            walker_idx = chain_track[itrb, itrt]
+            last_cold = cycle_tracker[0][walker_idx]
+            last_hot = cycle_tracker[1][walker_idx]
+            if last_cold > -1 or last_hot > -1:
+                flow_labeled_count[itrt] += 1
+                if last_cold > last_hot:
+                    flow_up_count[itrt] += 1
+
+    return n_events
 
 # TODO clean up tracker reporting
 
@@ -59,7 +94,19 @@ class TrackerManager:
         self.cycle_archive: list[NDArray[np.int64]] = []
         self.accept_archive: list[NDArray[np.int64]] = []
         self.exchange_archive: list[NDArray[np.int64]]= []
+        self.esd_archive: list[NDArray[np.floating]] = []
         self.itrn_archive: list[int] = []
+
+        # round-trip event log: (walker id, iteration, direction) rows,
+        # detected per step in process_chain_cycles and flushed per block
+        self.rt_event_buffer: NDArray[np.int64] = np.zeros((block_size * (n_cold + 1), 3), dtype=np.int64)
+        self.rt_event_log: list[NDArray[np.int64]] = []
+
+        # per-block flow counts: entry [itrt] counts (step, resident walker)
+        # pairs at temperature index itrt whose last extreme visit was cold
+        # (up-movers), and pairs with any extreme label at all
+        self.flow_up_archive: list[NDArray[np.int64]] = []
+        self.flow_labeled_archive: list[NDArray[np.int64]] = []
 
     def initialize_trackers(self) -> None:
         """Initialize the various trackers like acceptance rate and cycle times."""
@@ -74,6 +121,10 @@ class TrackerManager:
         self.cycle_tracker[3] = np.zeros(self.n_chain, dtype=np.int64)
 
         self.accept_record = np.zeros((2, self.n_chain, self.n_jump_types), dtype=np.int64)
+
+        # expected squared displacement sums per (temperature, jump type):
+        # [0] accumulates |delta|^2 over all proposals, [1] over accepted ones
+        self.esd_record = np.zeros((2, self.n_chain, self.n_jump_types))
 
         if self.track_full_exchanges:
             self.exchange_tracker = np.zeros((2, self.n_chain, self.n_chain), dtype=np.int64)
@@ -92,11 +143,31 @@ class TrackerManager:
             self.cycle_archive.append(self.cycle_tracker.copy())
             self.accept_archive.append(self.accept_record.copy())
             self.exchange_archive.append(self.exchange_tracker.copy())
+            self.esd_archive.append(self.esd_record.copy())
             self.itrn_archive.append(itrn + self.block_size)
 
     def process_chain_cycles(self, itrn: int, chain_track) -> None:
         """Process whether the sampler has undergone any partial cold-hot cycles."""
-        process_chain_cycles(self.cycle_tracker, itrn, self.block_size, chain_track, self.n_cold)
+        flow_up_count = np.zeros(self.n_chain, dtype=np.int64)
+        flow_labeled_count = np.zeros(self.n_chain, dtype=np.int64)
+        n_events = process_chain_cycles(self.cycle_tracker, itrn, self.block_size, chain_track, self.n_cold, self.rt_event_buffer, flow_up_count, flow_labeled_count)
+        if n_events > 0:
+            self.rt_event_log.append(self.rt_event_buffer[:n_events].copy())
+        self.flow_up_archive.append(flow_up_count)
+        self.flow_labeled_archive.append(flow_labeled_count)
+
+    def get_rt_events(self) -> NDArray[np.int64]:
+        """Get the full round-trip event log as an (n_events, 3) array."""
+        if len(self.rt_event_log) == 0:
+            return np.zeros((0, 3), dtype=np.int64)
+        return np.concatenate(self.rt_event_log, axis=0)
+
+    def get_flow_counts(self) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+        """Get per-block flow counts as (n_blocks, n_chain) arrays (up-movers, labeled)."""
+        if len(self.flow_up_archive) == 0:
+            empty = np.zeros((0, self.n_chain), dtype=np.int64)
+            return empty, empty.copy()
+        return np.asarray(self.flow_up_archive), np.asarray(self.flow_labeled_archive)
 
     def get_exchange_rate_summary(self, itrt_start: int = 0, itrt_end: int = -1, last_itrn: int = -1):
         """Get nn exchange rate summary."""
