@@ -1,10 +1,2 @@
-.DS_store
-**/__pycache__/
-profiles/
-.idea/
-**/.swp
-*.swp
-DTMCMC.egg-info/
-.ipynb_checkpoints/
-bak/
-build/
+artifacts/
+__pycache__/

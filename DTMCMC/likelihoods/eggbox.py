@@ -34,10 +34,14 @@ def prior_draw(n_par):
 
 
 @njit()
-def prior_factor(v, n_par) -> float:
-    """Get the denstiy factor for prior draws"""
-    del v
-    del n_par
+def prior_factor(_v, _n_par) -> float:
+    """Get the denstiy factor for prior draws
+
+    numba cannot type `del` of function arguments, so the unused inputs
+    are marked by naming: the previous del-based body made every call to
+    prior_factor raise a TypingError, which left the eggbox jitclass
+    unable to run through the default proposal mixture at all
+    """
     return 0.
 
 
