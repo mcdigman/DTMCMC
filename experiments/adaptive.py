@@ -24,12 +24,18 @@ not applied — no remap, no tracker segmentation — so ladder segments
 lengthen as adaptation converges (plan D6/Phase 5).
 
 Adaptation ends in a hard freeze gated by a coupling witness: at least
-one completed cold<->hot round trip within the open ladder segment, so
-rebuild stability alone can never certify a starved (uncoupled) ladder.
-A run reaching budget_blocks unfrozen hard-freezes anyway with
-frozen_by='budget' recorded so E3 analysis can segregate such runs.
-After the freeze the code path is identical to a fixed-ladder sampler
-(the hook is never called again).
+one completed cold<->hot round trip within EACH cadence window of the
+stability streak (and hence within the open ladder segment, the plan's
+floor), so rebuild stability alone can never certify a starved ladder.
+The per-window form is deliberately stronger than the plan's
+open-segment requirement — iterated under the plan's internals clause
+after review showed that hold-lengthened segments grow long enough for
+a starved-but-not-uncoupled ladder to complete an occasional lucky
+round trip; steady traversal, not a single trip, is what convergence
+looks like. A run reaching budget_blocks unfrozen hard-freezes anyway
+with frozen_by='budget' recorded so E3 analysis can segregate such
+runs. After the freeze the code path is identical to a fixed-ladder
+sampler (the hook is never called again).
 """
 
 from dataclasses import dataclass, field
@@ -146,8 +152,9 @@ class AdaptiveLadderController:
         (max |dlog T| threshold, consecutive updates) — freeze
         eligibility once the rebuilt ladder moves less than the
         threshold this many evaluations in a row with the cold window at
-        its target; the freeze itself additionally requires the coupling
-        witness (at least one completed round trip in the open segment)
+        its target and at least one completed cold<->hot round trip in
+        each of those cadence windows (the coupling witness, per-window
+        form — strictly stronger than the plan's open-segment floor)
     T_min_factor: float
         Final cold-edge target as a multiple of T=1 (values < 1 place
         rungs slightly below the readout temperature, plan S2;
@@ -194,6 +201,7 @@ class AdaptiveLadderController:
     _blocks_since_update: int = field(default=0, init=False)
     _t_cold_window: float = field(default=np.inf, init=False)
     _consecutive_small: int = field(default=0, init=False)
+    _trips_at_prev_eval: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         """Validate the fixed interface."""
@@ -415,9 +423,11 @@ class AdaptiveLadderController:
         threshold) are held, not applied — no remap, no tracker
         segmentation — so segments lengthen as adaptation converges and
         the coupling-witness clock is never reset by a rebuild that
-        changed nothing (plan D6/Phase 5). The hard freeze requires both
-        the stability criterion and the witness; exhausting
-        budget_blocks freezes unconditionally with the reason recorded.
+        changed nothing (plan D6/Phase 5). The hard freeze requires the
+        stability criterion with a completed round trip in each of its
+        cadence windows (which implies the plan's open-segment witness
+        floor); exhausting budget_blocks freezes unconditionally with
+        the reason recorded.
         """
         if self.frozen:
             return False
@@ -442,29 +452,38 @@ class AdaptiveLadderController:
         else:
             max_dlog = np.inf
 
+        # coupling witness (plan Phase 5, strengthened): the segment-reset
+        # cycle counters are exactly the per-open-segment round-trip counts
+        # of the Phase 2 event log, read BEFORE any apply resets them. The
+        # freeze streak requires new completed trips in every cadence
+        # window it spans — a starved ladder is badly resolved but not
+        # uncoupled, so a hold-lengthened segment eventually collects one
+        # lucky trip, and the plan's open-segment floor alone would count
+        # manufactured stability; steady traversal is the real signal.
+        n_trips_open = int(np.sum(sampler.tracker_manager.get_n_cycles()))
+        window_trips = n_trips_open - self._trips_at_prev_eval
+
         dlog_thresh, n_consecutive = self.freeze_criterion
         applied = max_dlog >= dlog_thresh
         if applied:
             sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
+            # segmentation reset the cycle counters with the segment
+            self._trips_at_prev_eval = 0
+        else:
+            self._trips_at_prev_eval = n_trips_open
 
-        # freeze bookkeeping: only holds with the window already at its
-        # target, and after a minimum dwell there, count toward the
+        # freeze bookkeeping: only witnessed holds with the window already
+        # at its target, and after a minimum dwell there, count toward the
         # stability criterion — cold-end statistics need time before
         # stability means convergence rather than starvation
         if at_target_before:
             self._updates_at_target += 1
-        if at_target_before and self._updates_at_target > self.min_updates_at_target and not applied:
+        if at_target_before and self._updates_at_target > self.min_updates_at_target and not applied and window_trips >= 1:
             self._consecutive_small += 1
         else:
             self._consecutive_small = 0
 
-        # coupling witness (plan Phase 5): at least one completed
-        # cold<->hot round trip within the open ladder segment — the
-        # segment-reset cycle counters are exactly the per-open-segment
-        # round-trip counts of the Phase 2 event log. Stability under an
-        # active cold-edge clamp is manufactured; traversal is not.
-        witness = bool(np.any(sampler.tracker_manager.get_n_cycles() >= 1))
-        if self._consecutive_small >= n_consecutive and witness:
+        if self._consecutive_small >= n_consecutive and n_trips_open >= 1:
             self.frozen = True
             self.frozen_by = 'criterion'
 

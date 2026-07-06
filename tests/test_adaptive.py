@@ -375,6 +375,31 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
+def test_freeze_requires_trips_in_every_streak_window(monkeypatch) -> None:
+    """A single lucky round trip must not certify a starved ladder.
+
+    get_n_cycles is patched to a nonzero CONSTANT: the open-segment
+    witness (the plan's floor) is green throughout, but no NEW trips
+    ever arrive between evaluations. The per-window witness must
+    therefore never assemble a freeze streak — this is exactly the
+    hold-lengthened-segment loophole the strengthening closes.
+    """
+    spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
+    seed_run(spec.seed)
+    monkeypatch.setattr(TrackerManager, 'get_n_cycles', lambda self: np.ones(self.n_chain, dtype=np.int64))
+
+    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
+    like_obj = CountingLikelihood(build_likelihood(spec))
+    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+        controller.post_block(sampler)
+
+    assert not controller.frozen
+    assert controller.frozen_by == ''
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
 def test_budget_freeze_records_reason() -> None:
     """A run exhausting budget_blocks unfrozen hard-freezes with frozen_by='budget' (plan Phase 5)."""
     spec = make_tiny_spec(n_steps=64 * 8, block_size=64)
