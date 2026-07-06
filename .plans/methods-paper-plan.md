@@ -145,12 +145,24 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   analysis, no new whitelist. Any intentional re-blessing of the golden digest must be
   justified in the commit message.
 - **D6 — Adaptive-ladder semantics.** Ladder updates happen only at block boundaries.
-  On update: chain states remap to nearest new temperature; logLs carried over (they are
+  On update: chain states remap **by temperature rank** (sorted ladders, each walker keeps
+  its slot) — a bijection, so no walker state is cloned or discarded and an
+  identical-ladder update (incl. duplicate temperatures) is a strict no-op; the previous
+  nearest-temperature rule cloned the cold frontier under support extension and collapsed
+  duplicate-T slots (amended per PR #16 review). logLs carried over (they are
   T-independent); DE buffer columns are **not reset** — each new temperature inherits the
   buffer column of the nearest old temperature **at-or-hotter** (empirical rule: DE recovers
-  much faster from overdispersion than underdispersion). Cycle/exchange trackers are
-  segmented at each update (counts must not straddle a ladder change). Adaptation ends in a
-  **hard freeze**; after freeze the code path is identical to a fixed-ladder sampler.
+  much faster from overdispersion than underdispersion), exact-T ties resolved
+  slot-preservingly; after the remap, any rung whose state or buffer column was resourced
+  has its current state written into its buffer column at the current write row (restores
+  the self-inclusion S4/C4 rely on; deterministic, RNG-neutral, and a no-op when nothing
+  moved). The Phase 4 remap A/B covered matched-support transplants only; under support
+  extension at-or-hotter is many-to-one (new sub-support rungs share the old coldest
+  column) and stands only subject to the Phase 5 mode-retention gate.
+  Cycle/exchange trackers **and the round-trip event log** are segmented at each update
+  (counts must not straddle a ladder change; round-trip metrics must not pair arrival
+  events across segments). Adaptation ends in a **hard freeze** gated by a coupling witness
+  (§4 Phase 5); after freeze the code path is identical to a fixed-ladder sampler.
   Alternative remap/reset rules are a pilot A/B **[EXPLORATORY]**, not a production variable.
 - **D7 — Artifact-first figures.** Every paper figure has a standalone script
   `experiments/figures/fig_<name>.py` reading only HDF5 artifacts.
@@ -306,19 +318,31 @@ through one new engine hook `DTMCMCSampler.apply_ladder_update(new_ladder, remap
 (~30 lines, RNG-neutral, golden-guarded). The hook rebinds the ladder **and the
 `betas`/`Ts` aliases** (`self.betas = self.T_ladder.betas` in `DTMCMCSampler.__init__` makes
 external ladder swaps a stale-alias footgun), remaps chain states/logLs and DE-buffer
-columns per D6, and segments trackers: archive-flush, then reset `cycle_tracker` to its
+columns per D6, and segments trackers: archive-flush, reset `cycle_tracker` to its
 initialized state (in-flight extreme-visit records refer to the old ladder and must not
-straddle an update).
+straddle an update), and mark a segment boundary in the round-trip event log — walker
+labels restart with the segment, so unsegmented events would pair across updates and
+overcount the primary round-trip metric (amended per PR #16 review).
 
 - Interface (fixed): `AdaptiveLadderController(mode='entropy'|'length'|'acceptance',
   update_every_blocks, forgetting, freeze_criterion, T_min_factor)` with
-  `mode`-agnostic internals so all three spacing rules share the schedule.
+  `mode`-agnostic internals so all three spacing rules share the schedule. `T_min_factor < 1`
+  adds auxiliary rungs below T=1 only (S2 semantics); the `n_cold` readout chains stay at
+  T=1 (amended per PR #16 review — the window-as-T_cold reading would store a T<1 tempered
+  posterior).
 - Behavior per D6 (block-boundary updates, at-or-hotter buffer remap, tracker segmentation,
-  hard freeze). Annealing schedule: initial ladder anchored at the hot end from prior-draw
+  hard freeze). Freeze eligibility requires a coupling witness: at least one completed
+  cold↔hot round trip within the current ladder segment (Phase 2 event log) — ladder-shape
+  stability alone can certify a starved fixed point of the cold-edge cap (amended per PR #16
+  review). A run that exhausts its adaptation budget unfrozen hard-freezes anyway with the
+  freeze reason (criterion vs budget) recorded, so E3 analysis can segregate such runs.
+  Annealing schedule: initial ladder anchored at the hot end from prior-draw
   logL statistics (reaches ΔS ~2–3 immediately), extended/refined toward cold (optionally
   slightly below T=1 to suppress cold-edge effects, per S2) as data accumulates. Schedule
-  internals, forgetting factor, and freeze criterion are iterated against pilots.
-- Ladder history (every update: Ts, trigger stats, block index) recorded in the artifact.
+  internals, forgetting factor, and freeze criterion are iterated against pilots within the
+  witness constraint.
+- Ladder history (every update: Ts, trigger stats, block index, freeze reason) recorded in
+  the artifact.
 
 Acceptance criteria:
 1. Post-freeze equivalence is **bit-exact**: copy the frozen sampler's full state (samples,
@@ -328,8 +352,19 @@ Acceptance criteria:
    sampler, reseed both streams identically (test-only reset), advance one block, require
    identical output.
 2. On cake 5D, the adaptive entropy ladder converges to within tolerance of the gold ladder
-   (interpolated ΔS profile comparison), without human input.
+   (interpolated ΔS profile comparison), without human input — evaluated as an N-seed
+   battery (N ≥ 6, seeds pre-registered), not a single seed: every run freezes via the
+   coupling witness within the test budget and passes the tolerance assertions (amended per
+   PR #16 review, which found ~half of seeds freezing on a starved cap-ratio ladder; a
+   single-seed pass certifies the seed, not the property).
 3. Golden test still green (adaptive code must not touch fixed-ladder paths).
+4. Remap invariants unit-tested: an identical-ladder update (incl. duplicate temperatures,
+   n_cold > 1) is a strict no-op for states, logLs, and DE buffers; the state remap is a
+   bijection on every update; every resourced rung's buffer column contains its current
+   state post-update.
+5. Mode-retention gate (pre-E3): on eggbox, occupied-mode counts among cold-slot states and
+   DE-buffer columns are preserved across support-extension updates; failure reopens the
+   extension-case buffer rule as the D6 pilot A/B before E3 runs.
 
 ### Phase 6 — Production battery + analysis
 
