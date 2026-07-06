@@ -147,9 +147,10 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
 - **D6 — Adaptive-ladder semantics.** Ladder updates happen only at block boundaries.
   On update: chain states remap **by temperature rank** (sorted ladders, each walker keeps
   its slot) — a bijection, so no walker state is cloned or discarded and an
-  identical-ladder update (incl. duplicate temperatures) is a strict no-op; the previous
-  nearest-temperature rule cloned the cold frontier under support extension and collapsed
-  duplicate-T slots (amended per PR #16 review). logLs carried over (they are
+  identical-ladder update (incl. duplicate temperatures) is a strict no-op (amended per
+  PR #16 review). With sub-unit auxiliary rungs (`T_min_factor < 1`, §4 Phase 5) the n_cold
+  readout slots inherit from the prior readout slots first, remaining slots by rank among
+  the rest — still a bijection (per PR #17 review). logLs carried over (they are
   T-independent); DE buffer columns are **not reset** — each new temperature inherits the
   buffer column of the nearest old temperature **at-or-hotter** (empirical rule: DE recovers
   much faster from overdispersion than underdispersion), exact-T ties resolved
@@ -320,29 +321,30 @@ through one new engine hook `DTMCMCSampler.apply_ladder_update(new_ladder, remap
 external ladder swaps a stale-alias footgun), remaps chain states/logLs and DE-buffer
 columns per D6, and segments trackers: archive-flush, reset `cycle_tracker` to its
 initialized state (in-flight extreme-visit records refer to the old ladder and must not
-straddle an update), and mark a segment boundary in the round-trip event log — walker
-labels restart with the segment, so unsegmented events would pair across updates and
-overcount the primary round-trip metric (amended per PR #16 review).
+straddle an update), and mark a segment boundary in the round-trip event log so round-trip
+metrics never pair events across updates (amended per PR #16 review).
 
 - Interface (fixed): `AdaptiveLadderController(mode='entropy'|'length'|'acceptance',
-  update_every_blocks, forgetting, freeze_criterion, T_min_factor)` with
+  update_every_blocks, forgetting, freeze_criterion, T_min_factor, budget_blocks)` with
   `mode`-agnostic internals so all three spacing rules share the schedule. `T_min_factor < 1`
   adds auxiliary rungs below T=1 only (S2 semantics); the `n_cold` readout chains stay at
-  T=1 (amended per PR #16 review — the window-as-T_cold reading would store a T<1 tempered
-  posterior).
+  T=1, remapped per D6 (amended per PR #16 review). Spec validation rejects
+  `T_min_factor != 1` until a follow-up amendment fixes storage and cold-extreme semantics
+  for auxiliary rungs — required before S2/E7 use (per PR #17 review).
 - Behavior per D6 (block-boundary updates, at-or-hotter buffer remap, tracker segmentation,
   hard freeze). Freeze eligibility requires a coupling witness: at least one completed
-  cold↔hot round trip within the current ladder segment (Phase 2 event log) — ladder-shape
-  stability alone can certify a starved fixed point of the cold-edge cap (amended per PR #16
-  review). A run that exhausts its adaptation budget unfrozen hard-freezes anyway with the
-  freeze reason (criterion vs budget) recorded, so E3 analysis can segregate such runs.
+  cold↔hot round trip within the current ladder segment (Phase 2 event log; amended per
+  PR #16 review). A run reaching `budget_blocks` unfrozen (spec-owned via the `[adaptive]`
+  table, capping adaptation so a post-freeze fixed-ladder segment still runs; per PR #17
+  review) hard-freezes anyway with the reason recorded, so E3 analysis can segregate such
+  runs.
   Annealing schedule: initial ladder anchored at the hot end from prior-draw
   logL statistics (reaches ΔS ~2–3 immediately), extended/refined toward cold (optionally
   slightly below T=1 to suppress cold-edge effects, per S2) as data accumulates. Schedule
   internals, forgetting factor, and freeze criterion are iterated against pilots within the
   witness constraint.
-- Ladder history (every update: Ts, trigger stats, block index, freeze reason) recorded in
-  the artifact.
+- Ladder history (every update: Ts, trigger stats, block index) recorded in the artifact;
+  `ladder/history` carries `frozen_by` ∈ {criterion, budget} alongside its frozen flag.
 
 Acceptance criteria:
 1. Post-freeze equivalence is **bit-exact**: copy the frozen sampler's full state (samples,
@@ -355,8 +357,7 @@ Acceptance criteria:
    (interpolated ΔS profile comparison), without human input — evaluated as an N-seed
    battery (N ≥ 6, seeds pre-registered), not a single seed: every run freezes via the
    coupling witness within the test budget and passes the tolerance assertions (amended per
-   PR #16 review, which found ~half of seeds freezing on a starved cap-ratio ladder; a
-   single-seed pass certifies the seed, not the property).
+   PR #16 review).
 3. Golden test still green (adaptive code must not touch fixed-ladder paths).
 4. Remap invariants unit-tested: an identical-ladder update (incl. duplicate temperatures,
    n_cold > 1) is a strict no-op for states, logLs, and DE buffers; the state remap is a
