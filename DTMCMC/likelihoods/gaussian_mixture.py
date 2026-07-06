@@ -51,8 +51,8 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
         while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
             if itra==attempt_lim:
-                print('failed to find valid posterior point')
-                assert False
+                msg = 'Failed to find valid posterior point.'
+                raise RuntimeError(msg)
 
             #redraw if it doesn't fit
             mode_choose = np.random.uniform(0.,1.)
@@ -61,5 +61,5 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
             else:
                 draw_loc = np.random.normal(-5,1,n_par)
             itra += 1
-
+        draws[itrk] = draw_loc
     return draws
