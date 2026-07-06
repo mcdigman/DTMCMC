@@ -27,6 +27,8 @@ from experiments.pilots.common import (
 N_CHAIN_GRID = [6, 8, 10, 12, 16, 24, 32]
 SEEDS = [1101, 1102, 1103]
 N_STEPS = 262144
+BOOTSTRAP_SEED = 314
+N_BOOT = 500
 
 
 def gold_total_entropy() -> float:
@@ -65,11 +67,17 @@ def main() -> int:
         print(f'n_chain={n_chain:>3}: rt_rate = {rates[itrc].mean():.3f} +- {rates[itrc].std():.3f} per walker per 1e6 chain-steps')
 
     s_total = gold_total_entropy()
+    # dS/link convention (matches entropy_spacing + _plug_cold_and_inf): the
+    # gold span is divided into n_chain-1 equal-entropy links and the hottest
+    # rung is then overwritten with T=inf, so adjacent finite rungs are spaced
+    # by exactly s_total/(n_chain-1) and the final finite->inf link carries the
+    # remaining slice of the gold span. The denominator is the link count
+    # n_chain-1, not the finite-rung count.
     ds_per_link = s_total / (np.asarray(N_CHAIN_GRID, dtype=np.float64) - 1.)
     mean_rates = rates.mean(axis=1)
     n_chain_arr = np.asarray(N_CHAIN_GRID, dtype=np.float64)
 
-    rng = get_rng(314)
+    rng = get_rng(BOOTSTRAP_SEED)
     results: dict[str, object] = {
         'n_chain_grid': N_CHAIN_GRID,
         'seeds': SEEDS,
@@ -77,13 +85,25 @@ def main() -> int:
         'rt_rates': rates.tolist(),
         's_total_gold': s_total,
         'ds_per_link': ds_per_link.tolist(),
+        'bootstrap_seed': BOOTSTRAP_SEED,
+        'n_boot': N_BOOT,
     }
+    # the two axes are fit independently; a piecewise-linear breakpoint is not
+    # invariant under the nonlinear n_chain -> dS/link reparameterization, so
+    # the two knees are reported side by side and must not be conflated
     for fit_name, fit in (('piecewise_linear', fit_knee_piecewise_linear), ('max_curvature', fit_knee_max_curvature)):
         knee_nc = fit(n_chain_arr, mean_rates)
         knee_ds = fit(ds_per_link[::-1].copy(), mean_rates[::-1].copy())
-        sd_nc = bootstrap_knee_sd(n_chain_arr, rates, fit, rng)
-        results[fit_name] = {'knee_n_chain': knee_nc, 'knee_ds_per_link': knee_ds, 'bootstrap_sd_n_chain': sd_nc}
-        print(f'{fit_name}: knee at n_chain={knee_nc:.1f} (bootstrap sd {sd_nc:.2f}); dS/link axis knee={knee_ds:.3f}')
+        sd_nc = bootstrap_knee_sd(n_chain_arr, rates, fit, rng, n_boot=N_BOOT)
+        sd_ds = bootstrap_knee_sd(ds_per_link[::-1].copy(), rates[::-1].copy(), fit, rng, n_boot=N_BOOT)
+        results[fit_name] = {
+            'knee_n_chain': knee_nc,
+            'bootstrap_sd_n_chain': sd_nc,
+            'knee_ds_per_link': knee_ds,
+            'bootstrap_sd_ds_per_link': sd_ds,
+        }
+        print(f'{fit_name}: n_chain-axis knee = {knee_nc:.1f} (bootstrap sd {sd_nc:.2f}); '
+              f'dS/link-axis knee = {knee_ds:.3f} (bootstrap sd {sd_ds:.3f})')
 
     save_summary('knee_scan', results)
     return 0

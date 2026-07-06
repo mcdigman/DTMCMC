@@ -13,7 +13,7 @@ import numpy as np
 from DTMCMC.rng_helpers import get_rng
 from experiments.harness.paths import repo_root
 from experiments.harness.spec import RunSpec, dumps_toml
-from experiments.metrics import round_trip_rate, scramble_block_n_eff_min
+from experiments.metrics import round_trip_counts, round_trip_rate, scramble_block_n_eff_min
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -118,10 +118,7 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
 
     rt_rate = round_trip_rate(post_events, n_chain, n_iterations - burn_itrn)
     n_eff = scramble_block_n_eff_min(post_burn, n_eff_block, n_eff_blocks, get_rng(n_eff_seed))
-    total_trips = float(np.sum(np.minimum(
-        np.bincount(post_events[post_events[:, 2] == 0][:, 0], minlength=n_chain),
-        np.bincount(post_events[post_events[:, 2] == 1][:, 0], minlength=n_chain),
-    )))
+    total_trips = float(round_trip_counts(post_events, n_chain).sum())
 
     return {
         'rt_rate': float(rt_rate),

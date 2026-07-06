@@ -1,6 +1,8 @@
 # Phase 4 Pilot Report — production calibration
 
-- **Date:** 2026-07-04
+- **Date:** 2026-07-04 (revised 2026-07-06 per PR #15 review; knee-scan and remap runs
+  reproduced bit-identically on regeneration, NN-KL recalibrated at 16 repeats with
+  eggbox 5D)
 - **Machine:** Apple silicon (14 cores), single-core runs, `DTMCMC-dev` env
 - **Pilot code:** `experiments/pilots/` (this PR); every number below regenerates via
   `python -m experiments.pilots.<module>` (summaries land in `artifacts/pilots/*.json`).
@@ -28,7 +30,15 @@ end-to-end regression test in this PR; E2/E3 depend on it.
 
 ## 2. Knee scan (cake 5D, gold entropy ladder, 3 seeds × 2.6e5 iterations)
 
-Total gold entropy span (T=1 to hottest finite rung): **S_total = 11.72 nats**.
+Total gold entropy span over the gold input range (T ≥ 1): **S_total = 11.72 nats**.
+
+ΔS/link convention: ΔS/link = S_total/(n_chain − 1). The spaced-ladder construction
+(`entropy_spacing` + `_plug_cold_and_inf`) divides the gold span into n_chain − 1
+equal-entropy links and then overwrites the hottest rung with T=∞, so adjacent *finite*
+rungs are spaced by exactly this increment and the final finite→∞ link carries the last
+slice of the gold span (verified against the constructed ladders: at n_chain=16 the 15
+finite rungs sit at exactly k × 0.782 nats, k = 0…14). The denominator is the link count
+n_chain − 1, not the finite-rung count.
 
 | n_chain | ΔS/link | RT rate (per walker per 1e6 chain-steps) |
 |---|---|---|
@@ -40,19 +50,31 @@ Total gold entropy span (T=1 to hottest finite rung): **S_total = 11.72 nats**.
 | 24 | 0.51 | 41.9 ± 2.1 |
 | 32 | 0.38 | 29.1 ± 2.1 |
 
-The rate is monotone decreasing (more rungs to traverse); the *slope-change* knee sits at
-n_chain ≈ 16, i.e. **ΔS/link ≈ 1.07** on the collapse axis — consistent with the plan's
-expected knee at ΔS/link ≲ 1 (C2). Fits: piecewise-linear knee = 16.0 (seed-bootstrap sd
-2.8), max-curvature knee = 8.0 (sd 0.8).
+The rate is monotone decreasing (more rungs to traverse). Each candidate estimator is fit
+*independently on each axis* — a fitted breakpoint is not invariant under the nonlinear
+n_chain → ΔS/link reparameterization, so the two axes' knees are separate numbers, not
+restatements of one location (seed-bootstrap sds, 500 resamples, seed 314, recorded in
+`knee_scan.json`):
 
-**[FROZEN] Knee estimator: piecewise-linear** (`fit_knee_piecewise_linear`).
-Rationale: it lands mid-grid rather than at the second grid point (max-curvature's 8.0 is
-a grid-edge affinity on a monotone-decaying curve), it has a direct two-regime
-interpretation matching C2's regime-statement framing, and its ΔS/link ≈ 1.07 agrees with
-theory. Bootstrap sd 2.8 in n_chain (~18%) is adequate for grid placement; C2's collapse
-test compares knee dispersion *between likelihoods*, where the same estimator is applied
-uniformly. Production n_chain grid {8, 12, 16, 24, 32, 48} brackets the knee well —
-unchanged from §5.
+| fit | n_chain axis | ΔS/link axis |
+|---|---|---|
+| piecewise-linear | 16.0 (sd 2.8) | 1.07 (sd 0.16) |
+| max-curvature    |  8.0 (sd 0.8) | 1.30 (sd 0.32) |
+
+On the collapse axis — the C2 variable — the two estimators agree within ~1σ that the
+knee sits at **ΔS/link ≈ 1.1–1.3**, consistent with the plan's expected ΔS/link ≲ 1 (C2).
+The n_chain-axis piecewise-linear knee of 16.0 (which corresponds to ΔS/link 0.78) is the
+same estimator on a different axis, reported for production grid placement only; an
+earlier revision of this report incorrectly presented the two fits as one location.
+
+**[FROZEN] Knee estimator: piecewise-linear** (`fit_knee_piecewise_linear`), applied
+uniformly per axis; C2's collapse statistic compares between-likelihood knee dispersion
+under the ΔS/link vs raw n_chain axes (plan §7). Rationale: it lands mid-grid rather than
+at the second grid point (max-curvature's n_chain-axis 8.0 is a grid-edge affinity on a
+monotone-decaying curve), it has a direct two-regime interpretation matching C2's
+regime-statement framing, and its ΔS/link-axis knee 1.07 ± 0.16 agrees with theory.
+Bootstrap sd 2.8 in n_chain (~18%) is adequate for grid placement. Production n_chain
+grid {8, 12, 16, 24, 32, 48} brackets the knee well — unchanged from §5.
 
 ## 3. Arm pilot (cake 5D, n_chain=16, 8 paired seeds × 2.6e5 iterations)
 
@@ -116,11 +138,16 @@ E4/E8: 10, unchanged from §5 placeholders.
 Transplant experiment (coarse geometric → gold entropy ladder mid-run, n_chain=12, 4
 seeds): blocks to settle the cold-chain logL band, higher is worse:
 
-| rule | settle blocks | post-switch RTs | early swaps/block |
+| rule | settle blocks | post-switch RTs | early accepted swaps/block |
 |---|---|---|---|
-| **at-or-hotter (D6)** | **5.5** | 1231 | 8131 |
-| nearest               | 18.2    | 1167 | 8025 |
-| partial reset         | 35.5    | 1207 | 8093 |
+| **at-or-hotter (D6)** | **5.5** | 1231 | 4066 |
+| nearest               | 18.2    | 1167 | 4013 |
+| partial reset         | 35.5    | 1207 | 4046 |
+
+(An earlier revision reported 2× the swap counts: with `track_full_exchanges=False` the
+engine increments both participants' tracker slots per accepted swap, and the pilot
+summed the plane without halving. Rule comparisons were unaffected — all arms doubled
+equally.)
 
 **[FROZEN] Remap default: at-or-hotter** — 3.3× faster settling than nearest and 6.5×
 faster than partial reset, directly confirming D6's "DE recovers much faster from
@@ -130,19 +157,24 @@ max |Δlog T| < 2% across 3 consecutive updates.
 
 ## 7. NN-KL snapshot size and cadence
 
-Self-KL noise (8 repeats, exact references):
+Self-KL noise (16 repeats, exact references; `nn_kl` timed alone after a JIT warm-up
+call, reference-draw cost excluded — an earlier revision timed draws + first-call
+compilation, which is why its cost column was non-monotonic; eggbox is now measured at
+the production dimension, 5D, rather than proxied by 2D):
 
-| n | gaussian 5D sd | cake 5D sd | eggbox 2D sd | s/eval (worst) |
+| n | gaussian 5D sd | cake 5D sd | eggbox 5D sd | nn_kl s/eval (worst) |
 |---|---|---|---|---|
-| 1000  | 0.11 | 0.23 | 0.09 | 0.15 |
-| 2000  | 0.10 | 0.16 | 0.04 | 0.02 |
-| 5000  | 0.03 | 0.19 | 0.02 | 0.14 |
-| 10000 | 0.03 | **0.07** | 0.02 | 0.57 |
+| 1000  | 0.08 | 0.36 | 0.38 | 0.005 |
+| 2000  | 0.05 | 0.22 | 0.24 | 0.02 |
+| 5000  | 0.05 | 0.17 | 0.07 | 0.11 |
+| 10000 | 0.03 | **0.08** | 0.02 | 0.44 |
 
 **[FROZEN] Snapshot size 10⁴, evaluated post-hoc at checkpoint cadence (4 per run).**
-Cake's two-scale geometry sets the noise floor; C3's NN-KL threshold must sit well above
-it: **threshold 0.5** (≈7σ of the worst noise floor) for "quality reached". Cost ~2.3 s
-per run of analysis — negligible.
+Cake's two-scale geometry sets the noise floor at the frozen snapshot size (eggbox 5D is
+noisier at small n but drops below cake by n=5000); C3's NN-KL threshold must sit well
+above it: **threshold 0.5** (≈6.5σ of the worst n=10⁴ noise floor, and 3.3× the largest
+observed |self-KL| at that size, 0.15) for "quality reached". Cost ~1.8 s per run of
+analysis (4 checkpoints × 0.44 s) — negligible.
 
 ## 8. Go/no-go decisions (§10 residuals)
 
@@ -191,4 +223,6 @@ python -m experiments.pilots.nnkl_calibration
 ```
 
 Each module writes `artifacts/pilots/<name>.json`; artifacts are gitignored, the numbers
-above are transcribed from the 2026-07-04 session summaries.
+above are transcribed from the 2026-07-06 session summaries (knee-scan and remap sampler
+runs reproduced bit-identically against the 2026-07-04 originals; analysis seeds are
+recorded in the summary JSONs).

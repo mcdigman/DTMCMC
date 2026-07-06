@@ -32,6 +32,7 @@ from DTMCMC.temperature_ladder_helpers import GeometricTemperatureLadder
 from experiments.harness.paths import chdir_repo_root, repo_root
 from experiments.harness.runner import CountingLikelihood, build_ladder, build_likelihood
 from experiments.harness.spec import RunSpec
+from experiments.metrics import round_trip_counts
 from experiments.pilots.common import PILOT_ROOT, cake5_likelihood, entropy_gold_ladder, make_spec, save_summary
 
 RULES = ('at_or_hotter', 'nearest', 'partial_reset')
@@ -60,9 +61,9 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     chdir_repo_root()
     seed_run(seed)
 
-    like_obj = CountingLikelihood(build_likelihood(RunSpec.from_dict(make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2))))
-    spec_for_config = RunSpec.from_dict(make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2))
-    config = spec_for_config.build_proposal_config()
+    spec = RunSpec.from_dict(make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2))
+    like_obj = CountingLikelihood(build_likelihood(spec))
+    config = spec.build_proposal_config()
 
     # phase A: settle on a deliberately coarse geometric ladder
     ladder_a = GeometricTemperatureLadder(N_CHAIN, n_cold=1, T_cold=1., T_min=1., T_max=1000., n_inf_final=1)
@@ -74,7 +75,7 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
 
     # ladder update to the gold entropy ladder: remap chain states to the
     # nearest new temperature (D6), carry logLs, remap DE buffer per rule
-    ladder_b = build_ladder(spec_for_config)
+    ladder_b = build_ladder(spec)
     Ts_old = np.asarray(sampler_a.Ts)
     Ts_new = np.asarray(ladder_b.Ts)
     state_sources = remap_source_columns(Ts_old, Ts_new, 'nearest')
@@ -99,7 +100,10 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     last_total = 0
     for itrb in range(POST_BLOCKS):
         sampler_b.advance_block()
-        total = int(sampler_b.tracker_manager.exchange_tracker[0, 0].sum())
+        # with track_full_exchanges=False, execute_swaps increments both
+        # participants' [0, 0, :] slots per accepted swap, so the plane
+        # sum is exactly 2x the accepted-swap count (always even)
+        total = int(sampler_b.tracker_manager.exchange_tracker[0, 0].sum()) // 2
         accepted_swaps[itrb] = total - last_total
         last_total = total
 
@@ -121,10 +125,7 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
         'rule': rule,
         'seed': seed,
         'settle_block': int(settle_block),
-        'post_round_trips': int(np.minimum(
-            np.bincount(rt_events[rt_events[:, 2] == 0][:, 0], minlength=N_CHAIN),
-            np.bincount(rt_events[rt_events[:, 2] == 1][:, 0], minlength=N_CHAIN),
-        ).sum()),
+        'post_round_trips': int(round_trip_counts(rt_events, N_CHAIN).sum()),
         'late_swap_acceptance_per_block': float(accepted_swaps[-16:].mean()),
         'early_swap_acceptance_per_block': float(accepted_swaps[:8].mean()),
     }
