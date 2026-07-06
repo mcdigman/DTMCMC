@@ -118,7 +118,9 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   Datasets: temperature
   ladder(s) (incl. history if adaptive), per-block logL moment arrays, tracker archives
   (accept/exchange/cycle + block indices), round-trip event log, thinned cold-chain samples,
-  checkpoint metrics (NN-KL, buffer spectra), and anything a figure needs. Figures are
+  checkpoint metrics (buffer spectra recorded in-process, since the DE buffer is transient
+  and never persisted; NN-KL computed post-hoc from the stored thinned samples at checkpoint
+  cadence, per D7 — amended per PR #10 review), and anything a figure needs. Figures are
   generated **only** from artifacts (D7).
 - **D3 — Paired seeds.** A/B arms within an experiment share the same run-seed list and the
   same initial states wherever the arm definition permits; comparisons are made on paired
