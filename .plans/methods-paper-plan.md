@@ -100,10 +100,14 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
 
 - **D1 — Seeding.** A run seed `s` deterministically derives two child seeds:
   `np.random.seed(child_a)` for the Python stream and a new `@njit` helper
-  (`DTMCMC/rng_helpers.py::seed_numba(child_b)`) for the numba stream, called once at run
+  (`DTMCMC/rng_helpers.py::_seed_numba(child_b)`) for the numba stream, called once at run
   start. Both child seeds recorded in the artifact. **Nothing may reseed after run start:**
   the seed helper raises on a second call (an explicit test-only reset exists for the tests
   that legitimately reseed), and lint bans reseeding APIs outside `rng_helpers.py` (D5).
+  The jitted seeder is private — numba cannot type a read of the guard state, so the
+  once-per-run guard lives in `seed_run`, the only public seeding entry point; direct
+  `_seed_numba` calls are TID251-banned outside `rng_helpers.py`/tests (amended per PR #9
+  review).
 - **D2 — Artifacts.** One HDF5 file per run. Root attrs (provenance): git commit hash +
   dirty flag, run-spec dump (full resolved config, INI/TOML text), run seed + child seeds,
   package versions (python, numpy, scipy, numba, h5py), hostname, start/end timestamps,
