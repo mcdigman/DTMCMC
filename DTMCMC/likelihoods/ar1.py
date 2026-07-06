@@ -44,25 +44,22 @@ class Ar1Likelihood(RectangularLikelihood):
 @njit()
 def gen_draws(n_draws,n_par,attempt_lim=10000):
     """Get posterior draws"""
+    low_lims = np.full(n_par, low_lim)
+    high_lims = np.full(n_par, high_lim)
     draws = np.zeros((n_draws,n_par))
     for itrk in range(n_draws):
         itra = 0
-        draw_loc = np.zeros(n_par)
-        draw_loc[0] = np.random.normal(0.,1.)
-        for itrp in range(1,n_par):
-            n1 = np.random.normal(alpha*draw_loc[itrp-1],beta)
-            draw_loc[itrp] = n1
-
-        while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
-            if itra==attempt_lim:
-                msg = 'Failed to find valid posterior point.'
-                raise RuntimeError(msg)
-
+        while True:
             draw_loc = np.zeros(n_par)
             draw_loc[0] = np.random.normal(0.,1.)
             for itrp in range(1,n_par):
                 n1 = np.random.normal(alpha*draw_loc[itrp-1],beta)
                 draw_loc[itrp] = n1
+            if check_bounds_rectangular(draw_loc, low_lims, high_lims):
+                break
             itra += 1
+            if itra==attempt_lim:
+                msg = 'Failed to find valid posterior point.'
+                raise RuntimeError(msg)
         draws[itrk] = draw_loc
     return draws

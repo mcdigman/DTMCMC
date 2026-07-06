@@ -15,8 +15,6 @@ c1 = np.array([-r1, 0.])  # center of shell 1
 c2 = np.array([r1, 0.])  # center of shell 2
 const = np.log(1. / np.sqrt(2. * np.pi * w**2))  # normalization constant
 
-n_par = 2
-
 
 @njit()
 def logcirc(theta, c):
@@ -66,23 +64,12 @@ class GaussianShellLikelihood(RectangularLikelihood):
 @njit()
 def gen_draws(n_draws,n_par,attempt_lim=10000):
     """Get posterior draws"""
+    low_lims = np.full(n_par, low_lim)
+    high_lims = np.full(n_par, high_lim)
     draws = np.zeros((n_draws,n_par))
     for itrk in range(n_draws):
         itra = 0
-        mode_select = np.random.randint(0,2)
-        draw_phase = np.random.uniform(0.,2*np.pi)
-        draw_dist = draw_shell_radius()
-        draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
-        if mode_select==0:
-            draw_loc = draw_coord+c1
-        else:
-            draw_loc = draw_coord+c2
-
-        while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
-            if itra==attempt_lim:
-                msg = 'Failed to find valid posterior point.'
-                raise RuntimeError(msg)
-
+        while True:
             mode_select = np.random.randint(0,2)
             draw_phase = np.random.uniform(0.,2*np.pi)
             draw_dist = draw_shell_radius()
@@ -91,7 +78,11 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
                 draw_loc = draw_coord+c1
             else:
                 draw_loc = draw_coord+c2
+            if check_bounds_rectangular(draw_loc, low_lims, high_lims):
+                break
             itra += 1
-
+            if itra==attempt_lim:
+                msg = 'Failed to find valid posterior point.'
+                raise RuntimeError(msg)
         draws[itrk] = draw_loc
     return draws

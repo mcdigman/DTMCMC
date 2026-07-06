@@ -40,26 +40,22 @@ class GaussianMixtureLikelihood(RectangularLikelihood):
 @njit()
 def gen_draws(n_draws,n_par,attempt_lim=10000):
     """Get posterior draws"""
+    low_lims = np.full(n_par, low_lim)
+    high_lims = np.full(n_par, high_lim)
     draws = np.zeros((n_draws,n_par))
     for itrk in range(n_draws):
         itra = 0
-        mode_choose = np.random.uniform(0.,1.)
-        if mode_choose<1./3.:
-            draw_loc = np.random.normal(5,1,n_par)
-        else:
-            draw_loc = np.random.normal(-5,1,n_par)
-
-        while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
-            if itra==attempt_lim:
-                msg = 'Failed to find valid posterior point.'
-                raise RuntimeError(msg)
-
-            #redraw if it doesn't fit
+        while True:
             mode_choose = np.random.uniform(0.,1.)
             if mode_choose<1./3.:
                 draw_loc = np.random.normal(5,1,n_par)
             else:
                 draw_loc = np.random.normal(-5,1,n_par)
+            if check_bounds_rectangular(draw_loc, low_lims, high_lims):
+                break
             itra += 1
+            if itra==attempt_lim:
+                msg = 'Failed to find valid posterior point.'
+                raise RuntimeError(msg)
         draws[itrk] = draw_loc
     return draws
