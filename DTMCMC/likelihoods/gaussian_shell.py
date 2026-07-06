@@ -1,0 +1,130 @@
+"""two shell likelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/Examples%20--%20Gaussian%20Shells.ipynb"""
+import numpy as np
+import numba as nb
+from numba.experimental import jitclass
+from numba import njit
+from correction_helpers import reflect_into_range
+from proposal_strategy_helpers import ProposalStrategyParameters
+
+#constants
+low_lim = -40.
+high_lim = 40.
+
+r = 2.  # radius
+w = 0.1  # width
+r1 = 3.5
+c1 = np.array([-r1, 0.])  # center of shell 1
+c2 = np.array([r1, 0.])  # center of shell 2
+const = np.log(1. / np.sqrt(2. * np.pi * w**2))  # normalization constant
+
+n_par = 2
+
+@jitclass([('n_par',nb.int64)])
+class Likelihood():
+    """class to manage the likelihood-specific essential functions for the sampler"""
+    def __init__(self):
+        """create the class and store any object specific variables"""
+        self.n_par = n_par
+        return
+
+    def loglike(self,v):
+        """get the log likelihood given a set of parameters v"""
+        return loglike(v)
+
+    def prior_draw(self):
+        """get a draw from the prior"""
+        return prior_draw()
+
+    def prior_proposal(self,v_in):
+        """get a proposal from the prior"""
+        v_out = prior_draw()
+        return v_out,prior_factor(v_in)-prior_factor(v_out)
+
+    def prior_factor(self,v):
+        """get the density factor for prior draws, if the prior draws are not uniform"""
+        return prior_factor(v)
+
+    def correct_bounds(self,v):
+        """correct the bounds of a draw to be in range, if allowed for this likelihood"""
+        return correct_bounds(v)
+
+    def check_bounds(self,v):
+        """check if the bounds of a draw are in the prior range but do not change them"""
+        return check_bounds(v)
+
+@njit()
+def logcirc(theta, c):
+    """helper function for log likelihood of a single shell"""
+    d = np.sqrt(np.sum((theta - c)**2, axis=-1))
+    return const - (d - r)**2 / (2. * w**2)
+
+@njit()
+def loglike(theta):
+    """get the likelihood of two gaussian shells"""
+    res = np.logaddexp(logcirc(theta, c1), logcirc(theta, c2))
+    return res
+
+@njit()
+def prior_factor(v):
+    """get the prior factor if one is needed"""
+    return 0.
+
+@njit()
+def prior_draw():
+    """get a prior draw"""
+    return np.random.uniform(low_lim,high_lim,2)
+
+@njit()
+def correct_bounds(v):
+    """wrap the parameters into range"""
+    v[0] = reflect_into_range(v[0],low_lim,high_lim)
+    v[1] = reflect_into_range(v[1],low_lim,high_lim)
+    return v
+
+@njit()
+def check_bounds(v):
+    """check if a sample is within the prior range"""
+    for itrp in range(v.size):
+        if not low_lim<v[itrp]<high_lim:
+            return False
+    return True
+
+@njit()
+def gen_draws(n_draws,n_par,attempt_lim=10000):
+    """get posterior draws"""
+    draws = np.zeros((n_draws,n_par))
+    for itrk in range(n_draws):
+        itra = 0
+        mode_select = np.random.randint(0,2)
+        draw_phase = np.random.uniform(0.,2*np.pi)
+        draw_dist = np.random.normal(r.,w.)
+        draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
+        if mode_select==0:
+            draw_loc = draw_coord+c1
+        else:
+            draw_loc = draw_coord+c2
+
+        draw_loc = np.random.normal(0.,1,n_par)
+        while not check_bounds(draw_loc):
+            if itra==attempt_lim:
+                print('failed to find valid posterior point')
+                assert False
+
+            mode_select = np.random.randint(0,2)
+            draw_phase = np.random.uniform(0.,2*np.pi)
+            draw_dist = np.random.normal(r.,w.)
+            draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
+            if mode_select==0:
+                draw_loc = draw_coord+c1
+            else:
+                draw_loc = draw_coord+c2
+
+        draws[itrk] = draw_loc
+    return draws
+
+def get_labels():
+    """get useful labels for corner plots"""
+    labels = []
+    for itrp in range(2):
+        labels.append(r'$v_'+str(itrp)+'$')
+    return labels
