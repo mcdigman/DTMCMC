@@ -13,6 +13,12 @@ T=1 via T_min_factor, plan S2 — spec-rejected until a follow-up
 amendment fixes storage semantics) and rebuilds the ladder from the
 pooled first two logL cumulants measured so far — mode-agnostic, so
 the entropy, length, and acceptance spacing rules share one schedule.
+Rebuild variances default to the pessimistic estimator (max over each
+temperature's recent segment estimates, var_estimator switch): an
+under-mixed chain only under-measures Var(logL), so believing the
+largest recent estimate makes hidden cold-end structure ratchet into
+the ladder instead of being averaged away — dissolving the starved
+rebuild fixed point the PR #16 review identified.
 Sub-threshold rebuilds (within the freeze dlog threshold) are held,
 not applied — no remap, no tracker segmentation — so ladder segments
 lengthen as adaptation converges (plan D6/Phase 5).
@@ -82,6 +88,23 @@ _EXTENSION_CANDIDATES = (4., 3., 2., 1.5, 1.25, 1.1)
 N_COLD_CAPPED_LINKS = 3
 _CAP_RATIO_BOUNDS = (1.05, 1.35)
 
+# var_estimator switch values (integer to leave room for future rules)
+VAR_ESTIMATOR_MEAN = 0         # forgetting-weighted mean of segment estimates
+VAR_ESTIMATOR_PESSIMISTIC = 1  # max over the recent segment estimates (default)
+_KNOWN_VAR_ESTIMATORS = frozenset({VAR_ESTIMATOR_MEAN, VAR_ESTIMATOR_PESSIMISTIC})
+
+# rolling window (in absorbed segments) of per-temperature variance
+# estimates kept for the pessimistic estimator: an under-mixed chain
+# almost always UNDER-measures Var(logL) (it samples a subset of the
+# distribution), so segment estimates are one-sided evidence and the
+# largest recent one is the most credible lower bound on the truth.
+# Taking the max makes transition discovery cumulative — one segment
+# that catches the missing variance ratchets the rebuild — instead of a
+# memoryless race against the weighted mean (the starved-freeze race of
+# the PR #16 review); the window bounds the memory so an unreconfirmed
+# spike ages out, playing the role forgetting plays for the means
+VAR_HISTORY_LENGTH = 4
+
 
 @dataclass
 class LadderUpdateRecord:
@@ -114,8 +137,11 @@ class AdaptiveLadderController:
     update_every_blocks: int
         Ladder rebuild cadence in blocks (block-boundary updates, D6)
     forgetting: float
-        Per-update multiplicative down-weighting of previously pooled
-        cumulants (0 = cumulative, the pilot default)
+        Per-evaluation multiplicative down-weighting of previously
+        pooled cumulants (0 = cumulative, the pilot default); applies
+        to the weighted-mean merges — under the pessimistic
+        var_estimator the rebuild variances use the rolling
+        VAR_HISTORY_LENGTH window instead
     freeze_criterion: tuple[float, int]
         (max |dlog T| threshold, consecutive updates) — freeze
         eligibility once the rebuilt ladder moves less than the
@@ -130,6 +156,15 @@ class AdaptiveLadderController:
         Hard adaptation cap in blocks, spec-owned and required: a run
         reaching it unfrozen hard-freezes with frozen_by='budget' so a
         post-freeze fixed-ladder segment still runs (plan Phase 5)
+    var_estimator: int
+        Pooled-variance rule feeding the rebuilds (integer switch to
+        leave room for future rules): VAR_ESTIMATOR_PESSIMISTIC (1, the
+        default) takes the max over the last VAR_HISTORY_LENGTH segment
+        estimates at each pooled temperature — under-mixing only ever
+        under-measures variance, so the largest recent estimate is the
+        most credible, and discovery of hidden cold-end structure
+        becomes cumulative; VAR_ESTIMATOR_MEAN (0) is the
+        forgetting-weighted mean of all segment estimates
     """
 
     mode: str = 'entropy'
@@ -138,6 +173,7 @@ class AdaptiveLadderController:
     freeze_criterion: tuple[float, int] = (0.02, 3)
     T_min_factor: float = 1.
     budget_blocks: int = -1
+    var_estimator: int = VAR_ESTIMATOR_PESSIMISTIC
     n_prior_draws: int = 256
     n_inf_final: int = 1
     # evaluations with the window at target before freeze counting begins:
@@ -152,6 +188,7 @@ class AdaptiveLadderController:
     _pool_means: list[float] = field(default_factory=list, init=False)
     _pool_vars: list[float] = field(default_factory=list, init=False)
     _pool_weights: list[float] = field(default_factory=list, init=False)
+    _pool_var_history: list[list[float]] = field(default_factory=list, init=False)
     _prior_anchor_retired: bool = field(default=False, init=False)
     _blocks_seen: int = field(default=0, init=False)
     _blocks_since_update: int = field(default=0, init=False)
@@ -168,6 +205,9 @@ class AdaptiveLadderController:
             raise ValueError(msg)
         if self.budget_blocks < 1:
             msg = 'budget_blocks is required (spec-owned, plan Phase 5) and must be >= 1'
+            raise ValueError(msg)
+        if self.var_estimator not in _KNOWN_VAR_ESTIMATORS:
+            msg = f'unknown var_estimator {self.var_estimator!r}; known: {sorted(_KNOWN_VAR_ESTIMATORS)}'
             raise ValueError(msg)
 
     @property
@@ -198,6 +238,7 @@ class AdaptiveLadderController:
         self._pool_means.append(prior_mean)
         self._pool_vars.append(prior_var)
         self._pool_weights.append(1.)
+        self._pool_var_history.append([prior_var])
 
         return GeometricTemperatureLadder(
             n_chain, n_cold=n_cold, T_cold=self._t_cold_window, T_min=self._t_cold_window,
@@ -223,7 +264,7 @@ class AdaptiveLadderController:
         # across segments like any other temperature.
         if not self._prior_anchor_retired:
             idx_prior = self._pool_Ts.index(np.inf)
-            for pool in (self._pool_Ts, self._pool_means, self._pool_vars, self._pool_weights):
+            for pool in (self._pool_Ts, self._pool_means, self._pool_vars, self._pool_weights, self._pool_var_history):
                 pool.pop(idx_prior)
             self._prior_anchor_retired = True
 
@@ -244,11 +285,28 @@ class AdaptiveLadderController:
                 self._pool_means[idx] = (w_old * self._pool_means[idx] + w_new * float(seg_means[itrt])) / total
                 self._pool_vars[idx] = (w_old * self._pool_vars[idx] + w_new * float(seg_vars[itrt])) / total
                 self._pool_weights[idx] = total
+                self._pool_var_history[idx].append(float(seg_vars[itrt]))
+                del self._pool_var_history[idx][:-VAR_HISTORY_LENGTH]
             else:
                 self._pool_Ts.append(T_loc)
                 self._pool_means.append(float(seg_means[itrt]))
                 self._pool_vars.append(float(seg_vars[itrt]))
                 self._pool_weights.append(weight)
+                self._pool_var_history.append([float(seg_vars[itrt])])
+
+    def _effective_pool_vars(self) -> NDArray[np.floating]:
+        """Pooled variances as the configured var_estimator reads them.
+
+        Pessimistic (the default): max over each temperature's recent
+        segment estimates — under-mixed chains only under-measure
+        variance, so the largest recent estimate is the closest lower
+        bound on the truth; on a well-mixed rung the recent estimates
+        all fluctuate around equilibrium and the max is a mild upward
+        bias. Mean: the forgetting-weighted running mean.
+        """
+        if self.var_estimator == VAR_ESTIMATOR_PESSIMISTIC:
+            return np.asarray([max(history) for history in self._pool_var_history])
+        return np.asarray(self._pool_vars)
 
     def _pool_keep_mask(self, window: float) -> NDArray[np.bool_]:
         """Pool rows entering a rebuild clipped at a cold window.
@@ -267,7 +325,7 @@ class AdaptiveLadderController:
     def _pooled_ds_per_link(self, window: float, n_links: int) -> float:
         """Per-link dS of the pooled spacing integral clipped at a window."""
         Ts_pool = np.asarray(self._pool_Ts)
-        vars_pool = np.asarray(self._pool_vars)
+        vars_pool = self._effective_pool_vars()
         keep = self._pool_keep_mask(window)
         if int(np.count_nonzero(keep)) < 2:
             return 0.
@@ -297,7 +355,7 @@ class AdaptiveLadderController:
         statistics pack the cold links tighter than the budget.
         """
         Ts_pool = np.asarray(self._pool_Ts)
-        vars_pool = np.asarray(self._pool_vars)
+        vars_pool = self._effective_pool_vars()
         finite_pool = np.isfinite(Ts_pool)
         pool_order = np.argsort(Ts_pool[finite_pool])
         pool_T_sorted = Ts_pool[finite_pool][pool_order]
@@ -328,7 +386,7 @@ class AdaptiveLadderController:
 
         Ts_pool = np.asarray(self._pool_Ts)
         means_pool = np.asarray(self._pool_means)
-        vars_pool = np.asarray(self._pool_vars)
+        vars_pool = self._effective_pool_vars()
 
         keep = self._pool_keep_mask(self._t_cold_window)
         Ts_use, means_use, vars_use = Ts_pool[keep], means_pool[keep], vars_pool[keep]

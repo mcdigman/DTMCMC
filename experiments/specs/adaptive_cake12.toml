@@ -45,5 +45,10 @@ freeze_consecutive = 3
 # cold-edge target as a multiple of T=1; must be 1 until a follow-up
 # plan amendment fixes sub-unit rung storage semantics
 T_min_factor = 1.0
+# rebuild-variance rule: 1 = pessimistic (max over recent segment
+# estimates — under-mixing only under-measures variance, so hidden
+# cold-end structure ratchets into the ladder), 0 = forgetting-weighted
+# mean; integer switch to leave room for future rules
+var_estimator = 1
 # prior draws anchoring the initial hot end (charged to the run, plan C3)
 n_prior_draws = 256

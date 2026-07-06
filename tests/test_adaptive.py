@@ -8,12 +8,16 @@ cake 5D without human input. Criterion 3: the golden test stays green
 (separate file, unchanged).
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
+
+if TYPE_CHECKING:
+    from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from experiments.harness.runner import LikelihoodLike
 
 import experiments.adaptive as adaptive_module
 from DTMCMC.de_manager import DEJumpManager
@@ -454,6 +458,103 @@ def test_adaptive_modes_sync_and_validation() -> None:
         AdaptiveLadderController(mode='nonsense')
     with pytest.raises(ValueError, match='budget_blocks'):
         AdaptiveLadderController(mode='entropy')
+    with pytest.raises(ValueError, match='unknown var_estimator'):
+        AdaptiveLadderController(mode='entropy', budget_blocks=8, var_estimator=7)
+
+
+class _StubLikelihood:
+    """Deterministic LikelihoodLike stand-in (no RNG draws)."""
+
+    def __init__(self) -> None:
+        self._count = 0
+
+    def prior_draw(self) -> np.ndarray:
+        return np.zeros(1)
+
+    def get_loglike(self, _x: np.ndarray) -> float:
+        self._count += 1
+        return float(self._count % 2)
+
+
+class _StubTracker:
+    """Tracker stand-in whose witness is always green."""
+
+    def __init__(self, n_chain: int) -> None:
+        self.n_chain = n_chain
+
+    def get_n_cycles(self) -> np.ndarray:
+        return np.ones(self.n_chain, dtype=np.int64)
+
+
+class _StubSampler:
+    """Minimal sampler surface driving post_block with scripted moments."""
+
+    def __init__(self, Ts: np.ndarray, block_size: int = 64) -> None:
+        self.Ts = np.asarray(Ts)
+        self.n_chain = self.Ts.size
+        self.n_cold = 1
+        self.block_size = block_size
+        self.itrn = 0
+        self.logL_means: list[np.ndarray] = []
+        self.logL2_means: list[np.ndarray] = []
+        self.tracker_manager = _StubTracker(self.n_chain)
+
+    def feed_block(self, vars_profile: list[float]) -> None:
+        self.logL_means.append(np.zeros(self.n_chain))
+        self.logL2_means.append(np.asarray(vars_profile))
+        self.itrn += self.block_size
+
+    def apply_ladder_update(self, new_ladder: TemperatureLadder, _remap_rule: str) -> None:
+        self.Ts = np.asarray(new_ladder.Ts)
+
+
+def _coldest_ratio(Ts: np.ndarray) -> float:
+    finite = np.sort(Ts[np.isfinite(Ts)])
+    return float(finite[1] / finite[0])
+
+
+def test_pessimistic_var_estimator_ratchets_and_ages_out() -> None:
+    """var_estimator=1 believes the largest recent variance; =0 averages it away.
+
+    Scripted moments at fixed recurring temperatures: one high-variance
+    segment at the coldest rung amid low-variance segments. The
+    pessimistic estimator must keep the cold end packed while the high
+    estimate is inside its rolling window (where the weighted mean has
+    already diluted it), and must relax once the window ages it out.
+    """
+    Ts_fixed = np.array([1., 2., 4., 8., 16., np.inf])
+    low = [0.5, 0.5, 0.5, 0.5, 0.5, 0.25]
+    high_cold = [50., 0.5, 0.5, 0.5, 0.5, 0.25]
+
+    controllers = {}
+    for estimator in (0, 1):
+        controller = AdaptiveLadderController(
+            mode='entropy', update_every_blocks=1, forgetting=0.,
+            freeze_criterion=(1.e9, 10**6), budget_blocks=10**6, var_estimator=estimator,
+        )
+        # huge freeze_dlog holds every rebuild, so the stub's temperatures
+        # recur every segment — the regime where the estimators differ
+        controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), Ts_fixed.size, 1)
+        stub = _StubSampler(Ts_fixed)
+        sampler = cast('DTMCMCSampler', stub)
+        feeds = [low, high_cold] + [low] * (adaptive_module.VAR_HISTORY_LENGTH + 3)
+        for vars_profile in feeds:
+            stub.feed_block(vars_profile)
+            controller.post_block(sampler)
+        controllers[estimator] = controller
+
+    # three low segments after the spike: still inside the rolling window,
+    # the pessimistic candidate stays packed at the cold end while the
+    # weighted mean has diluted the spike
+    idx_probe = 4
+    ratio_pessimistic = _coldest_ratio(controllers[1].history[idx_probe].Ts)
+    ratio_mean = _coldest_ratio(controllers[0].history[idx_probe].Ts)
+    assert ratio_pessimistic < ratio_mean
+
+    # once VAR_HISTORY_LENGTH low segments have passed, the unreconfirmed
+    # spike ages out and the pessimistic candidate relaxes again
+    ratio_pessimistic_late = _coldest_ratio(controllers[1].history[-1].Ts)
+    assert ratio_pessimistic_late > ratio_pessimistic
 
 
 # reuse the shared guard fixture from the harness tests

@@ -67,6 +67,7 @@ ADAPTIVE_KEYS: frozenset[str] = frozenset({
     'freeze_consecutive',
     'T_min_factor',
     'budget_blocks',
+    'var_estimator',
     'n_prior_draws',
 })
 

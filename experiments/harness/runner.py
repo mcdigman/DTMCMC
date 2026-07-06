@@ -323,7 +323,9 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     (pool down-weighting per evaluation, default 0), `freeze_dlog` /
     `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
     `T_min_factor` (must be 1 until a follow-up plan amendment),
-    `n_prior_draws` (hot-anchor prior sample size, default 256).
+    `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
+    recent segment estimates, the default; 0 = forgetting-weighted
+    mean), `n_prior_draws` (hot-anchor prior sample size, default 256).
     """
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),
@@ -332,6 +334,7 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
         freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
         T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
+        var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),
         n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
     )
 
