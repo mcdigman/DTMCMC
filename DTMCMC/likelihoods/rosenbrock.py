@@ -6,6 +6,8 @@ from numba import njit
 from numba.experimental import jitclass
 from proposal_strategy_helpers import ProposalStrategyParameters
 
+from DTMCMC.likelihood import check_bounds_rectangular
+
 strategy_default = ProposalStrategyParameters(use_chol_fishers=True,use_de=True,cold_prior_weight=0.,cold_de_weight=1./3,hot_de_weight=1./3,cold_fisher_weight=1./3.,hot_fisher_weight=1./3.,hot_prior_target_weight=1.,big_de_prob=0.1,de_subspace_frac=1.,de_subspace_override_frac=1.,fisher_subspace_frac=1.,eps_default=1.e-1,sigma_default=4.,max_fisher_el=np.inf)
 strategy_default.use_chol_fishers = False
 strategy_default.cold_prior_weight = 0.#1./12.#1./6.#1./12.
@@ -107,7 +109,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
             n2 = np.random.normal(n1**2,np.sqrt(1/200))
             draw_loc[2*itrp] = n1
             draw_loc[2*itrp+1] = n2
-        while not check_bounds(draw_loc):
+        while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
             if itra==attempt_lim:
                 print('failed to find valid posterior point')
                 assert False
@@ -121,11 +123,3 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
         draws[itrk] = draw_loc
     return draws
-
-def get_labels(n_par):
-    """Get useful labels for corner plots"""
-    labels = []
-    for itrp in range(n_par//2):
-        labels.append(r'$x_'+str(itrp)+'$')
-        labels.append(r'$y_'+str(itrp)+'$')
-    return labels

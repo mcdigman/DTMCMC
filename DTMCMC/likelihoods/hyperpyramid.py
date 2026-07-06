@@ -81,14 +81,3 @@ class Likelihood():
     def check_bounds(self,v):
         """Check if the bounds of a draw are in the prior range but do not change them"""
         return check_bounds(v)
-
-def gen_draws(n_draws,n_par,attempt_lim=10000):
-    """Get posterior draws"""
-    raise NotImplementedError('Posterior draws not implemented for the likelihood')
-
-def get_labels(n_par):
-    """Get useful labels for corner plots"""
-    labels = []
-    for itrp in range(n_par):
-        labels.append(r'$v_'+str(itrp)+'$')
-    return labels

@@ -5,6 +5,8 @@ from correction_helpers import reflect_into_range
 from numba import njit
 from numba.experimental import jitclass
 
+from DTMCMC.likelihood import check_bounds_rectangular
+
 #constants
 low_lim = -40.
 high_lim = 40.
@@ -104,7 +106,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
             draw_loc = draw_coord+c2
 
         draw_loc = np.random.normal(0.,1,n_par)
-        while not check_bounds(draw_loc):
+        while not check_bounds_rectangular(draw_loc, np.full(n_par, low_lim), np.full(n_par, high_lim)):
             if itra==attempt_lim:
                 print('failed to find valid posterior point')
                 assert False
@@ -120,10 +122,3 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
         draws[itrk] = draw_loc
     return draws
-
-def get_labels():
-    """Get useful labels for corner plots"""
-    labels = []
-    for itrp in range(2):
-        labels.append(r'$v_'+str(itrp)+'$')
-    return labels
