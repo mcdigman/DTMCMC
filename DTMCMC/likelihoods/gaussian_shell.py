@@ -34,8 +34,9 @@ def get_loglike(theta):
 
 class GaussianShellLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self) -> None:
+    def __init__(self, n_par=2) -> None:
         """Create the class and store any object specific variables"""
+        assert n_par == 2
         low_lims = np.full(n_par, low_lim)
         high_lims = np.full(n_par, high_lim)
 
