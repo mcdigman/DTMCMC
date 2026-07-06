@@ -75,6 +75,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
                 draw_loc = draw_coord+c1
             else:
                 draw_loc = draw_coord+c2
+            itra += 1
 
         draws[itrk] = draw_loc
     return draws

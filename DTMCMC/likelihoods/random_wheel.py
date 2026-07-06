@@ -81,6 +81,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
             mode_choose = np.random.randint(0,9)
             draw_loc = cs[mode_choose]+np.random.normal(0.,w,2)
+            itra += 1
 
         draws[itrk] = draw_loc
     return draws

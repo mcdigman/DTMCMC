@@ -57,6 +57,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
                 n2 = np.random.normal(n1**2,np.sqrt(1/200))
                 draw_loc[2*itrp] = n1
                 draw_loc[2*itrp+1] = n2
+            itra += 1
 
         draws[itrk] = draw_loc
     return draws
