@@ -32,6 +32,20 @@ def get_loglike(theta):
     return res
 
 
+@njit()
+def draw_shell_radius():
+    """Draw a radius from the shell's radial marginal density ~ d*exp(-(d-r)^2/(2w^2)).
+
+    Rejection sampling with an N(r, w) proposal and acceptance probability d/d_cap
+    supplies the polar Jacobian factor d that a bare N(r, w) draw omits.
+    """
+    d_cap = r + 8. * w
+    while True:
+        d = np.random.normal(r, w)
+        if 0. < d <= d_cap and np.random.uniform(0., 1.) < d / d_cap:
+            return d
+
+
 class GaussianShellLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
     def __init__(self, n_par=2) -> None:
@@ -55,7 +69,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
         itra = 0
         mode_select = np.random.randint(0,2)
         draw_phase = np.random.uniform(0.,2*np.pi)
-        draw_dist = np.random.normal(r,w)
+        draw_dist = draw_shell_radius()
         draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
         if mode_select==0:
             draw_loc = draw_coord+c1
@@ -69,7 +83,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
             mode_select = np.random.randint(0,2)
             draw_phase = np.random.uniform(0.,2*np.pi)
-            draw_dist = np.random.normal(r,w)
+            draw_dist = draw_shell_radius()
             draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
             if mode_select==0:
                 draw_loc = draw_coord+c1

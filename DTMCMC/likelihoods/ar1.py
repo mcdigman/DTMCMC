@@ -9,7 +9,8 @@ low_lim = -10.
 high_lim = 10.
 alpha = 0.9
 beta = np.sqrt(1-alpha**2)
-const = np.log(1. / np.sqrt(2. * np.pi*beta**2))  # normalization constant
+const = np.log(1. / np.sqrt(2. * np.pi*beta**2))  # conditional-term normalization constant
+const0 = np.log(1. / np.sqrt(2. * np.pi))  # first-term (unit-variance stationary) normalization constant
 
 
 @njit()
@@ -17,7 +18,7 @@ def get_loglike(v,n_par):
     """Get the likelihood for ar1"""
     res = 0.
     x_next = 0.
-    res += const-1/2*(v[0]-x_next)**2
+    res += const0-1/2*(v[0]-x_next)**2
     x_next = alpha*v[0]
 
     for itrp in range(1,n_par):
