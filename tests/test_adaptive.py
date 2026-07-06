@@ -21,33 +21,46 @@ from DTMCMC.fisher_manager import FisherJumpManager
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import (
     GeometricTemperatureLadder,
+    TemperatureLadder,
     Ts_to_betas,
     get_spacing_integrated,
     remap_ladder_indices,
     standardize_input_vars,
 )
+from DTMCMC.tracker_manager import TrackerManager
 from experiments.adaptive import AdaptiveLadderController
 from experiments.harness.paths import resolve
 from experiments.harness.runner import CountingLikelihood, build_likelihood, build_sampler, run_from_spec
-from experiments.harness.spec import ADAPTIVE_MODES, RunSpec
+from experiments.harness.spec import ADAPTIVE_MODES, RunSpec, SpecError
 from tests.test_harness import TINY_GAUSSIAN_SPEC, make_tiny_spec
 
 
 def test_remap_ladder_indices_hand_computed() -> None:
-    """Both D6 remap rules on a hand-checkable ladder pair."""
+    """Both D6 buffer remap rules on a hand-checkable ladder pair."""
     Ts_old = np.array([1., 4., 16., np.inf])
-    Ts_new = np.array([1., 2., 8., 64.])
+    Ts_new = np.array([1., 2., 10., 64.])
 
-    # nearest in log T: 2 is sqrt(1*4) -> tie resolved to first (index 0);
-    # 8 is sqrt(4*16) -> index 1; 64 is closer to 16 than to inf(=1e300)
-    assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'nearest'), [0, 0, 1, 2])
+    # nearest in log T: 2 is sqrt(1*4), a log-equidistant tie containing
+    # the receiving slot, which therefore keeps its slot (D6); 10 is
+    # nearer 16 than 4; 64 is closer to 16 than to inf(=1e300)
+    assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'nearest'), [0, 1, 2, 2])
     # at-or-hotter: coolest old rung at or above each new temperature
     assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'at_or_hotter'), [0, 1, 2, 3])
     # a new rung hotter than every finite old rung falls back to the hottest
     assert_array_equal(remap_ladder_indices(np.array([1., 4.]), np.array([16.]), 'at_or_hotter'), [1])
+    # an exact-T tie NOT containing the receiving slot goes to the lowest
+    # tied slot (D6): new slot 3 at T=2 ties old duplicate rungs 1 and 2
+    assert_array_equal(remap_ladder_indices(np.array([1., 2., 2., 8.]), np.array([0.5, 0.6, 0.7, 2.]), 'at_or_hotter'), [0, 0, 0, 1])
 
     with pytest.raises(ValueError, match='unknown remap rule'):
         remap_ladder_indices(Ts_old, Ts_new, 'nonsense')
+
+
+def test_remap_ladder_indices_identical_is_identity() -> None:
+    """An identical ladder — including duplicate temperatures — maps every slot to itself (D6)."""
+    Ts = np.array([1., 1., 2., 4., np.inf])
+    for rule in ('nearest', 'at_or_hotter'):
+        assert_array_equal(remap_ladder_indices(Ts, Ts, rule), np.arange(Ts.size))
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
@@ -80,24 +93,86 @@ def test_apply_ladder_update_rebinds_and_remaps() -> None:
     for manager in sampler.proposal_manager.managers:
         assert manager.T_ladder is new_ladder
 
-    # chain states remapped to the nearest new temperature, logLs carried
-    state_sources = remap_ladder_indices(old_Ts, np.asarray(new_ladder.Ts), 'nearest')
-    assert_array_equal(sampler.samples[0], old_states[state_sources])
-    assert_array_equal(sampler.logLs[0], old_logLs[state_sources])
+    # chain states remap by temperature rank — the identity for
+    # equal-size sorted ladders, a bijection: no walker cloned or lost
+    assert_array_equal(sampler.samples[0], old_states)
+    assert_array_equal(sampler.logLs[0], old_logLs)
     assert_array_equal(sampler.chain_track[0], np.arange(spec.n_chain))
 
-    # DE columns remapped per the requested rule
+    # DE columns remapped per the requested rule, then each resourced
+    # rung's current state written at the newest buffer row (D6
+    # self-inclusion restoration)
     buffer_sources = remap_ladder_indices(old_Ts, np.asarray(new_ladder.Ts), 'at_or_hotter')
+    row_newest = (de_manager.itrde_write - 1) % de_manager.de_size
     for itrt in range(sampler.n_chain):
-        assert np.all(de_manager.de_buffer[:, itrt, :] == float(buffer_sources[itrt]))
+        if buffer_sources[itrt] == itrt:
+            assert np.all(de_manager.de_buffer[:, itrt, :] == float(itrt))
+        else:
+            other_rows = np.delete(np.arange(de_manager.de_size), row_newest)
+            assert np.all(de_manager.de_buffer[other_rows, itrt, :] == float(buffer_sources[itrt]))
+            assert_array_equal(de_manager.de_buffer[row_newest, itrt, :], sampler.samples[0][itrt])
 
     # Fisher temperature scaling refreshed for the new betas
     assert not np.array_equal(fisher_manager.gamma_mults, old_gamma)
 
-    # trackers segmented: archives grew, cycle tracker reinitialized
+    # trackers segmented: archives grew, cycle tracker reinitialized,
+    # round-trip event log boundary recorded
     assert len(sampler.tracker_manager.cycle_archive) == n_archives_before + 1
     assert_array_equal(sampler.tracker_manager.cycle_tracker[0][1:], np.full(spec.n_chain - 1, -1))
     assert_array_equal(sampler.tracker_manager.cycle_tracker[2], np.zeros(spec.n_chain, dtype=np.int64))
+    assert sampler.tracker_manager.rt_segment_itrns == [sampler.itrn]
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_apply_ladder_update_identical_ladder_strict_noop() -> None:
+    """Acceptance 4: an identical-ladder update (duplicate temperatures, n_cold > 1) is a strict no-op for states, logLs, and DE buffers."""
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['ladder'] = {'kind': 'geometric', 'n_chain': 6, 'n_cold': 2, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1}
+    spec = RunSpec.from_dict(data)
+    seed_run(spec.seed)
+    sampler, _like_obj = build_sampler(spec)
+    sampler.advance_block()
+    assert float(np.asarray(sampler.Ts)[0]) == float(np.asarray(sampler.Ts)[1]), 'test premise: duplicate cold temperatures'
+
+    old_states = sampler.samples[0].copy()
+    old_logLs = sampler.logLs[0].copy()
+    de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
+    old_buffer = de_manager.de_buffer.copy()
+
+    same_ladder = TemperatureLadder(spec.n_cold, np.asarray(sampler.Ts).copy())
+    sampler.apply_ladder_update(same_ladder, 'at_or_hotter')
+
+    assert_array_equal(sampler.samples[0], old_states)
+    assert_array_equal(sampler.logLs[0], old_logLs)
+    assert_array_equal(de_manager.de_buffer, old_buffer)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_apply_ladder_update_extension_bijection_and_self_inclusion() -> None:
+    """Acceptance 4 under cold support extension: state remap stays a bijection and every resourced rung's buffer column contains its current state."""
+    spec = make_tiny_spec()
+    seed_run(spec.seed)
+    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4., T_min=4., T_max=100., n_inf_final=1)
+    sampler, _like_obj = build_sampler(spec, T_ladder=hot_ladder)
+    sampler.advance_block()
+
+    old_states = sampler.samples[0].copy()
+    de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
+
+    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1., T_min=1., T_max=100., n_inf_final=1)
+    sampler.apply_ladder_update(extended, 'at_or_hotter')
+
+    # bijection: every walker keeps its slot, none cloned or discarded
+    assert_array_equal(sampler.samples[0], old_states)
+
+    # the extension resources sub-support rungs many-to-one (D6); each
+    # resourced rung's column must contain its own current state
+    buffer_sources = remap_ladder_indices(np.asarray(hot_ladder.Ts), np.asarray(extended.Ts), 'at_or_hotter')
+    resourced = np.flatnonzero(buffer_sources != np.arange(spec.n_chain))
+    assert resourced.size > 0, 'test premise: the extension must resource at least one rung'
+    for itrt in resourced:
+        rows_matching = np.all(de_manager.de_buffer[:, itrt, :] == sampler.samples[0][itrt], axis=1)
+        assert bool(rows_matching.any())
 
 
 def _copy_full_state(source, target) -> None:
@@ -159,7 +234,7 @@ def test_post_freeze_bit_exact_equivalence() -> None:
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
 
-    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2))
+    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
     like_a = CountingLikelihood(build_likelihood(spec))
     initial_ladder = controller.initial_ladder(like_a, spec.n_chain, spec.n_cold)
     sampler_a, _ = build_sampler(spec, like_obj=like_a, T_ladder=initial_ladder)
@@ -170,6 +245,13 @@ def test_post_freeze_bit_exact_equivalence() -> None:
         if controller.frozen:
             break
     assert controller.frozen, 'controller must reach hard freeze without human input'
+    assert controller.frozen_by == 'criterion'
+    # sub-threshold rebuilds are held, never applied: the engine segments
+    # exactly once per applied update, and reaching the freeze requires
+    # held evaluations (plan D6/Phase 5)
+    n_applied = sum(record.applied for record in controller.history)
+    assert len(sampler_a.tracker_manager.rt_segment_itrns) == n_applied
+    assert any(not record.applied for record in controller.history)
     # a couple more frozen-path blocks so the state is post-freeze generic
     sampler_a.advance_block()
     sampler_a.advance_block()
@@ -196,26 +278,34 @@ def test_post_freeze_bit_exact_equivalence() -> None:
     assert_array_equal(sampler_a.logLs_store, sampler_b.logLs_store)
 
 
-def test_adaptive_entropy_converges_to_gold(tmp_path) -> None:
+# acceptance 2 battery seeds, pre-registered (amended per PR #16 review):
+# the set deliberately includes 556/559/560, which froze starved under the
+# pre-witness controller (stability-only freeze on the cold-cap fixed point)
+CONVERGENCE_BATTERY_SEEDS = (555, 556, 557, 558, 559, 560)
+
+
+@pytest.mark.parametrize('seed', CONVERGENCE_BATTERY_SEEDS)
+def test_adaptive_entropy_converges_to_gold(tmp_path, seed: int) -> None:
     """Acceptance 2: unattended convergence to the gold dS structure on cake 5D.
 
-    Convergence is asserted structurally against the gold entropy
-    profile: the run must hard-freeze on its own, resolve the phase
-    transition (gold packs 7 of 11 finite rungs at T <= 2; a starved
-    log-uniform ladder has 1 there), and space every non-coldest link at
-    the gold per-link scale. The extreme spike tip below T ~ 1.15 keeps
-    refining across updates (the coldest link still carries several gold
-    nats when the freeze fires) — the refinement-rate measurement is
-    E3's job; this test pins the discovered structure.
+    Run as an N-seed battery (N >= 6, seeds pre-registered): every run
+    must hard-freeze via the coupling witness — not the budget — within
+    the test budget, resolve the phase transition (gold packs 7 of 11
+    finite rungs at T <= 2; a starved log-uniform ladder has 1 there),
+    and space every non-coldest link at the gold per-link scale. The
+    extreme spike tip below T ~ 1.15 keeps refining across updates (the
+    coldest link still carries several gold nats when the freeze fires)
+    — the refinement-rate measurement is E3's job; this battery pins the
+    discovered structure.
     """
     reset_seed_guard_for_tests()
     data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
     data['name'] = 'adaptive_cake'
-    data['seed'] = 555
+    data['seed'] = seed
     data['likelihood'] = {'name': 'cake', 'n_par': 5, 'cutoff': 10}
     data['ladder'] = {'kind': 'geometric', 'n_chain': 12, 'n_cold': 1}
     data['run'] = {'n_steps': 512 * 320, 'block_size': 512, 'store_thin': 16, 'n_record': -1, 'checkpoint_every_blocks': 160}
-    data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 8, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3}
+    data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 8, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': 288}
     spec = RunSpec.from_dict(data)
 
     artifact_path = run_from_spec(spec, tmp_path)
@@ -223,9 +313,10 @@ def test_adaptive_entropy_converges_to_gold(tmp_path) -> None:
 
     with h5py.File(str(artifact_path), 'r') as hf:
         assert bool(hf['ladder/history'].attrs['frozen']), 'run must end frozen without human input'
+        assert str(hf['ladder/history'].attrs['frozen_by']) == 'criterion', 'freeze must fire via the coupling witness, not the budget'
         final_Ts = np.asarray(hf['ladder/Ts'])
-        history_Ts = np.asarray(hf['ladder/history/Ts'])
-    assert history_Ts.shape[0] >= 8
+        history_applied = np.asarray(hf['ladder/history/applied'])
+    assert int(history_applied.sum()) >= 8
 
     # gold dS profile: evaluate the gold cumulative entropy at the adaptive
     # rung positions (interpolated dS profile comparison)
@@ -250,11 +341,119 @@ def test_adaptive_entropy_converges_to_gold(tmp_path) -> None:
     assert float(increments[0]) <= 8.0
 
 
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_freeze_requires_coupling_witness(monkeypatch) -> None:
+    """Acceptance-adjacent: rebuild stability alone must not freeze (plan Phase 5).
+
+    Identical configuration and streams to
+    test_post_freeze_bit_exact_equivalence, which freezes via the
+    criterion — but with the coupling witness suppressed (a pure
+    observer, so RNG streams are unchanged) the controller must keep
+    holding instead of certifying stability it cannot corroborate.
+    """
+    spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
+    seed_run(spec.seed)
+    monkeypatch.setattr(TrackerManager, 'get_n_cycles', lambda self: np.zeros(self.n_chain, dtype=np.int64))
+
+    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
+    like_obj = CountingLikelihood(build_likelihood(spec))
+    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+        controller.post_block(sampler)
+
+    assert not controller.frozen
+    assert controller.frozen_by == ''
+    # the schedule reached the holding pattern (sub-threshold rebuilds at
+    # the target window); only the witness kept the freeze from firing
+    n_consecutive = controller.freeze_criterion[1]
+    assert all(not record.applied for record in controller.history[-n_consecutive:])
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_budget_freeze_records_reason() -> None:
+    """A run exhausting budget_blocks unfrozen hard-freezes with frozen_by='budget' (plan Phase 5)."""
+    spec = make_tiny_spec(n_steps=64 * 8, block_size=64)
+    seed_run(spec.seed)
+    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=8, budget_blocks=4)
+    like_obj = CountingLikelihood(build_likelihood(spec))
+    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+        controller.post_block(sampler)
+
+    assert controller.frozen
+    assert controller.frozen_by == 'budget'
+    # adaptation was capped before the first cadence: the hook never ran
+    # and the remaining blocks took the post-freeze fixed-ladder path
+    assert len(sampler.tracker_manager.rt_segment_itrns) == 0
+    assert controller.history == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_eggbox_mode_retention_gate() -> None:
+    """Acceptance 5 (pre-E3): occupied-mode counts among cold-slot DE-buffer columns are preserved across a support-extension update.
+
+    'Cold-slot' is operationalized as the coldest half of the ladder —
+    where mode identity is physically meaningful and where the
+    extension's many-to-one crowd-out concentrates. Failure reopens the
+    extension-case buffer rule as the D6 pilot A/B before E3 runs.
+    """
+    n_par = 2
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['name'] = 'eggbox_gate'
+    data['likelihood'] = {'name': 'eggbox', 'n_par': n_par}
+    data['run'] = {'n_steps': 64 * 8, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 4}
+    spec = RunSpec.from_dict(data)
+    seed_run(spec.seed)
+
+    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4., T_min=4., T_max=100., n_inf_final=1)
+    sampler, _like_obj = build_sampler(spec, T_ladder=hot_ladder)
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+
+    def occupied_modes(buffer_cold_slice: np.ndarray) -> set[tuple[int, ...]]:
+        # eggbox maxima sit at x_i = 2 pi k: nearest-mode assignment per row
+        rows = buffer_cold_slice.reshape(-1, n_par)
+        return {tuple(mode) for mode in np.round(rows / (2. * np.pi)).astype(int)}
+
+    de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
+    n_cold_half = spec.n_chain // 2
+    modes_before = occupied_modes(de_manager.de_buffer[:, :n_cold_half, :])
+
+    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1., T_min=1., T_max=100., n_inf_final=1)
+    sampler.apply_ladder_update(extended, 'at_or_hotter')
+    modes_after = occupied_modes(de_manager.de_buffer[:, :n_cold_half, :])
+
+    assert len(modes_before) > 1, 'test premise: the cold columns must start multimodal'
+    assert len(modes_after) >= len(modes_before)
+
+
+def test_adaptive_spec_validation() -> None:
+    """[adaptive] rejects unknown keys, missing budget_blocks, and sub-unit T_min_factor."""
+    base: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    base['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8}
+    RunSpec.from_dict(base)
+
+    bad_tables = (
+        {'mode': 'entropy', 'budget_blocks': 8, 'forgeting': 0.15},    # typo'd key must fail loudly
+        {'mode': 'entropy'},                                           # budget_blocks is required
+        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.9},  # sub-unit rungs locked out pending amendment
+    )
+    for table in bad_tables:
+        data = dict(base)
+        data['adaptive'] = table
+        with pytest.raises(SpecError):
+            RunSpec.from_dict(data)
+
+
 def test_adaptive_modes_sync_and_validation() -> None:
     """Spec-layer mode set matches the controller's; bad modes raise."""
     assert ADAPTIVE_MODES == adaptive_module.ADAPTIVE_MODES
     with pytest.raises(ValueError, match='unknown adaptive mode'):
         AdaptiveLadderController(mode='nonsense')
+    with pytest.raises(ValueError, match='budget_blocks'):
+        AdaptiveLadderController(mode='entropy')
 
 
 # reuse the shared guard fixture from the harness tests

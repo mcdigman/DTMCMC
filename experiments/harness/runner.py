@@ -313,13 +313,25 @@ def build_sampler(
 
 
 def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderController:
-    """Construct the adaptive controller from a spec [adaptive] table."""
+    """Construct the adaptive controller from a spec [adaptive] table.
+
+    Keys (validated against ADAPTIVE_KEYS at spec load; see
+    experiments/specs/adaptive_cake12.toml for a worked example):
+    `mode` ('entropy'|'length'|'acceptance', required), `budget_blocks`
+    (hard adaptation cap in blocks, required, plan Phase 5),
+    `update_every_blocks` (rebuild cadence, default 8), `forgetting`
+    (pool down-weighting per evaluation, default 0), `freeze_dlog` /
+    `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
+    `T_min_factor` (must be 1 until a follow-up plan amendment),
+    `n_prior_draws` (hot-anchor prior sample size, default 256).
+    """
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),
         update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
         forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
         freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
         T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
+        budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
     )
 
@@ -384,13 +396,13 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
             write_artifact(
                 artifact_path, spec, sampler, like_obj.n_evals, provenance,
                 finalized=False, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
-                ladder_history=controller.history if controller is not None else None,
+                adaptive_state=controller,
             )
 
     record_checkpoint_metrics()
     write_artifact(
         artifact_path, spec, sampler, like_obj.n_evals, provenance,
         finalized=True, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
-        ladder_history=controller.history if controller is not None else None,
+        adaptive_state=controller,
     )
     return artifact_path

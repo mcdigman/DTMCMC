@@ -9,11 +9,21 @@ knobs (update every 8 blocks, no forgetting, freeze at max |dlog T| <
 Annealing schedule: the initial ladder is anchored at the hot end from
 prior-draw logL statistics; each update extends the cold edge of the
 spacing window by a fixed factor toward the target (optionally below
-T=1 via T_min_factor, plan S2) and rebuilds the ladder from the pooled
-first two logL cumulants measured so far — mode-agnostic, so the
-entropy, length, and acceptance spacing rules share one schedule.
-Adaptation ends in a hard freeze; afterwards the code path is identical
-to a fixed-ladder sampler (the hook is never called again).
+T=1 via T_min_factor, plan S2 — spec-rejected until a follow-up
+amendment fixes storage semantics) and rebuilds the ladder from the
+pooled first two logL cumulants measured so far — mode-agnostic, so
+the entropy, length, and acceptance spacing rules share one schedule.
+Sub-threshold rebuilds (within the freeze dlog threshold) are held,
+not applied — no remap, no tracker segmentation — so ladder segments
+lengthen as adaptation converges (plan D6/Phase 5).
+
+Adaptation ends in a hard freeze gated by a coupling witness: at least
+one completed cold<->hot round trip within the open ladder segment, so
+rebuild stability alone can never certify a starved (uncoupled) ladder.
+A run reaching budget_blocks unfrozen hard-freezes anyway with
+frozen_by='budget' recorded so E3 analysis can segregate such runs.
+After the freeze the code path is identical to a fixed-ladder sampler
+(the hook is never called again).
 """
 
 from dataclasses import dataclass, field
@@ -75,10 +85,17 @@ _CAP_RATIO_BOUNDS = (1.05, 1.35)
 
 @dataclass
 class LadderUpdateRecord:
-    """One ladder-update history entry (recorded in the artifact)."""
+    """One rebuild-evaluation history entry (recorded in the artifact).
+
+    One row per cadence evaluation: applied updates and held
+    sub-threshold rebuilds both appear, distinguished by `applied`, so
+    E3 can see the hold pattern and the freeze decision even when
+    nothing was applied. Ts is the candidate ladder either way.
+    """
 
     block_index: int
     Ts: NDArray[np.floating]
+    applied: bool
     t_cold_window: float
     max_dlog_t: float
     n_pool_points: int
@@ -100,12 +117,19 @@ class AdaptiveLadderController:
         Per-update multiplicative down-weighting of previously pooled
         cumulants (0 = cumulative, the pilot default)
     freeze_criterion: tuple[float, int]
-        (max |dlog T| threshold, consecutive updates) — hard freeze once
-        the rebuilt ladder moves less than the threshold this many
-        updates in a row with the cold window at its target
+        (max |dlog T| threshold, consecutive updates) — freeze
+        eligibility once the rebuilt ladder moves less than the
+        threshold this many evaluations in a row with the cold window at
+        its target; the freeze itself additionally requires the coupling
+        witness (at least one completed round trip in the open segment)
     T_min_factor: float
         Final cold-edge target as a multiple of T=1 (values < 1 place
-        rungs slightly below the readout temperature, plan S2)
+        rungs slightly below the readout temperature, plan S2;
+        spec-rejected until a follow-up amendment)
+    budget_blocks: int
+        Hard adaptation cap in blocks, spec-owned and required: a run
+        reaching it unfrozen hard-freezes with frozen_by='budget' so a
+        post-freeze fixed-ladder segment still runs (plan Phase 5)
     """
 
     mode: str = 'entropy'
@@ -113,19 +137,22 @@ class AdaptiveLadderController:
     forgetting: float = 0.
     freeze_criterion: tuple[float, int] = (0.02, 3)
     T_min_factor: float = 1.
+    budget_blocks: int = -1
     n_prior_draws: int = 256
     n_inf_final: int = 1
-    # updates with the window at target before freeze counting begins:
+    # evaluations with the window at target before freeze counting begins:
     # cold-end statistics need dwell time before stability is meaningful
     min_updates_at_target: int = 6
 
     frozen: bool = field(default=False, init=False)
+    frozen_by: str = field(default='', init=False)
     _updates_at_target: int = field(default=0, init=False)
     history: list[LadderUpdateRecord] = field(default_factory=list, init=False)
     _pool_Ts: list[float] = field(default_factory=list, init=False)
     _pool_means: list[float] = field(default_factory=list, init=False)
     _pool_vars: list[float] = field(default_factory=list, init=False)
     _pool_weights: list[float] = field(default_factory=list, init=False)
+    _prior_anchor_retired: bool = field(default=False, init=False)
     _blocks_seen: int = field(default=0, init=False)
     _blocks_since_update: int = field(default=0, init=False)
     _t_cold_window: float = field(default=np.inf, init=False)
@@ -138,6 +165,9 @@ class AdaptiveLadderController:
             raise ValueError(msg)
         if self.update_every_blocks < 1 or not 0. <= self.forgetting < 1. or self.T_min_factor <= 0.:
             msg = 'invalid adaptive controller parameters'
+            raise ValueError(msg)
+        if self.budget_blocks < 1:
+            msg = 'budget_blocks is required (spec-owned, plan Phase 5) and must be >= 1'
             raise ValueError(msg)
 
     @property
@@ -186,13 +216,16 @@ class AdaptiveLadderController:
         if e1_blocks.shape[0] == 0:
             return
 
-        # once real measurements exist, retire the prior pseudo-anchor: its
-        # huge variance otherwise dominates the hot-segment trapezoid and
-        # over-spaces the hottest link relative to the measured profile
-        if np.inf in self._pool_Ts:
+        # once real measurements exist, retire the prior pseudo-anchor —
+        # exactly once: its huge variance otherwise dominates the
+        # hot-segment trapezoid and over-spaces the hottest link relative
+        # to the measured profile. Measured beta=0 rows added below pool
+        # across segments like any other temperature.
+        if not self._prior_anchor_retired:
             idx_prior = self._pool_Ts.index(np.inf)
             for pool in (self._pool_Ts, self._pool_means, self._pool_vars, self._pool_weights):
                 pool.pop(idx_prior)
+            self._prior_anchor_retired = True
 
         weight = float(e1_blocks.shape[0])
         seg_means = e1_blocks.mean(axis=0)
@@ -217,11 +250,25 @@ class AdaptiveLadderController:
                 self._pool_vars.append(float(seg_vars[itrt]))
                 self._pool_weights.append(weight)
 
+    def _pool_keep_mask(self, window: float) -> NDArray[np.bool_]:
+        """Pool rows entering a rebuild clipped at a cold window.
+
+        Length mode additionally excludes beta=0 rows, matching the
+        file-driven length-arm convention: the sqrt(Var) integrand is
+        nonzero at beta=0, so an inf row would shift rungs hotter
+        (see LengthTemperatureLadder), while the file arms never see one.
+        """
+        Ts_pool = np.asarray(self._pool_Ts)
+        keep = Ts_pool >= window
+        if self.mode == 'length':
+            keep &= np.isfinite(Ts_pool)
+        return keep
+
     def _pooled_ds_per_link(self, window: float, n_links: int) -> float:
         """Per-link dS of the pooled spacing integral clipped at a window."""
         Ts_pool = np.asarray(self._pool_Ts)
         vars_pool = np.asarray(self._pool_vars)
-        keep = Ts_pool >= window
+        keep = self._pool_keep_mask(window)
         if int(np.count_nonzero(keep)) < 2:
             return 0.
         p_exp, q_exp = (0.5, 0.) if self.mode == 'length' else (1., 1.)
@@ -237,6 +284,7 @@ class AdaptiveLadderController:
             if self._pooled_ds_per_link(candidate, n_links) <= DS_LINK_CAP:
                 self._t_cold_window = candidate
                 return
+        # even the smallest step blows the budget: hold and keep refining
 
     def _cap_cold_links(self, ladder: TemperatureLadder, n_cold: int) -> TemperatureLadder:
         """Enforce the cold-edge coupling cap on a rebuilt ladder.
@@ -273,7 +321,6 @@ class AdaptiveLadderController:
             return ladder
         Ts[finite] = capped
         return TemperatureLadder(n_cold, Ts)
-        # even the smallest step blows the budget: hold and keep refining
 
     def _build_ladder(self, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Rebuild the ladder from pooled cumulants over the extended window."""
@@ -283,7 +330,7 @@ class AdaptiveLadderController:
         means_pool = np.asarray(self._pool_means)
         vars_pool = np.asarray(self._pool_vars)
 
-        keep = Ts_pool >= self._t_cold_window
+        keep = self._pool_keep_mask(self._t_cold_window)
         Ts_use, means_use, vars_use = Ts_pool[keep], means_pool[keep], vars_pool[keep]
         if float(np.min(Ts_use[np.isfinite(Ts_use)], initial=np.inf)) > self._t_cold_window:
             # extend the cold edge with the coldest measured statistics so
@@ -304,12 +351,27 @@ class AdaptiveLadderController:
         return self._cap_cold_links(ladder, n_cold)
 
     def post_block(self, sampler: DTMCMCSampler) -> bool:
-        """Advance the schedule after a block; returns True when the ladder updated."""
+        """Advance the schedule after a block; returns True when the ladder updated.
+
+        Sub-threshold rebuilds (max |dlog T| within the freeze
+        threshold) are held, not applied — no remap, no tracker
+        segmentation — so segments lengthen as adaptation converges and
+        the coupling-witness clock is never reset by a rebuild that
+        changed nothing (plan D6/Phase 5). The hard freeze requires both
+        the stability criterion and the witness; exhausting
+        budget_blocks freezes unconditionally with the reason recorded.
+        """
         if self.frozen:
+            return False
+        blocks_done = sampler.itrn // sampler.block_size
+        if blocks_done >= self.budget_blocks:
+            self.frozen = True
+            self.frozen_by = 'budget'
             return False
         self._blocks_since_update += 1
         if self._blocks_since_update < self.update_every_blocks:
             return False
+        self._blocks_since_update = 0
 
         self._absorb_segment_stats(sampler)
         at_target_before = self._t_cold_window <= self.t_cold_target
@@ -322,29 +384,39 @@ class AdaptiveLadderController:
         else:
             max_dlog = np.inf
 
-        sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
-        self._blocks_since_update = 0
+        dlog_thresh, n_consecutive = self.freeze_criterion
+        applied = max_dlog >= dlog_thresh
+        if applied:
+            sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
 
-        # hard-freeze bookkeeping: only refinements with the window already
-        # at its target, and after a minimum dwell there, count toward the
-        # criterion — cold-end statistics need time before stability means
-        # convergence rather than starvation
+        # freeze bookkeeping: only holds with the window already at its
+        # target, and after a minimum dwell there, count toward the
+        # stability criterion — cold-end statistics need time before
+        # stability means convergence rather than starvation
         if at_target_before:
             self._updates_at_target += 1
-        dlog_thresh, n_consecutive = self.freeze_criterion
-        if at_target_before and self._updates_at_target > self.min_updates_at_target and max_dlog < dlog_thresh:
+        if at_target_before and self._updates_at_target > self.min_updates_at_target and not applied:
             self._consecutive_small += 1
         else:
             self._consecutive_small = 0
-        if self._consecutive_small >= n_consecutive:
+
+        # coupling witness (plan Phase 5): at least one completed
+        # cold<->hot round trip within the open ladder segment — the
+        # segment-reset cycle counters are exactly the per-open-segment
+        # round-trip counts of the Phase 2 event log. Stability under an
+        # active cold-edge clamp is manufactured; traversal is not.
+        witness = bool(np.any(sampler.tracker_manager.get_n_cycles() >= 1))
+        if self._consecutive_small >= n_consecutive and witness:
             self.frozen = True
+            self.frozen_by = 'criterion'
 
         self.history.append(LadderUpdateRecord(
-            block_index=sampler.itrn // sampler.block_size,
+            block_index=blocks_done,
             Ts=np.asarray(new_ladder.Ts).copy(),
+            applied=applied,
             t_cold_window=self._t_cold_window,
             max_dlog_t=max_dlog,
             n_pool_points=len(self._pool_Ts),
             frozen_after=self.frozen,
         ))
-        return True
+        return applied

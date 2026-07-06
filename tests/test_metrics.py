@@ -230,6 +230,44 @@ def test_round_trip_statistics_synthetic() -> None:
     assert sorted(hot_times.tolist()) == [2, 3, 3]
 
 
+def test_round_trip_metrics_do_not_pair_across_segments() -> None:
+    """Arrivals in different ladder segments never pair (plan D6, amended per PR #16 review).
+
+    The PR #16 review's straddle example: a pre-update HOT arrival and a
+    post-update COLD arrival by the same (restarted) walker id counted
+    as one complete round trip without segmentation.
+    """
+    events = np.array([
+        [0, 10, RT_ARRIVED_HOT],   # before the ladder update
+        [0, 20, RT_ARRIVED_COLD],  # after: walker labels restarted
+    ], dtype=np.int64)
+
+    # unsegmented (fixed-ladder) behavior pairs them
+    assert int(round_trip_counts(events, 1).sum()) == 1
+    # a segment boundary between the arrivals forbids the pairing
+    boundaries = np.array([15], dtype=np.int64)
+    assert int(round_trip_counts(events, 1, boundaries).sum()) == 0
+    assert fraction_walkers_with_round_trip(events, 1, boundaries) == 0.
+    assert round_trip_rate(events, 1, 20, boundaries) == 0.
+
+    # an event exactly at the boundary iteration belongs to the closing
+    # segment (the update happens after the block's last step)
+    events_at_boundary = np.array([
+        [0, 10, RT_ARRIVED_HOT],
+        [0, 15, RT_ARRIVED_COLD],
+    ], dtype=np.int64)
+    assert int(round_trip_counts(events_at_boundary, 1, boundaries).sum()) == 1
+
+    # same-direction gaps never span a boundary either
+    events_gaps = np.array([
+        [0, 3, RT_ARRIVED_COLD],
+        [0, 10, RT_ARRIVED_COLD],
+        [0, 20, RT_ARRIVED_COLD],
+    ], dtype=np.int64)
+    cold_times, _hot_times = round_trip_times(events_gaps, 1, boundaries)
+    assert sorted(cold_times.tolist()) == [7]
+
+
 def test_flow_fraction_normalization() -> None:
     """Flow fractions divide counts and mark unlabeled entries NaN."""
     up = np.array([[2, 0], [4, 0]], dtype=np.int64)

@@ -1,0 +1,49 @@
+name = 'adaptive_cake12'
+seed = 555
+
+[likelihood]
+name = 'cake'
+n_par = 5
+cutoff = 10
+
+[ladder]
+# the [ladder] table sizes the chain bank; the adaptive controller
+# replaces the geometric ladder with its prior-anchored initial ladder
+# before the first block (plan Phase 5)
+kind = 'geometric'
+n_chain = 12
+n_cold = 1
+
+[run]
+n_steps = 163840
+block_size = 512
+store_thin = 16
+n_record = -1
+checkpoint_every_blocks = 160
+
+# the adaptive burn-in controller (plan §4 Phase 5). Keys are validated
+# against ADAPTIVE_KEYS: an unknown key fails the spec instead of
+# silently running with a default.
+[adaptive]
+# spacing rule: 'entropy' | 'length' | 'acceptance'
+mode = 'entropy'
+# hard adaptation cap in blocks (required): a run still unfrozen here
+# hard-freezes with frozen_by = 'budget' recorded, leaving a post-freeze
+# fixed-ladder segment before the run ends
+budget_blocks = 288
+# ladder rebuild cadence in blocks (block-boundary updates, plan D6)
+update_every_blocks = 8
+# per-evaluation multiplicative down-weighting of previously pooled
+# cumulants (0 = fully cumulative)
+forgetting = 0.15
+# stability criterion: freeze eligibility once the rebuilt ladder moves
+# less than freeze_dlog (max |dlog T|) for freeze_consecutive
+# evaluations in a row; the freeze itself additionally requires the
+# coupling witness (a completed round trip in the open ladder segment)
+freeze_dlog = 0.05
+freeze_consecutive = 3
+# cold-edge target as a multiple of T=1; must be 1 until a follow-up
+# plan amendment fixes sub-unit rung storage semantics
+T_min_factor = 1.0
+# prior draws anchoring the initial hot end (charged to the run, plan C3)
+n_prior_draws = 256

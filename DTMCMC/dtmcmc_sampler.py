@@ -388,29 +388,45 @@ class DTMCMCSampler:
         RNG-neutral: pure deterministic state remapping, no draws. The
         hook rebinds the ladder AND the betas/Ts aliases (the __init__
         aliases make external ladder swaps a stale-alias footgun) plus
-        every jump manager's ladder reference, remaps chain states to the
-        nearest new temperature (logLs carry over: they are
-        T-independent), remaps DE-buffer columns per remap_rule (default
-        at-or-hotter per D6), refreshes the temperature-dependent Fisher
-        scales from the existing diagonals (matrices themselves may stay
-        stale by up to fisher_downsample blocks, per D6), and segments
-        the trackers. Walker identities restart with the new segment,
-        matching the cycle-tracker reset.
+        every jump manager's ladder reference. Chain states remap by
+        temperature rank — for equal-size sorted ladders the identity, a
+        bijection, so no walker state is cloned or discarded and an
+        identical-ladder update is a strict no-op for states, logLs, and
+        DE buffers (D6, amended per PR #16 review). logLs carry over
+        (they are T-independent). DE-buffer columns remap per remap_rule
+        (default at-or-hotter per D6); any rung whose column was
+        resourced then gets its current state written at the buffer's
+        most recently written row, restoring the self-inclusion S4/C4
+        rely on. Fisher scales refresh from the existing diagonals
+        (matrices themselves may stay stale by up to fisher_downsample
+        blocks, per D6), and the trackers are segmented — including a
+        round-trip event-log boundary. Walker identities restart with
+        the new segment, matching the cycle-tracker reset.
         """
         assert new_ladder.n_chain == self.n_chain
         assert new_ladder.n_cold == self.n_cold
+        # the rank remap relies on the sorted-ladder convention (D6);
+        # clip infs so duplicate hot anchors do not produce inf - inf
+        assert np.all(np.diff(np.minimum(self.Ts, 1.e300)) >= 0.)
+        assert np.all(np.diff(np.minimum(new_ladder.Ts, 1.e300)) >= 0.)
 
         self.tracker_manager.segment_for_ladder_update(self.itrn)
 
-        state_sources = remap_ladder_indices(self.Ts, new_ladder.Ts, 'nearest')
-        self.samples[0] = self.samples[0][state_sources]
-        self.logLs[0] = self.logLs[0][state_sources]
+        # state remap by temperature rank: identity for equal-size sorted
+        # ladders, so samples/logLs stay in their slots; only the walker
+        # labels restart, consistent with the cycle-tracker reset
         self.chain_track[0] = np.arange(0, self.n_chain)
 
         buffer_sources = remap_ladder_indices(self.Ts, new_ladder.Ts, remap_rule)
+        resourced = np.flatnonzero(buffer_sources != np.arange(self.n_chain))
         for manager in self.proposal_manager.managers:
             if isinstance(manager, DEJumpManager):
                 manager.de_buffer[:, :, :] = manager.de_buffer[:, buffer_sources, :]
+                # self-inclusion restoration (D6): conditional, so an
+                # identical-ladder update stays bit-exact
+                row_newest = (manager.itrde_write - 1) % manager.de_size
+                for itrt in resourced:
+                    manager.de_buffer[row_newest, itrt, :] = self.samples[0][itrt]
 
         self.T_ladder = new_ladder
         self.betas = new_ladder.betas

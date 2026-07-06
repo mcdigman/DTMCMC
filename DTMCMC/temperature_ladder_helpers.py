@@ -834,18 +834,26 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
 
 
 def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:
-    """Old-ladder source index feeding each new-ladder slot on a ladder update.
+    """Old-ladder source column feeding each new-ladder slot on a ladder update.
 
-    The D6 remap semantics, engine-owned so the apply_ladder_update hook
-    and the adaptive controller share one definition:
+    The D6 DE-buffer remap semantics, engine-owned so the
+    apply_ladder_update hook and any pilot A/B share one definition.
+    Chain states do not use these rules: per D6 they remap by
+    temperature rank, which for equal-size sorted ladders is the
+    identity.
 
-    - 'nearest': nearest old temperature in log T (used for chain states).
     - 'at_or_hotter': the coolest old temperature at-or-hotter than the
-      new one, falling back to the hottest old rung (the D6 DE-buffer
-      default: DE recovers much faster from overdispersion than
-      underdispersion, confirmed by the Phase 4 remap A/B pilot).
+      new one, falling back to the hottest old rung (the D6 default: DE
+      recovers much faster from overdispersion than underdispersion).
+      The Phase 4 remap A/B covered matched-support transplants only;
+      under cold support extension this rule is many-to-one and stands
+      subject to the Phase 5 mode-retention gate.
+    - 'nearest': nearest old temperature in log T (a pilot A/B arm).
 
-    Infinite temperatures are clipped to 1e300 for the log comparison.
+    Exact-temperature ties resolve slot-preservingly, else to the lowest
+    tied slot (D6), so an identical-ladder update — including duplicate
+    temperatures — maps every slot to itself. Infinite temperatures are
+    clipped to 1e300 for the log comparison.
     """
     sources = np.zeros(Ts_new.size, dtype=np.int64)
     Ts_old_clip = np.minimum(Ts_old, 1.e300)
@@ -854,12 +862,17 @@ def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floati
         T_new_clip = min(Ts_new[itrt], 1.e300)
         if remap_rule == 'at_or_hotter':
             hotter = np.flatnonzero(Ts_old_clip >= T_new_clip)
-            sources[itrt] = int(hotter[np.argmin(Ts_old_clip[hotter])]) if hotter.size else int(np.argmax(Ts_old_clip))
+            if hotter.size:
+                tied = hotter[Ts_old_clip[hotter] == Ts_old_clip[hotter].min()]
+            else:
+                tied = np.flatnonzero(Ts_old_clip == Ts_old_clip.max())
         elif remap_rule == 'nearest':
-            sources[itrt] = int(np.argmin(np.abs(log_old - np.log(T_new_clip))))
+            log_dist = np.abs(log_old - np.log(T_new_clip))
+            tied = np.flatnonzero(log_dist == log_dist.min())
         else:
             msg = f'unknown remap rule {remap_rule!r}'
             raise ValueError(msg)
+        sources[itrt] = itrt if itrt in tied else int(tied[0])
     return sources
 
 

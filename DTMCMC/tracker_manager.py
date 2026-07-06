@@ -102,6 +102,11 @@ class TrackerManager:
         # detected per step in process_chain_cycles and flushed per block
         self.rt_event_buffer: NDArray[np.int64] = np.zeros((block_size * (n_cold + 1), 3), dtype=np.int64)
         self.rt_event_log: list[NDArray[np.int64]] = []
+        # ladder-segment boundaries for the event log: the iteration of
+        # each ladder update; events at or before a boundary belong to
+        # the closing segment, and round-trip metrics must never pair
+        # arrivals across segments (plan D6)
+        self.rt_segment_itrns: list[int] = []
 
         # per-block flow counts: entry [itrt] counts (step, resident walker)
         # pairs at temperature index itrt whose last extreme visit was cold
@@ -168,7 +173,9 @@ class TrackerManager:
         Counts must not straddle a ladder change (plan D6): the current
         tracker snapshots are archived with the update iteration, then
         the cycle tracker returns to its initialized state — in-flight
-        extreme-visit records refer to the old ladder. Cumulative
+        extreme-visit records refer to the old ladder. A segment
+        boundary is recorded for the round-trip event log so metrics
+        never pair arrivals across ladder updates. Cumulative
         accept/exchange/ESD records stay cumulative; segmentation for
         them is recovered by differencing archive entries.
         """
@@ -178,10 +185,15 @@ class TrackerManager:
         self.esd_archive.append(self.esd_record.copy())
         self.esd_exchange_archive.append(self.esd_exchange.copy())
         self.itrn_archive.append(itrn)
+        self.rt_segment_itrns.append(itrn)
 
         self.cycle_tracker[:] = 0
         self.cycle_tracker[0][self.n_cold:] = -1
         self.cycle_tracker[1][:self.n_chain - 1] = -1
+
+    def get_rt_segment_itrns(self) -> NDArray[np.int64]:
+        """Get the round-trip event-log segment boundaries as an array."""
+        return np.asarray(self.rt_segment_itrns, dtype=np.int64)
 
     def get_rt_events(self) -> NDArray[np.int64]:
         """Get the full round-trip event log as an (n_events, 3) array."""

@@ -56,6 +56,20 @@ PROPOSAL_SECTIONS: frozenset[str] = frozenset({
 # ADAPTIVE_MODES (spec stays a pure-data layer, so no runtime import)
 ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
 
+# the [adaptive] table's full key set: these knobs feed the paper, so a
+# typo must fail loudly rather than silently run with a default (see
+# build_adaptive_controller for semantics and defaults)
+ADAPTIVE_KEYS: frozenset[str] = frozenset({
+    'mode',
+    'update_every_blocks',
+    'forgetting',
+    'freeze_dlog',
+    'freeze_consecutive',
+    'T_min_factor',
+    'budget_blocks',
+    'n_prior_draws',
+})
+
 _BARE_KEY_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
 
@@ -306,6 +320,18 @@ class RunSpec:
             adaptive_mode = self.adaptive.get('mode')
             if adaptive_mode not in ADAPTIVE_MODES:
                 msg = f'unknown adaptive mode {adaptive_mode!r}; known: {sorted(ADAPTIVE_MODES)}'
+                raise SpecError(msg)
+            unknown_keys = set(self.adaptive) - ADAPTIVE_KEYS
+            if unknown_keys:
+                msg = f'unknown [adaptive] keys {sorted(unknown_keys)}; known: {sorted(ADAPTIVE_KEYS)}'
+                raise SpecError(msg)
+            if 'budget_blocks' not in self.adaptive:
+                msg = '[adaptive] requires budget_blocks (hard adaptation cap in blocks, plan Phase 5)'
+                raise SpecError(msg)
+            t_min_factor = self.adaptive.get('T_min_factor', 1)
+            if isinstance(t_min_factor, bool) or not isinstance(t_min_factor, int | float) or float(t_min_factor) != 1.:
+                msg = ('adaptive.T_min_factor must be 1: sub-unit auxiliary rungs are rejected until a '
+                       'follow-up plan amendment fixes storage and cold-extreme semantics (plan Phase 5)')
                 raise SpecError(msg)
             for key, value in self.adaptive.items():
                 _check_toml_value(value, f'adaptive.{key}')
