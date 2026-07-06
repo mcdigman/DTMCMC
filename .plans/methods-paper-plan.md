@@ -154,12 +154,13 @@ Secondary demonstrations (exploratory, run if pilot budgets allow; no pre-regist
   T-independent); DE buffer columns are **not reset** — each new temperature inherits the
   buffer column of the nearest old temperature **at-or-hotter** (empirical rule: DE recovers
   much faster from overdispersion than underdispersion), exact-T ties resolved
-  slot-preservingly; after the remap, any rung whose state or buffer column was resourced
-  has its current state written into its buffer column at the current write row (restores
-  the self-inclusion S4/C4 rely on; deterministic, RNG-neutral, and a no-op when nothing
-  moved). The Phase 4 remap A/B covered matched-support transplants only; under support
-  extension at-or-hotter is many-to-one (new sub-support rungs share the old coldest
-  column) and stands only subject to the Phase 5 mode-retention gate.
+  slot-preservingly (else lowest tied slot); after the remap, any rung whose state or
+  buffer column was resourced has its current state written into its buffer column at the
+  current write row (restores the self-inclusion S4/C4 rely on; deterministic, RNG-neutral,
+  and a no-op when nothing moved). The Phase 4 remap A/B covered matched-support
+  transplants only; under support extension at-or-hotter is many-to-one (new sub-support
+  rungs share the old coldest column) and stands only subject to the Phase 5
+  mode-retention gate.
   Cycle/exchange trackers **and the round-trip event log** are segmented at each update
   (counts must not straddle a ladder change; round-trip metrics must not pair arrival
   events across segments). Adaptation ends in a **hard freeze** gated by a coupling witness
@@ -334,10 +335,13 @@ metrics never pair events across updates (amended per PR #16 review).
 - Behavior per D6 (block-boundary updates, at-or-hotter buffer remap, tracker segmentation,
   hard freeze). Freeze eligibility requires a coupling witness: at least one completed
   cold↔hot round trip within the current ladder segment (Phase 2 event log; amended per
-  PR #16 review). A run reaching `budget_blocks` unfrozen (spec-owned via the `[adaptive]`
-  table, capping adaptation so a post-freeze fixed-ladder segment still runs; per PR #17
-  review) hard-freezes anyway with the reason recorded, so E3 analysis can segregate such
-  runs.
+  PR #16 review). Sub-threshold rebuilds (within the freeze dlog threshold) are held, not
+  applied — no remap, no segmentation — so segments lengthen as adaptation converges and
+  the witness clock is not reset; freeze eligibility is evaluated against the open segment
+  (per PR #17 review). A run reaching `budget_blocks` unfrozen (spec-owned via the
+  `[adaptive]` table, capping adaptation so a post-freeze fixed-ladder segment still runs;
+  per PR #17 review) hard-freezes anyway with the reason recorded, so E3 analysis can
+  segregate such runs.
   Annealing schedule: initial ladder anchored at the hot end from prior-draw
   logL statistics (reaches ΔS ~2–3 immediately), extended/refined toward cold (optionally
   slightly below T=1 to suppress cold-edge effects, per S2) as data accumulates. Schedule
@@ -363,8 +367,8 @@ Acceptance criteria:
    n_cold > 1) is a strict no-op for states, logLs, and DE buffers; the state remap is a
    bijection on every update; every resourced rung's buffer column contains its current
    state post-update.
-5. Mode-retention gate (pre-E3): on eggbox, occupied-mode counts among cold-slot states and
-   DE-buffer columns are preserved across support-extension updates; failure reopens the
+5. Mode-retention gate (pre-E3): on eggbox, occupied-mode counts among cold-slot DE-buffer
+   columns are preserved across support-extension updates; failure reopens the
    extension-case buffer rule as the D6 pilot A/B before E3 runs.
 
 ### Phase 6 — Production battery + analysis
