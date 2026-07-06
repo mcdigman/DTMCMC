@@ -54,7 +54,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
         itra = 0
         mode_select = np.random.randint(0,2)
         draw_phase = np.random.uniform(0.,2*np.pi)
-        draw_dist = np.random.normal(r1,w)
+        draw_dist = np.random.normal(r,w)
         draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
         if mode_select==0:
             draw_loc = draw_coord+c1
@@ -68,7 +68,7 @@ def gen_draws(n_draws,n_par,attempt_lim=10000):
 
             mode_select = np.random.randint(0,2)
             draw_phase = np.random.uniform(0.,2*np.pi)
-            draw_dist = np.random.normal(r1,w)
+            draw_dist = np.random.normal(r,w)
             draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
             if mode_select==0:
                 draw_loc = draw_coord+c1
