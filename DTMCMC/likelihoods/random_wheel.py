@@ -55,7 +55,9 @@ class RandomWheelLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
     def __init__(self, n_par=2) -> None:
         """Create the class and store any object specific variables"""
-        assert n_par == 2
+        if n_par != 2:
+            msg = 'RandomWheelLikelihood is 2D; n_par must be 2'
+            raise ValueError(msg)
         low_lims = np.full(n_par, low_lim)
         high_lims = np.full(n_par, high_lim)
 

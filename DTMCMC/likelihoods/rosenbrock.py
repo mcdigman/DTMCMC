@@ -6,8 +6,8 @@ from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 #constants
 
-low_lim = -10
-high_lim = 10
+low_lim = -10.
+high_lim = 10.
 
 
 @njit()
@@ -23,7 +23,9 @@ class RosenbrockLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
     def __init__(self,n_par=20) -> None:
         """Create the class and store any object specific variables"""
-        assert n_par%2==0
+        if n_par % 2 != 0:
+            msg = 'RosenbrockLikelihood requires an even n_par'
+            raise ValueError(msg)
         low_lims = np.full(n_par, low_lim)
         high_lims = np.full(n_par, high_lim)
 

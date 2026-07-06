@@ -5,8 +5,8 @@ from numba import njit
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 #constants
-low_lim = -10
-high_lim = 10
+low_lim = -10.
+high_lim = 10.
 
 
 @njit()

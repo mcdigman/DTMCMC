@@ -30,7 +30,9 @@ class BananaLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
     def __init__(self,n_par=20) -> None:
         """Create the class and store any object specific variables"""
-        assert n_par >= 2
+        if n_par < 2:
+            msg = 'BananaLikelihood requires n_par >= 2'
+            raise ValueError(msg)
         low_lims = np.full(n_par, low_limn)
         high_lims = np.full(n_par, high_limn)
         low_lims[:2] = low_lim01
