@@ -283,7 +283,9 @@ class HarnessSampler(DTMCMCSampler):
     sampler_verbosity gates the pretty-printed tracker diagnostics that
     the base teardown emits unconditionally: 0 is silent (the default,
     so automated runners keep their logs clean), 1 prints the summary
-    at the final teardown only, 2 prints at every checkpoint teardown.
+    at each major-report boundary only, 2 prints at every checkpoint
+    teardown. With the default report interval (spec.n_steps) the single
+    major report lands at the last teardown of a full run.
     """
 
     def __init__(
@@ -313,6 +315,12 @@ class HarnessSampler(DTMCMCSampler):
         self.start_monotonic = time.monotonic() if start_monotonic is None else start_monotonic
         self.sampler_verbosity = sampler_verbosity
         self.counting_like = like_obj
+        # periodic "major report" bookkeeping: rather than comparing itrn
+        # against a run total (the sampler must not know how many iterations
+        # it will be run for), the teardown accumulates steps since the last
+        # major report and wraps when the configured interval is reached
+        self.steps_since_major_report = 0
+        self.itrn_prev_teardown = 0
         self.checkpoints = CheckpointLog()
         # checkpoint metrics draw from a dedicated Generator seeded by the
         # run seed: reproducible, recorded, and independent of both run RNG
@@ -366,18 +374,34 @@ class HarnessSampler(DTMCMCSampler):
         """Checkpoint at the end of each advance_N_blocks segment.
 
         Records metrics, flushes the artifact when a destination is
-        configured (finalized once the spec's step budget is met), and
+        configured (marked finalized at each major-report boundary), and
         prints the tracker summary per sampler_verbosity.
+
+        Major-report boundaries are periodic: the teardown tracks steps
+        elapsed since the last report and wraps when they reach the
+        configured interval, rather than comparing itrn against a run
+        total. This keeps the sampler agnostic to how many iterations it
+        will ultimately run (parent-sampler design principle) — advancing
+        past the initially requested count yields further periodic
+        reports instead of re-emitting a one-shot "final" report every
+        segment. With the default interval (spec.n_steps) exactly one
+        report lands at the end of a full run.
         """
         self.record_checkpoint_metrics()
-        finalized = self.itrn >= self.spec.n_steps
+        self.steps_since_major_report += self.itrn - self.itrn_prev_teardown
+        self.itrn_prev_teardown = self.itrn
+        major_report = self.steps_since_major_report >= self.spec.n_steps_per_major_report
+        if major_report:
+            # preserve the overflow remainder so the report cadence does
+            # not drift when the interval is not a whole number of segments
+            self.steps_since_major_report %= self.spec.n_steps_per_major_report
         if self.artifact_path is not None and self.provenance is not None:
             write_artifact(
                 self.artifact_path, self.spec, self, self.counting_like.n_evals, self.provenance,
-                finalized=finalized, wall_seconds=time.monotonic() - self.start_monotonic,
+                finalized=major_report, wall_seconds=time.monotonic() - self.start_monotonic,
                 checkpoints=self.checkpoints, adaptive_state=self.controller,
             )
-        if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and finalized):
+        if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and major_report):
             self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
 
 
