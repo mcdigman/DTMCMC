@@ -186,7 +186,7 @@
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-    Copyright [yyyy] [name of copyright owner]
+    Copyright 2026 Matthew C. Digman
 
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
@@ -200,8 +200,7 @@
     See the License for the specific language governing permissions and
     limitations under the License.
 
-
----- LLVM Exceptions to the Apache 2.0 License ----
+--- LLVM Exceptions to the Apache 2.0 License ----
 
 As an exception, if, as a result of your compiling your source code, portions
 of this Software are embedded into an Object form of such source code, you
