@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from diagnostic_commentary_helpers import print_diagnostic_commentary
+from DTMCMC.corr_summary_helpers import CorrelationSummary
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import ExchangeManager
@@ -364,6 +366,21 @@ class HarnessSampler(DTMCMCSampler):
         if self.controller is not None:
             self.controller.post_block(self)
 
+    def adaptive_burnin_iterations(self) -> int:
+        """Iterations to treat as adaptive burn-in for the correlation summary.
+
+        Derived from the adaptive controller's freeze point (the block at
+        which adaptation stopped, times the block size): everything up to
+        the freeze was spent tuning the ladder rather than sampling a
+        fixed target. Fixed-ladder runs (no controller) or a controller
+        still adapting yield 0. CorrelationSummary clamps the value to the
+        stored ring-buffer window, so an over-long burn-in is safe.
+        """
+        if self.controller is None:
+            return 0
+        frozen_block = self.controller.frozen_block_index
+        return 0 if frozen_block is None else frozen_block * self.block_size
+
     def record_checkpoint_metrics(self) -> None:
         """Record the checkpoint DE-buffer difference spectrum."""
         if self.de_manager is not None:
@@ -375,7 +392,10 @@ class HarnessSampler(DTMCMCSampler):
 
         Records metrics, flushes the artifact when a destination is
         configured (marked finalized at each major-report boundary), and
-        prints the tracker summary per sampler_verbosity.
+        prints diagnostics per sampler_verbosity: the tracker summary
+        (verbosity 1 at each major report, verbosity 2 every checkpoint),
+        plus, at each major report, the descriptive commentary (verbosity
+        >= 1) and the full correlation summary (verbosity 2).
 
         Major-report boundaries are periodic: the teardown tracks steps
         elapsed since the last report and wraps when they reach the
@@ -403,6 +423,14 @@ class HarnessSampler(DTMCMCSampler):
             )
         if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and major_report):
             self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
+        if major_report and self.sampler_verbosity >= 1:
+            print_diagnostic_commentary(self)
+            if self.sampler_verbosity >= 2:
+                # burn-in from the adaptive freeze; 0 for fixed-ladder runs
+                n_burnin = self.adaptive_burnin_iterations()
+                corr_sum = CorrelationSummary()
+                corr_sum.summarize_blocks(self, n_burnin)
+                corr_sum.final_prints(self, n_burnin)
 
 
 def build_sampler(

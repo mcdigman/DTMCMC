@@ -223,6 +223,24 @@ class AdaptiveLadderController:
         """Final cold anchor of the annealing schedule."""
         return self.T_min_factor
 
+    @property
+    def frozen_block_index(self) -> int | None:
+        """Block index at which adaptation froze, or None while still adapting.
+
+        A criterion freeze stamps frozen_after on its history row; a
+        budget freeze returns before recording a row, so it maps to
+        budget_blocks (the block at which the hard cap tripped). Callers
+        turn this into an adaptive-burn-in iteration count by multiplying
+        by the block size — every iteration up to the freeze was spent
+        tuning the ladder rather than sampling a fixed target.
+        """
+        if not self.frozen:
+            return None
+        for record in self.history:
+            if record.frozen_after:
+                return record.block_index
+        return self.budget_blocks
+
     def initial_ladder(self, like_obj: LikelihoodLike, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Build the hot-anchored initial ladder from prior-draw logL statistics.
 

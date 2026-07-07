@@ -177,6 +177,73 @@ def test_sampler_verbosity_gates_tracker_summary(monkeypatch, tmp_path, verbosit
     assert len(summary_calls) == expected_summaries
 
 
+class _StubCorrelationSummary:
+    """Stand-in for CorrelationSummary that records n_burnin without computing."""
+
+    instances: list[_StubCorrelationSummary] = []  # noqa: RUF012
+
+    def __init__(self) -> None:
+        _StubCorrelationSummary.instances.append(self)
+        self.n_burnins: list[int] = []
+
+    def summarize_blocks(self, _sampler, n_burnin: int) -> None:
+        """Record the burn-in passed to the block summary."""
+        self.n_burnins.append(n_burnin)
+
+    def final_prints(self, _sampler, n_burnin: int) -> None:
+        """Record the burn-in passed to the final prints."""
+        self.n_burnins.append(n_burnin)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+@pytest.mark.parametrize(('verbosity', 'exp_commentary', 'exp_corr'), [(0, 0, 0), (1, 1, 0), (2, 1, 1)])
+def test_verbosity_gates_major_report_diagnostics(monkeypatch, tmp_path, verbosity, exp_commentary, exp_corr) -> None:
+    """Major-report diagnostics fire per verbosity: commentary at >=1, correlation summary at 2.
+
+    Both are gated on the major-report boundary, so for the tiny spec's
+    default interval they fire at most once (the final teardown), unlike
+    the every-checkpoint tracker summary.
+    """
+    commentary_calls: list[int] = []
+    _StubCorrelationSummary.instances = []
+    monkeypatch.setattr(runner_mod, 'print_diagnostic_commentary', lambda _sampler: commentary_calls.append(1))
+    monkeypatch.setattr(runner_mod, 'CorrelationSummary', _StubCorrelationSummary)
+    # silence the base tracker summary so the test only measures the new paths
+    monkeypatch.setattr('DTMCMC.tracker_manager.TrackerManager.print_tracker_summary', lambda _self, *_a, **_k: None)
+
+    reset_seed_guard_for_tests()
+    run_from_spec(make_spec(), tmp_path / f'v{verbosity}', sampler_verbosity=verbosity)
+
+    assert len(commentary_calls) == exp_commentary
+    assert len(_StubCorrelationSummary.instances) == exp_corr
+
+
+class _FrozenController:
+    """Minimal controller exposing a fixed freeze block for the burn-in helper."""
+
+    def __init__(self, frozen_block_index: int | None) -> None:
+        self.frozen_block_index = frozen_block_index
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+@pytest.mark.parametrize(('frozen_block', 'expected_factor'), [(None, 0), (0, 0), (5, 5)])
+def test_adaptive_burnin_iterations_from_freeze(frozen_block, expected_factor) -> None:
+    """adaptive_burnin_iterations is the freeze block times the block size (0 while adapting)."""
+    seed_run(TINY_SPEC['seed'])
+    controller = _FrozenController(frozen_block)
+    sampler, _like_obj = build_sampler(make_spec(), controller=controller)  # type: ignore[arg-type]
+    assert sampler.adaptive_burnin_iterations() == expected_factor * sampler.block_size
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_adaptive_burnin_iterations_no_controller() -> None:
+    """A fixed-ladder run (no controller) reports zero adaptive burn-in."""
+    seed_run(TINY_SPEC['seed'])
+    sampler, _like_obj = build_sampler(make_spec())
+    assert sampler.controller is None
+    assert sampler.adaptive_burnin_iterations() == 0
+
+
 def test_run_cli_forwards_sampler_verbosity(monkeypatch, tmp_path) -> None:
     """The run CLI threads --sampler-verbosity into run_from_spec."""
     spec_path = tmp_path / 'spec.toml'
