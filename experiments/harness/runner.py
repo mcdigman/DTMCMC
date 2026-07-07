@@ -6,6 +6,12 @@ jumps — increments the eval counter by construction rather than by
 enumerating call sites (plan §4 Phase 1). Both RNG streams are seeded once
 at run start (plan D1); the artifact is flushed per checkpoint and
 finalized at the end (plan D2).
+
+Harness behavior rides the DTMCMCSampler extension API rather than an
+external driver loop: HarnessSampler builds its proposal manager in
+initialize_jumps, runs the adaptive controller in postblock_operations,
+and checkpoints in post_Nblock_teardown, so run_from_spec just advances
+the run as checkpoint-sized advance_N_blocks segments.
 """
 
 import time
@@ -28,7 +34,7 @@ from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.likelihoods.eggbox import Likelihood as EggboxLikelihood
 from DTMCMC.likelihoods.hawaii_likelihood import HawaiiLikelihood
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
-from DTMCMC.proposal_manager_helper import get_default_proposal_manager
+from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
     AcceptanceTemperatureLadder,
@@ -261,20 +267,142 @@ def build_ladder(spec: RunSpec) -> TemperatureLadder:
     return builder(spec)
 
 
+class HarnessSampler(DTMCMCSampler):
+    """DTMCMCSampler wired to the harness through the extension API.
+
+    The subclass carries the run-level context its hooks need (spec,
+    proposal config, adaptive controller, artifact destination) and
+    implements the harness behaviors as overrides of the pre-existing
+    extension points rather than as an external driver loop:
+    initialize_jumps builds the spec-configured proposal manager around
+    the starting samples the base class draws; postblock_operations
+    advances the adaptive controller schedule; post_Nblock_teardown
+    checkpoints, so run_from_spec drives the run as checkpoint-sized
+    advance_N_blocks segments.
+
+    sampler_verbosity gates the pretty-printed tracker diagnostics that
+    the base teardown emits unconditionally: 0 is silent (the default,
+    so automated runners keep their logs clean), 1 prints the summary
+    at the final teardown only, 2 prints at every checkpoint teardown.
+    """
+
+    def __init__(
+        self,
+        spec: RunSpec,
+        T_ladder: TemperatureLadder,
+        like_obj: CountingLikelihood,
+        config: configparser.ConfigParser,
+        *,
+        controller: AdaptiveLadderController | None = None,
+        artifact_path: Path | None = None,
+        provenance: RunProvenance | None = None,
+        start_monotonic: float | None = None,
+        sampler_verbosity: int = 0,
+    ) -> None:
+        if artifact_path is not None and provenance is None:
+            msg = 'artifact_path requires provenance'
+            raise ValueError(msg)
+        # hook-consumed attributes must exist before super().__init__,
+        # which runs the overridable initialization chain
+        # (initialize_jumps reads spec and config)
+        self.spec = spec
+        self.config = config
+        self.controller = controller
+        self.artifact_path = artifact_path
+        self.provenance = provenance
+        self.start_monotonic = time.monotonic() if start_monotonic is None else start_monotonic
+        self.sampler_verbosity = sampler_verbosity
+        self.counting_like = like_obj
+        self.checkpoints = CheckpointLog()
+        # checkpoint metrics draw from a dedicated Generator seeded by the
+        # run seed: reproducible, recorded, and independent of both run RNG
+        # streams (plan D5) — the golden digest is unaffected
+        self.metrics_rng = get_rng(spec.seed)
+        super().__init__(
+            T_ladder,
+            like_obj,
+            spec.block_size,
+            spec.store_size,
+            store_thin=spec.store_thin,
+            n_record=spec.n_record,
+        )
+        self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+
+    def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
+        """Build the spec-configured proposal manager around the base-drawn starting samples.
+
+        Runs inside super().__init__ after initialize_state has filled
+        samples[0] from prior draws, so the per-stream RNG order matches
+        the previous external construction (starting draws first, then
+        manager-construction draws) and the golden digest is unchanged.
+        """
+        if proposal_manager_in is not None:
+            super().initialize_jumps(proposal_manager_in)
+            return
+        exchange_manager = ExchangeManager(
+            EXCHANGE_STRATEGY_CODES[self.spec.exchange_strategy],
+            track_full_exchanges=self.spec.track_full_exchanges,
+        )
+        self.proposal_manager = get_default_proposal_manager(
+            self.T_ladder,
+            self.like_obj,
+            starting_samples=self.samples[0, :, :],
+            config=self.config,
+            exchange_manager_loc=exchange_manager,
+        )
+
+    def postblock_operations(self) -> None:
+        """Advance the adaptive controller's schedule at the block boundary."""
+        if self.controller is not None:
+            self.controller.post_block(self)
+
+    def record_checkpoint_metrics(self) -> None:
+        """Record the checkpoint DE-buffer difference spectrum."""
+        if self.de_manager is not None:
+            self.checkpoints.itrns.append(self.itrn)
+            self.checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng))
+
+    def post_Nblock_teardown(self) -> None:
+        """Checkpoint at the end of each advance_N_blocks segment.
+
+        Records metrics, flushes the artifact when a destination is
+        configured (finalized once the spec's step budget is met), and
+        prints the tracker summary per sampler_verbosity.
+        """
+        self.record_checkpoint_metrics()
+        finalized = self.itrn >= self.spec.n_steps
+        if self.artifact_path is not None and self.provenance is not None:
+            write_artifact(
+                self.artifact_path, self.spec, self, self.counting_like.n_evals, self.provenance,
+                finalized=finalized, wall_seconds=time.monotonic() - self.start_monotonic,
+                checkpoints=self.checkpoints, adaptive_state=self.controller,
+            )
+        if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and finalized):
+            self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
+
+
 def build_sampler(
     spec: RunSpec,
     config: configparser.ConfigParser | None = None,
     like_obj: CountingLikelihood | None = None,
     T_ladder: TemperatureLadder | None = None,
-) -> tuple[DTMCMCSampler, CountingLikelihood]:
-    """Build the sampler and counting-proxy likelihood for a spec.
+    *,
+    controller: AdaptiveLadderController | None = None,
+    artifact_path: Path | None = None,
+    provenance: RunProvenance | None = None,
+    start_monotonic: float | None = None,
+    sampler_verbosity: int = 0,
+) -> tuple[HarnessSampler, CountingLikelihood]:
+    """Build the harness sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
     starting samples, DE-buffer fills, and Fisher initialization all draw
     from the run streams. Pass the config explicitly to share one instance
     between the sampler and the artifact provenance (run_from_spec does);
     pass like_obj/T_ladder to override the spec-built ones (the adaptive
-    path supplies its prior-anchored initial ladder).
+    path supplies its prior-anchored initial ladder). The keyword-only
+    arguments configure the extension hooks: without an artifact_path the
+    teardown records checkpoint metrics but writes nothing.
     """
     if like_obj is None:
         like_obj = CountingLikelihood(build_likelihood(spec))
@@ -283,31 +411,16 @@ def build_sampler(
     if config is None:
         config = spec.build_proposal_config()
 
-    starting_samples = np.zeros((T_ladder.n_chain, like_obj.n_par))
-    for itrt in range(T_ladder.n_chain):
-        starting_samples[itrt, :] = like_obj.prior_draw()
-
-    exchange_manager = ExchangeManager(
-        EXCHANGE_STRATEGY_CODES[spec.exchange_strategy],
-        track_full_exchanges=spec.track_full_exchanges,
-    )
-    proposal_manager = get_default_proposal_manager(
+    sampler = HarnessSampler(
+        spec,
         T_ladder,
         like_obj,
-        starting_samples=starting_samples,
-        config=config,
-        exchange_manager_loc=exchange_manager,
-    )
-
-    sampler = DTMCMCSampler(
-        T_ladder,
-        like_obj,
-        spec.block_size,
-        spec.store_size,
-        proposal_manager=proposal_manager,
-        starting_samples=starting_samples,
-        store_thin=spec.store_thin,
-        n_record=spec.n_record,
+        config,
+        controller=controller,
+        artifact_path=artifact_path,
+        provenance=provenance,
+        start_monotonic=start_monotonic,
+        sampler_verbosity=sampler_verbosity,
     )
     return sampler, like_obj
 
@@ -339,12 +452,14 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     )
 
 
-def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None) -> Path:
+def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0) -> Path:
     """Execute one run end to end and return the artifact path.
 
     Chdirs to the repo root (engine-internal relative paths), seeds both
-    RNG streams from the spec seed (once per process, plan D1), advances
-    block by block, flushes the artifact every checkpoint, and finalizes.
+    RNG streams from the spec seed (once per process, plan D1), and
+    advances the run as checkpoint-sized advance_N_blocks segments: the
+    sampler's own teardown hook flushes the artifact at every checkpoint
+    and finalizes at the last (plan D2).
     """
     chdir_repo_root()
     start_monotonic = time.monotonic()
@@ -371,41 +486,19 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
         # deliberately: adaptive burn-in is charged in full (plan C3)
         initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
 
-    sampler, like_obj = build_sampler(spec, config=config, like_obj=like_obj, T_ladder=initial_ladder)
-
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
-    # checkpoint metrics draw from a dedicated Generator seeded by the run
-    # seed: reproducible, recorded, and independent of both run RNG
-    # streams (plan D5) — the golden digest is unaffected
-    metrics_rng = get_rng(spec.seed)
-    checkpoints = CheckpointLog()
-    de_manager = next((manager for manager in sampler.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
-
-    def record_checkpoint_metrics() -> None:
-        if de_manager is not None:
-            checkpoints.itrns.append(sampler.itrn)
-            checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(de_manager.de_buffer, DE_SPECTRUM_PAIRS, metrics_rng))
-
-    for itr_block in range(spec.n_blocks):
-        sampler.advance_block()
-        if controller is not None:
-            controller.post_block(sampler)
-        blocks_done = itr_block + 1
-        if blocks_done % spec.checkpoint_every_blocks == 0 and blocks_done < spec.n_blocks:
-            record_checkpoint_metrics()
-            write_artifact(
-                artifact_path, spec, sampler, like_obj.n_evals, provenance,
-                finalized=False, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
-                adaptive_state=controller,
-            )
-
-    record_checkpoint_metrics()
-    write_artifact(
-        artifact_path, spec, sampler, like_obj.n_evals, provenance,
-        finalized=True, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
-        adaptive_state=controller,
+    sampler, _like_obj = build_sampler(
+        spec, config=config, like_obj=like_obj, T_ladder=initial_ladder,
+        controller=controller, artifact_path=artifact_path, provenance=provenance,
+        start_monotonic=start_monotonic, sampler_verbosity=sampler_verbosity,
     )
+
+    n_full_segments, blocks_remainder = divmod(spec.n_blocks, spec.checkpoint_every_blocks)
+    for _ in range(n_full_segments):
+        sampler.advance_N_blocks(spec.checkpoint_every_blocks)
+    if blocks_remainder:
+        sampler.advance_N_blocks(blocks_remainder)
     return artifact_path
