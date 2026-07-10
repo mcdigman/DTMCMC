@@ -226,6 +226,14 @@ class RunSpec:
         kind-specific constructor parameters
     n_steps: int
         Total iterations (each advances all chains once); multiple of block_size
+    n_steps_per_major_report: int
+        Iterations between "major report" boundaries at which the sampler
+        emits a final-style tracker summary and marks the artifact
+        finalized; a positive multiple of block_size. Defaults to n_steps
+        (one major report at the end). This is an interval, not a total:
+        the sampler consumes it so it can flag major reports periodically
+        without knowing how many iterations it will ultimately be run for
+        (parent-sampler design principle — runs are indefinite).
     block_size: int
         Iterations per block
     store_thin: int
@@ -248,6 +256,7 @@ class RunSpec:
     likelihood_params: dict[str, TomlValue] = field(default_factory=dict)
     ladder: dict[str, TomlValue] = field(default_factory=dict)
     n_steps: int = 0
+    n_steps_per_major_report: int = 0
     block_size: int = 0
     store_thin: int = 1
     n_record: int = -1
@@ -295,6 +304,15 @@ class RunSpec:
             raise SpecError(msg)
         if self.n_steps < 1 or self.n_steps % self.block_size != 0:
             msg = 'run.n_steps must be a positive multiple of run.block_size'
+            raise SpecError(msg)
+        # an unset (0) report interval means "one major report at the end";
+        # resolve it to n_steps so the effective value is always stored (the
+        # dataclass is frozen, so post-init normalization goes through
+        # object.__setattr__)
+        if self.n_steps_per_major_report == 0:
+            object.__setattr__(self, 'n_steps_per_major_report', self.n_steps)
+        if self.n_steps_per_major_report < 1 or self.n_steps_per_major_report % self.block_size != 0:
+            msg = 'run.n_steps_per_major_report must be a positive multiple of run.block_size'
             raise SpecError(msg)
         if self.store_thin < 1:
             msg = 'run.store_thin must be >= 1'
@@ -409,6 +427,7 @@ class RunSpec:
             likelihood_params=likelihood_params,
             ladder=ladder,
             n_steps=_require_int(run, 'n_steps', 'run'),
+            n_steps_per_major_report=_opt_int(run, 'n_steps_per_major_report', 'run', 0),
             block_size=_require_int(run, 'block_size', 'run'),
             store_thin=_opt_int(run, 'store_thin', 'run', 1),
             n_record=_opt_int(run, 'n_record', 'run', -1),
@@ -435,6 +454,7 @@ class RunSpec:
             'ladder': dict(self.ladder),
             'run': {
                 'n_steps': self.n_steps,
+                'n_steps_per_major_report': self.n_steps_per_major_report,
                 'block_size': self.block_size,
                 'store_thin': self.store_thin,
                 'n_record': self.n_record,
