@@ -26,15 +26,16 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Mirror the pyright job: install the project with its typed/plotting
-      # extras into a venv so the tests run against the real installed package
-      # (the runner's system Python is externally managed, so --system installs
-      # are rejected). The core numpy/scipy/numba/h5py deps come in via the
-      # project's own dependencies; pytest comes from the [dev] extra.
+      # Install the project with its typed/plotting/dashboard extras into a venv
+      # so the tests run against the real installed package (the runner's system
+      # Python is externally managed, so --system installs are rejected). The
+      # core numpy/scipy/numba/h5py deps come in via the project's own
+      # dependencies; pytest comes from the [dev] extra; the [dashboard] extra
+      # supplies plotly/dash for tests/test_dashboard.py.
       - name: Install project with test extras
         run: |
           uv venv
-          uv pip install ".[dev,plots]"
+          uv pip install ".[dev,plots,dashboard]"
 
       # Heavy convergence batteries carry the slow marker and are excluded
       # per-push; an occasional/scheduled job can run them with -m slow.
