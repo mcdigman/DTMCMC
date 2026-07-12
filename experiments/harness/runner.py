@@ -389,6 +389,9 @@ class HarnessSampler(DTMCMCSampler):
                     f'({DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size}): short DE buffers can change proposal behavior',
                     stacklevel=3,
                 )
+        # run-start ladder snapshot for the artifact: adaptive updates mutate
+        # Ts in place, so the copy must be taken before the first block runs
+        self.initial_Ts = np.array(self.Ts, dtype=np.float64)
 
     def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
