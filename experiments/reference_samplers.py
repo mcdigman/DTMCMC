@@ -114,6 +114,68 @@ def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float 
     return out
 
 
+def cake_logL_radial(r: NDArray[np.floating], n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> NDArray[np.floating]:
+    """Vectorized engine cake logL as a function of radius.
+
+    The cake density is isotropic, so logL depends on r alone; this
+    reconstruction from the tier constants is cross-validated against
+    CakeLikelihood.get_loglike in the tests (the same guard pattern as
+    test_cake_constants_match_engine).
+    """
+    r_arr = np.asarray(r, dtype=np.float64)
+    dim_part = gamma_func(1. + n_par / 2.) / np.pi**(n_par / 2.)
+    out = np.full(r_arr.shape, -np.inf)
+    for amp, width, exponent in zip(amps, widths, exponents, strict=True):
+        tier_log = np.log(amp * dim_part / (2.**(n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))) - r_arr**exponent / (2. * width**exponent)
+        out = np.logaddexp(out, tier_log)
+    return out
+
+
+def cake_tempered_cumulants(
+        betas: NDArray[np.floating],
+        n_par: int,
+        amps: tuple[float, ...] = CAKE_AMPS,
+        widths: tuple[float, ...] = CAKE_WIDTHS,
+        exponents: tuple[float, ...] = CAKE_EXPONENTS,
+        r_max: float = 10.,
+        n_grid: int = 16384,
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    """Exact tempered logL cumulants (E, Var) of an isotropic cake by radial quadrature.
+
+    The tempered density at inverse temperature beta is
+    exp(beta logL(r)) r^(n-1) dr up to normalization, so the first two
+    logL cumulants — and hence heat capacity C = beta^2 Var and the
+    entropy-ladder spacing integrals — follow from a 1D trapezoid over
+    a dense radial grid, with no sampling anywhere. This is the
+    likelihood-parametric gold standard the adaptive batteries anchor
+    against (issue #19: thresholds must be computed from supplied
+    reference data, not shipped per-likelihood literals).
+
+    The quadrature integrates over the inscribed sphere r <= r_max
+    rather than the prior box; the difference is the corner mass, which
+    is negligible for temperatures with tier support well inside the
+    box (widths * T^(1/exponent) << r_max) — the regime every ladder
+    anchor in the tests uses. Validated against the measured gold arrays
+    in the tests.
+    """
+    betas_arr = np.asarray(betas, dtype=np.float64)
+    r_grid = np.linspace(1.e-9, r_max, n_grid)
+    logL_grid = cake_logL_radial(r_grid, n_par, amps, widths, exponents)
+    log_shell = (n_par - 1.) * np.log(r_grid)
+
+    means = np.zeros(betas_arr.size)
+    variances = np.zeros(betas_arr.size)
+    for itrb, beta in enumerate(betas_arr):
+        log_weight = beta * logL_grid + log_shell
+        weight = np.exp(log_weight - log_weight.max())
+        norm = np.trapezoid(weight, r_grid)
+        mean = np.trapezoid(weight * logL_grid, r_grid) / norm
+        second = np.trapezoid(weight * logL_grid**2, r_grid) / norm
+        means[itrb] = mean
+        variances[itrb] = max(second - mean**2, 0.)
+    return means, variances
+
+
 def draw_banana(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:
     """Exact draws from the banana posterior (constants from the likelihood module).
 

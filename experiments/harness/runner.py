@@ -17,6 +17,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from warnings import warn
 
 import numpy as np
 
@@ -54,6 +55,7 @@ from DTMCMC.temperature_ladder_helpers import (
     entropy_ladder_fromfile,
     filter_ladder_inputs,
 )
+from experiments import adaptive
 from experiments.adaptive import AdaptiveLadderController
 from experiments.metrics import de_buffer_difference_spectrum
 
@@ -353,6 +355,20 @@ class HarnessSampler(DTMCMCSampler):
             arg_record=np.asarray(spec.arg_record, dtype=np.int64),
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+        # buffer-memory hygiene (issue #19): a DE ring buffer spanning less
+        # than the run is a self-interacting proposal whose feedback
+        # measurably biases the cold posterior toward compact modes
+        # (cake 5D warm-start probes: de_size covering 1/640 of the run
+        # collapsed the spike tier to 99%+ occupancy; 1/10 of the run drifted
+        # ~0.85 vs the true 0.49; a whole-run buffer removed the drift).
+        # Deliberately capped buffers must treat this as a known bias source.
+        if self.de_manager is not None and self.de_manager.de_size * self.de_manager.de_thin < spec.n_steps:
+            warn(
+                f'DE buffer memory de_size*de_thin = {self.de_manager.de_size * self.de_manager.de_thin} '
+                f'< run length {spec.n_steps}: rolling-buffer self-interaction can bias the cold posterior '
+                '(issue #19); size the buffer to span the run unless the deficit is deliberate',
+                stacklevel=3,
+            )
 
     def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
@@ -503,10 +519,18 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     `update_every_blocks` (rebuild cadence, default 8), `forgetting`
     (pool down-weighting per evaluation, default 0), `freeze_dlog` /
     `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
-    `T_min_factor` (must be 1 until a follow-up plan amendment),
+    `T_min_factor` (cold-edge target in (0, 1] as a multiple of the T=1
+    readout; sub-unit values extend the ladder below the readout),
     `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
     recent segment estimates, the default; 0 = forgetting-weighted
-    mean), `n_prior_draws` (hot-anchor prior sample size, default 256).
+    mean), `n_prior_draws` (hot-anchor prior sample size, default 256),
+    `min_updates_at_target` (dwell evaluations before freeze counting,
+    default 6), plus the formerly hard-coded controller geometry
+    (issue #19): `window_extension_factor`, `ds_link_cap`,
+    `cold_cap_links` (-1 = chain-scaled auto), `cap_ratio_min` /
+    `cap_ratio_max`, `var_history_length`, `pool_dlog_tol`, and
+    `discard_blocks_after_update` — defaults are the module constants
+    in experiments.adaptive.
     """
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),
@@ -517,6 +541,17 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),
         n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
+        min_updates_at_target=int(_scalar(adaptive_table.get('min_updates_at_target', 6))),
+        window_extension_factor=_scalar(adaptive_table.get('window_extension_factor', adaptive.WINDOW_EXTENSION_FACTOR)),
+        ds_link_cap=_scalar(adaptive_table.get('ds_link_cap', adaptive.DS_LINK_CAP)),
+        cold_cap_links=int(_scalar(adaptive_table.get('cold_cap_links', adaptive.COLD_CAP_LINKS_AUTO))),
+        cap_ratio_bounds=(
+            _scalar(adaptive_table.get('cap_ratio_min', adaptive.CAP_RATIO_BOUNDS[0])),
+            _scalar(adaptive_table.get('cap_ratio_max', adaptive.CAP_RATIO_BOUNDS[1])),
+        ),
+        var_history_length=int(_scalar(adaptive_table.get('var_history_length', adaptive.VAR_HISTORY_LENGTH))),
+        pool_dlog_tol=_scalar(adaptive_table.get('pool_dlog_tol', adaptive.POOL_DLOG_TOL)),
+        discard_blocks_after_update=int(_scalar(adaptive_table.get('discard_blocks_after_update', adaptive.DISCARD_BLOCKS_AFTER_UPDATE))),
     )
 
 

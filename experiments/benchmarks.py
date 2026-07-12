@@ -166,7 +166,7 @@ def _moments_gaussian_mixture(n_par: int) -> tuple[NDArray[np.floating], NDArray
     return np.full(n_par, mean), np.full(n_par, second - mean**2)
 
 
-def _mixture_mode_centers(n_par: int) -> NDArray[np.floating]:
+def mixture_mode_centers(n_par: int) -> NDArray[np.floating]:
     """The gaussian_mixture mode centers at the requested dimension."""
     return np.vstack([np.full(n_par, 5.), np.full(n_par, -5.)])
 
@@ -218,9 +218,9 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         draw_reference=_numba_stream_draws(gaussian_mixture_module.gen_draws),
         uses_numba_stream=True,
         reference_moments=_moments_gaussian_mixture,
-        mode_centers=_mixture_mode_centers(50),
+        mode_centers=mixture_mode_centers(50),
         mode_weights=np.array([1. / 3., 2. / 3.]),
-        notes='mode centers quoted at the default n_par; rebuild with _mixture_mode_centers for other dims',
+        notes='mode centers quoted at the default n_par; rebuild with mixture_mode_centers for other dims',
     ),
     'gaussian_shell': BenchmarkTarget(
         likelihood_name='gaussian_shell',

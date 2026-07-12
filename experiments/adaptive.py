@@ -62,6 +62,12 @@ if TYPE_CHECKING:
 
 ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
 
+# defaults for the spec-owned controller geometry (issue #19: these were
+# hard-coded implementation constants, which made the controller
+# untunable and let cake-specific values masquerade as architecture;
+# every one is now an AdaptiveLadderController field wired to the
+# [adaptive] spec table, with these module values as the defaults)
+
 # cold-window extension factor per update: each rebuild reaches up to 4x
 # colder until the target is hit, then refinement continues in place
 WINDOW_EXTENSION_FACTOR = 4.
@@ -76,7 +82,9 @@ WINDOW_EXTENSION_FACTOR = 4.
 # log-uniform ladder that never resolved the transition cluster)
 DS_LINK_CAP = 2.5
 
-# candidate partial extensions tried when the full factor blows the budget
+# candidate partial extension factors tried when the full factor blows
+# the budget; factors above the configured window_extension_factor are
+# skipped, so the config caps the schedule without editing this tuple
 _EXTENSION_CANDIDATES = (4., 3., 2., 1.5, 1.25, 1.1)
 
 # coupling insurance at the cold edge: pooled statistics cannot know the
@@ -84,15 +92,16 @@ _EXTENSION_CANDIDATES = (4., 3., 2., 1.5, 1.25, 1.1)
 # equal-dS rebuild can starve its own coldest link (the walkers stop
 # descending and the missing variance is never measured; observed as a
 # self-perpetuating log-uniform ladder on cake 5D). The coldest
-# N_COLD_CAPPED_LINKS links are pulled to at most exp(DS_LINK_CAP / C)
-# in temperature ratio, with C the measured local heat capacity
+# cold_cap_links links are pulled to at most exp(ds_link_cap / C) in
+# temperature ratio, with C the measured local heat capacity
 # beta^2 Var(logL) at the link's cold end — clipped to never exceed the
 # pessimistic default (a loose cap when C is under-measured would defeat
-# the insurance exactly when it is needed: the cap forces coupling, the
-# coupling produces the variance data, and the data then tightens the
-# cap into a discovered transition
-N_COLD_CAPPED_LINKS = 3
-_CAP_RATIO_BOUNDS = (1.05, 1.35)
+# the insurance exactly when it is needed). COLD_CAP_LINKS_AUTO resolves
+# to a chain-count-scaled default: a fixed link count is indefensible
+# for ladders spanning an order of magnitude in n_chain (issue #19)
+COLD_CAP_LINKS_AUTO = -1
+_MIN_AUTO_CAP_LINKS = 3
+CAP_RATIO_BOUNDS = (1.05, 1.35)
 
 # var_estimator switch values (integer to leave room for future rules)
 VAR_ESTIMATOR_MEAN = 0         # forgetting-weighted mean of segment estimates
@@ -110,6 +119,26 @@ _KNOWN_VAR_ESTIMATORS = frozenset({VAR_ESTIMATOR_MEAN, VAR_ESTIMATOR_PESSIMISTIC
 # the PR #16 review); the window bounds the memory so an unreconfirmed
 # spike ages out, playing the role forgetting plays for the means
 VAR_HISTORY_LENGTH = 4
+
+# pooled-cumulant temperature matching tolerance in |dlog T|: pool rows
+# within this of a measured rung merge instead of spawning fresh rows.
+# Exact float keying left the pessimistic estimator structurally inert
+# while the ladder moved (every applied rebuild created length-1
+# variance histories, so max(history) degenerated to the latest
+# estimate exactly during active adaptation — issue #19); tolerance
+# matching lets a rung's history survive the small rebuild-to-rebuild
+# temperature drift while staying below typical converged link spacing
+POOL_DLOG_TOL = 0.02
+
+# blocks discarded from the head of each ladder segment before its
+# statistics enter the pool: the remap leaves every chain at a state
+# equilibrated to its PREVIOUS temperature, so the first post-update
+# block measures a transient, and pooling it feeds non-stabilized
+# metrics into the next rebuild (issue #19)
+DISCARD_BLOCKS_AFTER_UPDATE = 1
+
+# the readout temperature the T_min_factor target is expressed against
+_T_READOUT = 1.
 
 
 @dataclass
@@ -156,9 +185,13 @@ class AdaptiveLadderController:
         each of those cadence windows (the coupling witness, per-window
         form — strictly stronger than the plan's open-segment floor)
     T_min_factor: float
-        Final cold-edge target as a multiple of T=1 (values < 1 place
-        rungs slightly below the readout temperature, plan S2;
-        spec-rejected until a follow-up amendment)
+        Final cold-edge target as a multiple of the T=1 readout
+        temperature (plan S2). Values < 1 extend the ladder below the
+        readout: the n_cold readout chains stay pinned at exactly T=1
+        (located by index at every update via the arg_record machinery)
+        while the sub-readout rungs participate in the same spacing rule
+        as every other rung — no special casing at T_cold, which is what
+        stabilizes behavior when T=1 sits on a phase transition
     budget_blocks: int
         Hard adaptation cap in blocks, spec-owned and required: a run
         reaching it unfrozen hard-freezes with frozen_by='budget' so a
@@ -172,6 +205,30 @@ class AdaptiveLadderController:
         most credible, and discovery of hidden cold-end structure
         becomes cumulative; VAR_ESTIMATOR_MEAN (0) is the
         forgetting-weighted mean of all segment estimates
+    window_extension_factor: float
+        Cold-window extension factor per update (module default 4)
+    ds_link_cap: float
+        Per-link dS budget throttling window extension and setting the
+        cold-edge cap ratio scale (module default 2.5 nats)
+    cold_cap_links: int
+        Number of coldest links the coupling cap applies to;
+        COLD_CAP_LINKS_AUTO (-1, the default) scales with the ladder:
+        max(3, n_links // 4) — a fixed count cannot serve both 12-chain
+        batteries and production ladders (issue #19)
+    cap_ratio_bounds: tuple[float, float]
+        (min, max) clip on the capped link temperature ratio
+    var_history_length: int
+        Rolling window (absorbed segments) of the pessimistic estimator
+    pool_dlog_tol: float
+        |dlog T| within which measured rungs merge into an existing pool
+        row instead of spawning a fresh one, preserving variance history
+        across rebuild-to-rebuild temperature drift (issue #19: exact
+        float keying left the pessimistic estimator inert while the
+        ladder moved)
+    discard_blocks_after_update: int
+        Blocks discarded from the head of each ladder segment before its
+        statistics pool (post-remap chains are transients of their old
+        temperatures; must be < update_every_blocks)
     """
 
     mode: str = 'entropy'
@@ -186,10 +243,18 @@ class AdaptiveLadderController:
     # evaluations with the window at target before freeze counting begins:
     # cold-end statistics need dwell time before stability is meaningful
     min_updates_at_target: int = 6
+    window_extension_factor: float = WINDOW_EXTENSION_FACTOR
+    ds_link_cap: float = DS_LINK_CAP
+    cold_cap_links: int = COLD_CAP_LINKS_AUTO
+    cap_ratio_bounds: tuple[float, float] = CAP_RATIO_BOUNDS
+    var_history_length: int = VAR_HISTORY_LENGTH
+    pool_dlog_tol: float = POOL_DLOG_TOL
+    discard_blocks_after_update: int = DISCARD_BLOCKS_AFTER_UPDATE
 
     frozen: bool = field(default=False, init=False)
     frozen_by: str = field(default='', init=False)
     _updates_at_target: int = field(default=0, init=False)
+    _pending_discard: int = field(default=0, init=False)
     history: list[LadderUpdateRecord] = field(default_factory=list, init=False)
     _pool_Ts: list[float] = field(default_factory=list, init=False)
     _pool_means: list[float] = field(default_factory=list, init=False)
@@ -208,14 +273,32 @@ class AdaptiveLadderController:
         if self.mode not in ADAPTIVE_MODES:
             msg = f'unknown adaptive mode {self.mode!r}; known: {sorted(ADAPTIVE_MODES)}'
             raise ValueError(msg)
-        if self.update_every_blocks < 1 or not 0. <= self.forgetting < 1. or self.T_min_factor <= 0.:
+        if self.update_every_blocks < 1 or not 0. <= self.forgetting < 1.:
             msg = 'invalid adaptive controller parameters'
+            raise ValueError(msg)
+        if not 0. < self.T_min_factor <= 1.:
+            msg = 'T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the T=1 readout'
             raise ValueError(msg)
         if self.budget_blocks < 1:
             msg = 'budget_blocks is required (spec-owned, plan Phase 5) and must be >= 1'
             raise ValueError(msg)
         if self.var_estimator not in _KNOWN_VAR_ESTIMATORS:
             msg = f'unknown var_estimator {self.var_estimator!r}; known: {sorted(_KNOWN_VAR_ESTIMATORS)}'
+            raise ValueError(msg)
+        if self.window_extension_factor <= 1.:
+            msg = 'window_extension_factor must be > 1'
+            raise ValueError(msg)
+        if self.ds_link_cap <= 0. or self.var_history_length < 1 or self.pool_dlog_tol < 0.:
+            msg = 'invalid adaptive controller parameters'
+            raise ValueError(msg)
+        if self.cold_cap_links < COLD_CAP_LINKS_AUTO:
+            msg = 'cold_cap_links must be >= 0, or COLD_CAP_LINKS_AUTO (-1) for the chain-scaled default'
+            raise ValueError(msg)
+        if not 1. < self.cap_ratio_bounds[0] <= self.cap_ratio_bounds[1]:
+            msg = 'cap_ratio_bounds must satisfy 1 < min <= max'
+            raise ValueError(msg)
+        if not 0 <= self.discard_blocks_after_update < self.update_every_blocks:
+            msg = 'discard_blocks_after_update must be in [0, update_every_blocks): a segment must keep at least one block of statistics'
             raise ValueError(msg)
 
     @property
@@ -258,6 +341,9 @@ class AdaptiveLadderController:
 
         t_hot = max(2. * np.sqrt(prior_var), 10.)
         self._t_cold_window = max(t_hot / 8., self.t_cold_target)
+        # the first segment starts from prior draws, a transient like any
+        # post-update segment: discard its head blocks from the pool too
+        self._pending_discard = self.discard_blocks_after_update
 
         # the prior statistics are the beta ~ 0 anchor of every rebuild
         self._pool_Ts.append(np.inf)
@@ -271,17 +357,45 @@ class AdaptiveLadderController:
             T_max=t_hot, n_inf_final=self.n_inf_final,
         )
 
+    def _pool_match(self, T_loc: float) -> int | None:
+        """Index of the pool row within pool_dlog_tol of T_loc in |dlog T|, or None.
+
+        Tolerance matching is the pool's memory across rebuilds: a rung
+        that drifts a few percent between applied updates keeps feeding
+        the same row (and its variance history) instead of spawning a
+        fresh length-1 row, so the pessimistic estimator can ratchet
+        during active adaptation rather than only during holds
+        (issue #19). Non-finite temperatures match only each other.
+        """
+        Ts_pool = np.asarray(self._pool_Ts)
+        if Ts_pool.size == 0:
+            return None
+        finite_pool = np.isfinite(Ts_pool)
+        if not np.isfinite(T_loc):
+            matches = np.flatnonzero(~finite_pool)
+            return int(matches[0]) if matches.size else None
+        dlogs = np.full(Ts_pool.size, np.inf)
+        dlogs[finite_pool] = np.abs(np.log(Ts_pool[finite_pool]) - np.log(T_loc))
+        idx = int(np.argmin(dlogs))
+        return idx if dlogs[idx] <= self.pool_dlog_tol else None
+
     def _absorb_segment_stats(self, sampler: DTMCMCSampler) -> None:
         """Pool the current segment's per-chain logL cumulants.
 
         Uses the stationary estimator E[logL^2] - E[logL]^2 over the
         segment's blocks (all run on the current ladder, since absorption
-        happens exactly once per segment, at update time).
+        happens exactly once per segment, at update time). The head of a
+        post-update segment is discarded (discard_blocks_after_update):
+        the remap leaves chains equilibrated to their previous
+        temperatures, and pooling that transient feeds non-stabilized
+        statistics into the next rebuild.
         """
-        e1_blocks = np.asarray(sampler.logL_means[self._blocks_seen:])
-        e2_blocks = np.asarray(sampler.logL2_means[self._blocks_seen:])
+        start = self._blocks_seen + self._pending_discard
+        e1_blocks = np.asarray(sampler.logL_means[start:])
+        e2_blocks = np.asarray(sampler.logL2_means[start:])
         if e1_blocks.shape[0] == 0:
             return
+        self._pending_discard = 0
 
         # once real measurements exist, retire the prior pseudo-anchor —
         # exactly once: its huge variance otherwise dominates the
@@ -304,15 +418,15 @@ class AdaptiveLadderController:
 
         for itrt in range(seg_means.size):
             T_loc = float(sampler.Ts[itrt])
-            if T_loc in self._pool_Ts:
-                idx = self._pool_Ts.index(T_loc)
+            idx = self._pool_match(T_loc)
+            if idx is not None:
                 w_old, w_new = self._pool_weights[idx], weight
                 total = w_old + w_new
                 self._pool_means[idx] = (w_old * self._pool_means[idx] + w_new * float(seg_means[itrt])) / total
                 self._pool_vars[idx] = (w_old * self._pool_vars[idx] + w_new * float(seg_vars[itrt])) / total
                 self._pool_weights[idx] = total
                 self._pool_var_history[idx].append(float(seg_vars[itrt]))
-                del self._pool_var_history[idx][:-VAR_HISTORY_LENGTH]
+                del self._pool_var_history[idx][:-self.var_history_length]
             else:
                 self._pool_Ts.append(T_loc)
                 self._pool_means.append(float(seg_means[itrt]))
@@ -363,23 +477,44 @@ class AdaptiveLadderController:
     def _extend_window(self, n_chain: int, n_cold: int) -> None:
         """Descend the cold window as far as the per-link dS budget allows."""
         n_links = max(n_chain - n_cold - self.n_inf_final, 1)
-        for factor in _EXTENSION_CANDIDATES:
+        candidates = (self.window_extension_factor, *(c for c in _EXTENSION_CANDIDATES if c < self.window_extension_factor))
+        for factor in candidates:
             candidate = max(self.t_cold_target, self._t_cold_window / factor)
-            if self._pooled_ds_per_link(candidate, n_links) <= DS_LINK_CAP:
+            if self._pooled_ds_per_link(candidate, n_links) <= self.ds_link_cap:
                 self._t_cold_window = candidate
                 return
         # even the smallest step blows the budget: hold and keep refining
 
+    def _resolve_cap_links(self, n_chain: int, n_cold: int) -> int:
+        """Resolve cold_cap_links, scaling the auto default with the ladder size.
+
+        A fixed capped-link count cannot serve both a 12-chain battery
+        and a production ladder an order of magnitude larger (issue
+        #19): the auto rule caps a quarter of the finite links, floored
+        at the historical 3, so tip resolution grows with chain count.
+        """
+        if self.cold_cap_links != COLD_CAP_LINKS_AUTO:
+            return self.cold_cap_links
+        n_links = max(n_chain - n_cold - self.n_inf_final, 1)
+        return max(_MIN_AUTO_CAP_LINKS, n_links // 4)
+
     def _cap_cold_links(self, ladder: TemperatureLadder, n_cold: int) -> TemperatureLadder:
         """Enforce the cold-edge coupling cap on a rebuilt ladder.
 
-        Only the coldest N_COLD_CAPPED_LINKS links are capped (capping
-        every link would flatten the ladder and destroy hot coverage);
-        the ratio for each capped link comes from the measured local heat
-        capacity at its cold end, so the cap squeezes progressively as
-        the transition variance is discovered. No-op once measured
-        statistics pack the cold links tighter than the budget.
+        Only the coldest resolved cold_cap_links non-trivial links are
+        capped (capping every link would flatten the ladder and destroy
+        hot coverage); the ratio for each capped link comes from the
+        measured local heat capacity at its cold end, so the cap
+        squeezes progressively as the transition variance is
+        discovered. No-op once measured statistics pack the cold links
+        tighter than the budget. Duplicate rungs are zero-width links
+        the cap skips, and a rung pinned at the ladder's T_cold anchor
+        is never moved — the readout pin is sacrosanct even when
+        sub-readout rungs place it interior to the sorted ladder.
         """
+        cap_links = self._resolve_cap_links(ladder.n_chain, n_cold)
+        if cap_links == 0:
+            return ladder
         Ts_pool = np.asarray(self._pool_Ts)
         vars_pool = self._effective_pool_vars()
         finite_pool = np.isfinite(Ts_pool)
@@ -390,21 +525,33 @@ class AdaptiveLadderController:
         def local_ratio_cap(T_at: float) -> float:
             var_local = float(np.interp(T_at, pool_T_sorted, pool_var_sorted))
             c_local = var_local / T_at**2
-            ratio = float(np.exp(DS_LINK_CAP / max(c_local, 1.e-8)))
-            return float(np.clip(ratio, *_CAP_RATIO_BOUNDS))
+            # clip the exponent before exponentiating: a tiny measured C
+            # would otherwise overflow exp() on its way to the ratio clip
+            log_ratio = min(self.ds_link_cap / max(c_local, 1.e-8), np.log(self.cap_ratio_bounds[1]) + 1.)
+            return float(np.clip(np.exp(log_ratio), *self.cap_ratio_bounds))
 
         Ts = np.sort(np.asarray(ladder.Ts).copy())
         finite = np.isfinite(Ts)
         finite_Ts = Ts[finite]
         capped = finite_Ts.copy()
-        for itrt in range(n_cold, min(n_cold + N_COLD_CAPPED_LINKS, finite_Ts.size)):
+        n_capped = 0
+        for itrt in range(1, finite_Ts.size):
+            if n_capped >= cap_links:
+                break
+            if capped[itrt] == capped[itrt - 1]:
+                # zero-width duplicate link (e.g. the pinned cold block)
+                continue
+            n_capped += 1
+            if ladder.T_cold is not None and finite_Ts[itrt] == ladder.T_cold:
+                # never move the readout pin
+                continue
             max_allowed = capped[itrt - 1] * local_ratio_cap(float(capped[itrt - 1]))
             if capped[itrt] > max_allowed:
                 capped[itrt] = max_allowed
         if np.allclose(capped, finite_Ts, rtol=1.e-12):
             return ladder
         Ts[finite] = capped
-        return TemperatureLadder(n_cold, Ts)
+        return TemperatureLadder(n_cold, Ts, T_cold=ladder.T_cold)
 
     def _build_ladder(self, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Rebuild the ladder from pooled cumulants over the extended window."""
@@ -424,14 +571,25 @@ class AdaptiveLadderController:
             means_use = np.append(means_use, means_use[idx_coldest])
             vars_use = np.append(vars_use, vars_use[idx_coldest])
 
-        t_cold_build = self._t_cold_window
+        # the readout chains pin at T=1 once the window descends past it;
+        # colder rungs then extend to the window edge under the same
+        # spacing rule as every other rung (no special casing at T_cold —
+        # that uniformity is what stabilizes a readout sitting on a phase
+        # transition). While the window is still above T=1 the pin rides
+        # the window, exactly the pre-T_min_factor annealing behavior.
+        t_cold_build = max(self._t_cold_window, _T_READOUT)
+        # snap_mode 1: the cold plug must not consume the sole sub-readout
+        # rung — with a starved allocation exactly one rung lands below
+        # T=1, and nearest-snapping it away removed the stabilizer right
+        # where it was needed (issue #19); identical to nearest whenever
+        # no rung sits below T_cold, i.e. on every T_min_factor=1 path
         ladder: TemperatureLadder
         if self.mode == 'entropy':
-            ladder = EntropyTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final)
+            ladder = EntropyTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
         elif self.mode == 'length':
-            ladder = LengthTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final)
+            ladder = LengthTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
         else:
-            ladder = AcceptanceTemperatureLadder(n_chain, Ts_use, means_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final)
+            ladder = AcceptanceTemperatureLadder(n_chain, Ts_use, means_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
         return self._cap_cold_links(ladder, n_cold)
 
     def post_block(self, sampler: DTMCMCSampler) -> bool:
@@ -487,6 +645,9 @@ class AdaptiveLadderController:
             sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
             # segmentation reset the cycle counters with the segment
             self._trips_at_prev_eval = 0
+            # the new segment starts as a remap transient: discard its
+            # head blocks from the next absorption (issue #19)
+            self._pending_discard = self.discard_blocks_after_update
         else:
             self._trips_at_prev_eval = n_trips_open
 
