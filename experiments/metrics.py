@@ -78,6 +78,22 @@ def nn_kl(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floa
     return float(entropy_cross - entropy_ref)
 
 
+def nn_divergence_symmetric(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator) -> float:
+    """Symmetric two-sample NN divergence: max of both nn_kl orientations.
+
+    The signed nn_kl is unsafe as a one-sided gate (issue #19): an
+    overconcentrated test sample (e.g. spike-tier collapse) drives it
+    large and NEGATIVE, so a "below threshold" check passes exactly the
+    failure it was meant to catch, while support-missing failures drive
+    it positive. Taking the max over both orientations makes either
+    failure mode a large positive value, at the cost of doubling the
+    O(n_use^2) work.
+    """
+    forward = nn_kl(reference_samples, test_samples, n_use, rng)
+    backward = nn_kl(test_samples, reference_samples, n_use, rng)
+    return max(forward, backward)
+
+
 def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator) -> NDArray[np.floating]:
     """Frozen C1 effective-sample estimator (n_eff_preds_empirical, plan §6).
 

@@ -103,6 +103,7 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
     """
     with h5py.File(str(artifact_path), 'r') as hf:
         events: NDArray[np.int64] = np.asarray(hf['events/rt_events'])
+        segment_itrns: NDArray[np.int64] = np.asarray(hf['events/rt_segment_itrns'])
         samples: NDArray[np.floating] = np.asarray(hf['store/samples'])
         n_iterations = int(np.asarray(hf.attrs['n_iterations']).item())
         n_evals = int(np.asarray(hf.attrs['n_likelihood_evals']).item())
@@ -115,9 +116,13 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
     burn_itrn = int(n_iterations * burn_fraction)
     post_events = events[events[:, 1] > burn_itrn]
 
-    rt_rate = round_trip_rate(post_events, n_chain, n_iterations - burn_itrn)
+    # ladder-segment boundaries must always ride along (issue #19): an
+    # adaptive artifact analyzed unsegmented pairs arrivals across ladder
+    # updates and overcounts round trips; fixed-ladder artifacts store an
+    # empty boundary array, for which segmentation is a no-op
+    rt_rate = round_trip_rate(post_events, n_chain, n_iterations - burn_itrn, segment_itrns=segment_itrns)
     n_eff = scramble_block_n_eff_min(post_burn, n_eff_block, n_eff_blocks, get_rng(n_eff_seed))
-    total_trips = float(round_trip_counts(post_events, n_chain).sum())
+    total_trips = float(round_trip_counts(post_events, n_chain, segment_itrns=segment_itrns).sum())
 
     return {
         'rt_rate': float(rt_rate),

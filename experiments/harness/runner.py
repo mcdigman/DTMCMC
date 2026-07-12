@@ -32,10 +32,18 @@ from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.likelihood import AbstractLikelihood
+from DTMCMC.likelihoods.ar1 import Ar1Likelihood
+from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.likelihoods.eggbox import Likelihood as EggboxLikelihood
+from DTMCMC.likelihoods.gaussian_mixture import GaussianMixtureLikelihood
+from DTMCMC.likelihoods.gaussian_shell import GaussianShellLikelihood
 from DTMCMC.likelihoods.hawaii_likelihood import HawaiiLikelihood
+from DTMCMC.likelihoods.hyperpyramid import HyperpyramidLikelihood
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
+from DTMCMC.likelihoods.random_wheel import RandomWheelLikelihood
+from DTMCMC.likelihoods.rosenbrock import RosenbrockLikelihood
+from DTMCMC.likelihoods.spoke_wheel import SpokeWheelLikelihood
 from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
@@ -145,6 +153,14 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., LikelihoodLike]] = {
     'cake': CakeLikelihood,
     'eggbox': EggboxLikelihood,
     'hawaii': HawaiiLikelihood,
+    'ar1': Ar1Likelihood,
+    'banana': BananaLikelihood,
+    'gaussian_mixture': GaussianMixtureLikelihood,
+    'gaussian_shell': GaussianShellLikelihood,
+    'hyperpyramid': HyperpyramidLikelihood,
+    'random_wheel': RandomWheelLikelihood,
+    'rosenbrock': RosenbrockLikelihood,
+    'spoke_wheel': SpokeWheelLikelihood,
 }
 
 

@@ -17,7 +17,7 @@ from scipy.special import gamma as gamma_func
 from DTMCMC.likelihoods import eggbox as eggbox_module
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
-from DTMCMC.temperature_ladder_helpers import EntropyTemperatureLadder, GeometricTemperatureLadder
+from DTMCMC.temperature_ladder_helpers import AcceptanceTemperatureLadder, EntropyTemperatureLadder, GeometricTemperatureLadder
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
 from experiments.harness.runner import build_sampler
 from experiments.harness.spec import RunSpec
@@ -118,6 +118,51 @@ def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) ->
     geometric_ladder = GeometricTemperatureLadder(Ts.size, 1, 1., 1., float(Ts[-1]), n_inf_final=0)
 
     assert_allclose(np.log(entropy_ladder.Ts), np.log(geometric_ladder.Ts), atol=0.1)
+
+
+def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run) -> None:
+    """A run on an acceptance ladder realizes ~equal NN exchange rates.
+
+    The ladder family's own test checks equal PREDICTED acceptance; this
+    closes the loop on the realized statistic (issue #19: gates must
+    measure what the sampler actually did). Stage 1 reuses the module
+    fixture run to measure per-rung logL means/variances; stage 2 builds
+    the acceptance ladder from those measurements, runs it, and requires
+    the realized nearest-neighbor exchange rates over the finite spaced
+    links to be flat within a band covering binomial counting noise plus
+    interpolation error, and centered near the predicted target.
+    """
+    sampler_stage1 = gaussian_invariant_run
+    n_burn_blocks = sampler_stage1.itrn // sampler_stage1.block_size // 2
+    means_measured = np.asarray(sampler_stage1.logL_means)[n_burn_blocks:].mean(axis=0)
+    vars_measured = measured_logL_vars(sampler_stage1, n_burn_blocks)
+
+    Ts_in = np.asarray([*GAUSSIAN_INVARIANT_TS, 16.])
+    ladder = AcceptanceTemperatureLadder(
+        9, Ts_in, means_measured[:Ts_in.size], vars_measured[:Ts_in.size], n_cold=1, T_cold=1., n_inf_final=1,
+    )
+
+    data = {key: dict(value) if isinstance(value, dict) else value for key, value in GAUSSIAN_INVARIANT_SPEC.items()}
+    data['name'] = 'acceptance_equality'
+    data['seed'] = 271829
+    data['ladder'] = {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [float(T_loc) for T_loc in ladder.Ts]}
+    data['run'] = {'n_steps': 16384, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 16}
+    spec = RunSpec.from_dict(data)
+
+    reset_seed_guard_for_tests()
+    seed_run(spec.seed)
+    sampler, _like_obj = build_sampler(spec)
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+    reset_seed_guard_for_tests()
+
+    _full, rates, _total = sampler.tracker_manager.get_exchange_rate_summary(0)
+    # chains 1..6: both NN links lie among the finite spaced rungs (the
+    # equal-acceptance contract excludes the inf edge and the cold plug)
+    interior = np.asarray(rates[1:7], dtype=np.float64)
+    assert np.all(np.isfinite(interior))
+    assert interior.max() - interior.min() < 0.12, interior
+    assert np.all(np.abs(interior - ladder.achieved_acceptance) < 0.12), (interior, ladder.achieved_acceptance)
 
 
 def test_cake_constants_match_engine() -> None:
