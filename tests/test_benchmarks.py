@@ -130,7 +130,7 @@ def test_mode_weights_match_reference_draws() -> None:
     seed_run(20260714)
     rng = get_rng(999)
     for name, target in BENCHMARKS.items():
-        if target.mode_centers is None or target.draw_reference is None:
+        if target.mode_centers is None or target.mode_weights is None or target.draw_reference is None:
             continue
         n_par = target.mode_centers.shape[1]
         draws = target.draw_reference(4000, n_par, rng)
