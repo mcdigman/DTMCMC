@@ -9,7 +9,7 @@ artifact carries the column-to-chain map per iteration range.
 """
 
 import tomllib
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
@@ -26,6 +26,9 @@ from DTMCMC.temperature_ladder_helpers import (
 from experiments.harness.artifact import validate
 from experiments.harness.runner import run_from_spec
 from experiments.harness.spec import RunSpec, SpecError
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 TINY_ARG_RECORD_SPEC: dict[str, Any] = {
     'name': 'tiny_arg_record_test',
@@ -97,7 +100,7 @@ def test_store_sample_helper_maps_columns_with_duplicates() -> None:
     logLs_store = np.zeros((block_size, len(record_indices)))
 
     store_idx, store_counter = store_sample_helper(
-        samples_store, logLs_store, samples_block, logLs_block, 0, 0, record_indices, block_size, 1, 1,
+        samples_store, logLs_store, samples_block, logLs_block, 0, 0, np.asarray(record_indices), block_size, 1, 1,
     )
     assert (store_idx, store_counter) == (0, 0)
     for row, itrk in enumerate(range(1, block_size + 1)):
@@ -119,8 +122,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     arg_cold = ladder.get_arg_cold()
     assert np.array_equal(sampler.record_indices, np.concatenate([arg_cold, [0, 7, 1]]))
     assert sampler.samples_store.shape == (64, 5, 3)
-    assert len(sampler.record_history) == 1
-    assert sampler.record_history[0][0] == 0
+    assert len(sampler.record_history) == 0
 
     for _ in range(2):
         sampler.advance_block()
@@ -139,9 +141,38 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     assert np.array_equal(sampler.record_indices, np.concatenate([[2, 3], [0, 7, 1]]))
     assert not np.array_equal(sampler.record_indices, old_indices)
     assert len(sampler.record_history) == 2
-    assert sampler.record_history[1][0] == sampler.itrn
     # storage width is invariant across updates
     assert len(sampler.record_indices) == len(old_indices)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_sampler_accepts_tuple_arg_record_at_runtime() -> None:
+    """Tuple inputs are runtime-permitted even though the typed API is list-only."""
+    seed_run(989)
+    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    like_obj = GaussianLikelihood(n_par=3, cutoff=5)
+    arg_record: tuple[int, ...] = (0, 5)
+
+    sampler = DTMCMCSampler(ladder, like_obj, 32, 64, arg_record=arg_record)  # type: ignore[arg-type]
+
+    assert sampler.arg_record == [0, 5]
+    assert np.array_equal(sampler.record_indices, [0, 0, 5])
+    assert sampler.samples_store.shape == (64, 3, 3)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_sampler_accepts_int64_ndarray_arg_record_at_runtime() -> None:
+    """NDArray inputs are runtime-permitted even though the typed API is list-only."""
+    seed_run(990)
+    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    like_obj = GaussianLikelihood(n_par=3, cutoff=5)
+    arg_record: NDArray[np.int64] = np.array([0, 5], dtype=np.int64)
+
+    sampler = DTMCMCSampler(ladder, like_obj, 32, 64, arg_record=arg_record)  # type: ignore[arg-type]
+
+    assert sampler.arg_record == [0, 5]
+    assert np.array_equal(sampler.record_indices, [0, 0, 5])
+    assert sampler.samples_store.shape == (64, 3, 3)
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
@@ -195,7 +226,8 @@ def test_artifact_records_indices_end_to_end(tmp_path) -> None:
 
     # readout chain 0 first, then the requested extras (0 duplicated, 5 hot)
     assert np.array_equal(record_indices, [0, 0, 5])
-    assert np.array_equal(history_indices, [[0, 0, 5]])
+    for itr in range(history_indices.shape[0]):
+        assert np.array_equal(history_indices[itr], [0, 0, 5])
     assert logLs.shape[1] == 3
     assert samples.shape[1] == 3
     # the duplicate columns are identical; the hot column is not

@@ -28,7 +28,7 @@ def store_sample_helper(
         logLs_block: NDArray[np.floating],
         store_idx_in: int,
         store_counter_in: int,
-        record_indices: list[int],
+        record_indices: NDArray[np.int64],
         block_size: int,
         store_thin: int,
         read_offset: int,
@@ -209,7 +209,7 @@ class DTMCMCSampler:
         if arg_record is None:
             self.arg_record: list[int] = []
         else:
-            self.arg_record = arg_record.copy()
+            self.arg_record = list(arg_record)
         assert np.all(np.asarray(self.arg_record) >= 0)
         assert np.all(np.asarray(self.arg_record) < self.n_chain)
         self.record_indices: list[int] = list(self.T_ladder.get_arg_cold()) + self.arg_record
@@ -328,7 +328,7 @@ class DTMCMCSampler:
             self.logLs,
             self.store_idx,
             self.store_counter,
-            self.record_indices,
+            np.asarray(self.record_indices),
             self.block_size,
             self.store_thin,
             1,
