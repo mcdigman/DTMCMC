@@ -334,7 +334,7 @@ class HarnessSampler(DTMCMCSampler):
             spec.block_size,
             spec.store_size,
             store_thin=spec.store_thin,
-            arg_record=np.asarray(spec.arg_record, dtype=np.int64),
+            arg_record=spec.arg_record,
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
 

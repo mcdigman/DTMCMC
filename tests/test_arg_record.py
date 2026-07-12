@@ -90,11 +90,11 @@ def test_store_sample_helper_maps_columns_with_duplicates() -> None:
     block_size = 4
     n_chain = 5
     n_par = 2
-    record_indices = np.array([3, 0, 3], dtype=np.int64)
+    record_indices = [3, 0, 3]
     samples_block = np.arange((block_size + 1) * n_chain * n_par, dtype=np.float64).reshape(block_size + 1, n_chain, n_par)
     logLs_block = np.arange((block_size + 1) * n_chain, dtype=np.float64).reshape(block_size + 1, n_chain)
-    samples_store = np.zeros((block_size, record_indices.size, n_par))
-    logLs_store = np.zeros((block_size, record_indices.size))
+    samples_store = np.zeros((block_size, len(record_indices), n_par))
+    logLs_store = np.zeros((block_size, len(record_indices)))
 
     store_idx, store_counter = store_sample_helper(
         samples_store, logLs_store, samples_block, logLs_block, 0, 0, record_indices, block_size, 1, 1,
@@ -114,7 +114,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     seed_run(987)
     ladder = GeometricTemperatureLadder(8, n_cold=2, T_cold=1.0, T_min=0.9, T_max=100.0, n_inf_final=1)
     like_obj = GaussianLikelihood(n_par=3, cutoff=5)
-    sampler = DTMCMCSampler(ladder, like_obj, 32, 64, arg_record=np.array([0, 7, 1]))
+    sampler = DTMCMCSampler(ladder, like_obj, 32, 64, arg_record=[0, 7, 1])
 
     arg_cold = ladder.get_arg_cold()
     assert np.array_equal(sampler.record_indices, np.concatenate([arg_cold, [0, 7, 1]]))
@@ -141,7 +141,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     assert len(sampler.record_history) == 2
     assert sampler.record_history[1][0] == sampler.itrn
     # storage width is invariant across updates
-    assert sampler.record_indices.size == old_indices.size
+    assert len(sampler.record_indices) == len(old_indices)
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
