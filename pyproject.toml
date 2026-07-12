@@ -27,6 +27,15 @@ project-excludes = [
     "notebooks/**",
     "explorations/**",
 ]
+# plotly/dash (dashboard/ front-end) ship no usable type info and are not
+# installed in the pyrefly hook's isolated environment; mypy/pyright cover
+# these modules in the typecheck CI instead.
+ignore-missing-imports = [
+    "plotly",
+    "plotly.*",
+    "dash",
+    "dash.*",
+]
 
 [tool.pyright]
 # Settings for the pyright job in .github/workflows/typecheck.yml. pyright
@@ -84,6 +93,9 @@ dev = [
 # Plotting / diagnostic scripts (diagnostic_commentary_helpers.py, run_*_search.py).
 # matplotlib 3.11.0 is the first release with cp314 wheels; 3.8 also caps numpy<2.
 plots = ["matplotlib>=3.11", "corner"]
+# Telemetry dashboard (dashboard/): plotly draws the figures, dash serves the
+# front-end. dashboard.core and dashboard.themes run without either installed.
+dashboard = ["plotly>=6", "dash>=4"]
 
 
 [build-system]
