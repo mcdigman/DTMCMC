@@ -3,9 +3,11 @@
 Criterion 1: post-freeze equivalence is bit-exact — the frozen sampler's
 full state copied into a fresh fixed-ladder sampler, both streams
 reseeded identically, one block advanced, identical output. Criterion 2:
-the adaptive entropy ladder converges to the gold ladder's dS profile on
-cake 5D without human input. Criterion 3: the golden test stays green
-(separate file, unchanged).
+the reference-anchored cake battery — unattended adaptation on a cake
+phase transition ends frozen with the T=1 readout recovering the exact
+posterior, gated in sample space (issue #19; heavy batteries carry the
+slow marker). Criterion 3: the golden test stays green (separate file,
+unchanged).
 """
 
 from typing import TYPE_CHECKING, Any, cast
@@ -22,20 +24,22 @@ if TYPE_CHECKING:
 import experiments.adaptive as adaptive_module
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager
-from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
+from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
+from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import (
     GeometricTemperatureLadder,
     TemperatureLadder,
-    Ts_to_betas,
     get_spacing_integrated,
     remap_ladder_indices,
     standardize_input_vars,
 )
 from DTMCMC.tracker_manager import TrackerManager
 from experiments.adaptive import AdaptiveLadderController
-from experiments.harness.paths import resolve
+from experiments.gates import GateReport, dedup_rows, ladder_entropy_gates, moment_gates, nn_gate, radial_mixture_gates
 from experiments.harness.runner import CountingLikelihood, build_likelihood, build_sampler, run_from_spec
 from experiments.harness.spec import ADAPTIVE_MODES, RunSpec, SpecError
+from experiments.reference_samplers import cake_logL_radial, cake_moment_r2, cake_tempered_cumulants, draw_cake
+from tests.battery_common import adaptive_spec_data, assert_readout_structure, load_post_freeze
 from tests.test_harness import TINY_GAUSSIAN_SPEC, make_tiny_spec
 
 
@@ -287,62 +291,232 @@ def test_post_freeze_bit_exact_equivalence() -> None:
 # pre-witness controller (stability-only freeze on the cold-cap fixed point)
 CONVERGENCE_BATTERY_SEEDS = (555, 556, 557, 558, 559, 560)
 
+# the battery cake: same 5D two-tier phase-transition structure as the
+# default cake (T=1 is exactly the tier transition), with the spike wide
+# enough (0.4 vs 0.1) that tier discovery and interconversion are routine
+# at unit-test budgets. At the default 0.1 width, spike discovery under
+# HONEST dynamics is a rare event at 12 chains (the pre-issue-#19 battery
+# runs that looked converged were substantially shaped by DE-buffer
+# self-interaction bias — see test_gold_ladder_warm_start_preserves_target)
+# and tier-fraction recovery is not certifiable at any unit-test budget;
+# the default cake keeps a structural battery below and its full posterior
+# certification belongs to the production-scale E-series.
+BATTERY_CAKE_WIDTHS = (4., 0.4)
+BATTERY_NARROW_R2 = 2.25  # tier-assignment radius^2 (narrow spike sigma 0.4)
+BATTERY_N_BLOCKS = 320
+BATTERY_BUDGET_BLOCKS = 240
+BATTERY_STORE_THIN = 8
 
+
+def _battery_reference(rng_seed: int = 20260712) -> np.ndarray:
+    """Exact reference draws for the battery cake."""
+    return draw_cake(20000, 5, get_rng(rng_seed), widths=BATTERY_CAKE_WIDTHS)
+
+
+def _battery_entropy_profile() -> tuple[np.ndarray, np.ndarray]:
+    """Analytic entropy profile S(beta) for the battery cake over T in [0.9, 4].
+
+    Computed by exact radial quadrature (cake_tempered_cumulants), so
+    the ladder anchors are likelihood-parametric with no per-likelihood
+    gold files; the span stops at T = 4 because hotter temperatures pick
+    up prior-box corner variance the spherical quadrature excludes
+    (validated in test_metrics against the measured gold arrays).
+    """
+    betas = 1. / np.geomspace(0.9, 4., 64)
+    _, vars_quad = cake_tempered_cumulants(betas, 5, widths=BATTERY_CAKE_WIDTHS)
+    betas_use, vars_use = standardize_input_vars(betas, vars_quad)
+    s_profile = get_spacing_integrated(vars_use, betas_use, False)
+    return betas_use, s_profile
+
+
+def _cake_battery_gates(run: dict[str, Any], reference: np.ndarray, seed: int) -> GateReport:
+    """The full reference-anchored gate stack for one battery run."""
+    report = GateReport()
+    cold = run['cold']
+    cold_unique = dedup_rows(cold)
+
+    # posterior recovery in sample space (issue #19: these carry the
+    # acceptance weight; ladder shape is a supporting diagnostic)
+    ref_r2_mean = cake_moment_r2(5, widths=BATTERY_CAKE_WIDTHS)
+    ref_narrow = float((((reference**2).sum(axis=1)) < BATTERY_NARROW_R2).mean())
+    report.merge(radial_mixture_gates(
+        cold, r2_threshold=BATTERY_NARROW_R2, narrow_frac_ref=ref_narrow, narrow_frac_tol=0.15,
+        r2_mean_ref=ref_r2_mean, r2_mean_rtol=0.25, min_tier_flips=200,
+    ))
+    per_coord_var = np.full(5, ref_r2_mean / 5.)
+    report.merge(moment_gates(cold, np.zeros(5), per_coord_var, mean_tol_sigmas=0.25, var_ratio_bounds=(0.7, 1.3)))
+    report.merge(nn_gate(reference, cold_unique, threshold=2.0, n_use=2000, rng=get_rng(seed)))
+
+    ref_logL_mean = float(cake_logL_radial(np.linalg.norm(reference, axis=1), 5, widths=BATTERY_CAKE_WIDTHS).mean())
+    logL_mean = float(run['cold_logLs'].mean())
+    report.stats['logL_mean'] = logL_mean
+    if abs(logL_mean - ref_logL_mean) > 1.5:
+        report.violations.append(f'cold logL mean {logL_mean:.2f} vs reference {ref_logL_mean:.2f} (band 1.5 nats)')
+
+    # ladder structure against the analytic entropy profile
+    betas_profile, s_profile = _battery_entropy_profile()
+    finite_Ts = run['final_Ts'][np.isfinite(run['final_Ts'])]
+    report.merge(ladder_entropy_gates(finite_Ts, betas_profile, s_profile, tip_max_nats=2.5, link_max_nats=2.5))
+    return report
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize('seed', CONVERGENCE_BATTERY_SEEDS)
-def test_adaptive_entropy_converges_to_gold(tmp_path, seed: int) -> None:
-    """Acceptance 2: unattended convergence to the gold dS structure on cake 5D.
+def test_adaptive_cake_battery_recovers_posterior(tmp_path, seed: int) -> None:
+    """Acceptance 2, reference-anchored: unattended adaptation on a cake phase
+    transition ends frozen with the T=1 readout recovering the exact posterior.
 
-    Run as an N-seed battery (N >= 6, seeds pre-registered): every run
-    must hard-freeze via the coupling witness — not the budget — within
-    the test budget, resolve the phase transition (gold packs 7 of 11
-    finite rungs at T <= 2; a starved log-uniform ladder has 1 there),
-    and space every non-coldest link at the gold per-link scale. The
-    extreme spike tip below T ~ 1.15 keeps refining across updates (the
-    coldest link still carries several gold nats when the freeze fires)
-    — the refinement-rate measurement is E3's job; this battery pins the
-    discovered structure.
+    Pre-registered 6-seed battery on the battery cake (see
+    BATTERY_CAKE_WIDTHS). Every run must freeze (criterion preferred;
+    a budget freeze with converged structure and posterior also passes
+    — requiring the stability criterion selects FOR coarse fixed points,
+    since they stabilize easily while healthy tips keep refining), keep
+    rungs below the readout (T_min_factor 0.9, plan S2), pin the readout
+    at exactly T=1, and pass sample-space gates against exact reference
+    draws plus ladder gates against the analytic quadrature entropy
+    profile. Calibration at this exact configuration: narrow fraction
+    0.493-0.552 (ref 0.488), E[r^2] within 10%, symmetric NN <= 0.88,
+    tips 0.8-1.4 nats — thresholds sit at 2-3x those deviations, far
+    below the failure modes they exclude (tier collapse: NN ~ 6, narrow
+    fraction ~0 or ~1; starved fixed point: tip > 6 nats).
     """
     reset_seed_guard_for_tests()
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
-    data['name'] = 'adaptive_cake'
-    data['seed'] = seed
-    data['likelihood'] = {'name': 'cake', 'n_par': 5, 'cutoff': 10}
-    data['ladder'] = {'kind': 'geometric', 'n_chain': 12, 'n_cold': 1}
-    data['run'] = {'n_steps': 512 * 320, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 160}
-    data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 8, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': 288}
+    data = adaptive_spec_data(
+        'adaptive_cake_battery', seed,
+        {'name': 'cake', 'n_par': 5, 'cutoff': 10, 'widths': list(BATTERY_CAKE_WIDTHS)},
+        n_chain=12, block_size=512, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        store_thin=BATTERY_STORE_THIN,
+    )
     spec = RunSpec.from_dict(data)
-
     artifact_path = run_from_spec(spec, tmp_path)
     reset_seed_guard_for_tests()
 
-    with h5py.File(str(artifact_path), 'r') as hf:
-        assert bool(hf['ladder/history'].attrs['frozen']), 'run must end frozen without human input'
-        assert str(hf['ladder/history'].attrs['frozen_by']) == 'criterion', 'freeze must fire via the coupling witness, not the budget'
-        final_Ts = np.asarray(hf['ladder/Ts'])
-        history_applied = np.asarray(hf['ladder/history/applied'])
-    assert int(history_applied.sum()) >= 8
+    run = load_post_freeze(artifact_path, block_size=512, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
+    assert_readout_structure(run)
+    assert run['n_applied'] >= 6
 
-    # gold dS profile: evaluate the gold cumulative entropy at the adaptive
-    # rung positions (interpolated dS profile comparison)
-    Ts_gold = np.load(resolve('data/Ts_cake_gold.npy'))
-    vars_gold = np.load(resolve('data/vars_cake_gold.npy'))
-    keep = Ts_gold >= 1.
-    betas_use, vars_use = standardize_input_vars(Ts_to_betas(Ts_gold[keep]), vars_gold[keep])
-    s_integral = get_spacing_integrated(vars_use, betas_use, False)
+    report = _cake_battery_gates(run, _battery_reference(), seed)
+    assert report.passed, (seed, report.violations, report.stats)
 
-    finite_Ts = np.sort(final_Ts[np.isfinite(final_Ts)])
-    betas_rungs = 1. / finite_Ts
-    # interpolate S(beta) (integral is over descending beta; flip ascending)
-    s_at_rungs = np.asarray(np.interp(betas_rungs[::-1], betas_use[::-1], s_integral[::-1]))[::-1]
-    increments = np.abs(np.diff(s_at_rungs))
-    gold_per_link = s_integral[-1] / (finite_Ts.size - 1)
 
-    # the transition cluster is resolved (log-uniform starvation puts 1 rung here)
-    assert int(np.sum(finite_Ts <= 2.0)) >= 4
-    # every link above the spike tip sits at the gold per-link scale
-    assert float(increments[1:].max()) <= 2.5 * gold_per_link
-    # the still-refining spike tip is bounded
-    assert float(increments[0]) <= 8.0
+def _warm_started_gold_sampler(seed: int, n_blocks: int, de_size: int):
+    """Gold-ladder cake sampler with every chain warm-started at exact posterior draws."""
+    data: dict[str, Any] = {
+        'name': 'gold_warm',
+        'seed': seed,
+        'likelihood': {'name': 'cake', 'n_par': 5, 'cutoff': 10},
+        'ladder': {'kind': 'entropy_file', 'n_chain': 12, 'n_cold': 1,
+                   'Ts_file': 'data/Ts_cake_gold.npy', 'vars_file': 'data/vars_cake_gold.npy'},
+        'run': {'n_steps': 512 * n_blocks, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': n_blocks},
+        'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
+        'proposals': {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': de_size}},
+    }
+    spec = RunSpec.from_dict(data)
+    seed_run(spec.seed)
+    sampler, _like_obj = build_sampler(spec)
+    like_obj = CakeLikelihood(n_par=5, cutoff=10)
+    warm = draw_cake(sampler.n_chain, 5, get_rng(1000 + seed))
+    for itrt in range(sampler.n_chain):
+        sampler.samples[0, itrt, :] = warm[itrt]
+        sampler.logLs[0, itrt] = like_obj.get_loglike(np.ascontiguousarray(warm[itrt]))
+    return spec, sampler
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize('seed', [555, 556])
+def test_gold_ladder_warm_start_preserves_target(seed: int) -> None:
+    """A known-good ladder started AT the target must stay near it (default cake).
+
+    This is the posterior-correctness gate that IS certifiable at test
+    budgets for the default (0.1-width) cake: cold-start tier-fraction
+    recovery is relaxation-limited beyond any unit-test run length, but
+    equilibrium PRESERVATION from exact reference draws is a direct
+    detailed-balance regression — the second-half tier statistics must
+    stay inside a band that the measured DE-buffer self-interaction
+    failure (see the negative control) misses by an order of magnitude.
+    Whole-run DE buffer: this very test measured ~0.85 narrow-tier
+    occupancy (truth 0.49) at de_size covering a tenth of the run.
+    """
+    reset_seed_guard_for_tests()
+    n_blocks = 640
+    spec, sampler = _warm_started_gold_sampler(seed, n_blocks, de_size=512 * n_blocks)
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+    reset_seed_guard_for_tests()
+
+    second_half = sampler.samples_store[sampler.store_size // 2:, 0, :]
+    r2 = (second_half**2).sum(axis=1)
+    narrow_mask = r2 < 1.
+    n_flips = int(np.count_nonzero(np.diff(narrow_mask.astype(np.int8))))
+
+    assert 1.0 <= float(r2.mean()) <= 13.5, f'E[r^2] {r2.mean():.2f} drifted out of the equilibrium band'
+    assert 0.02 <= float(narrow_mask.mean()) <= 0.96, f'narrow fraction {narrow_mask.mean():.3f} collapsed to one tier'
+    assert n_flips >= 50, f'only {n_flips} tier flips: tiers stopped interconverting'
+
+
+@pytest.mark.slow
+def test_small_de_buffer_fails_posterior_gate() -> None:
+    """Negative control: a crippled DE buffer demonstrably fails the posterior gate.
+
+    Same warm-started gold-ladder run as the preservation test, but with
+    the de_size=256 ring buffer the pre-issue-#19 battery inherited: the
+    rolling-buffer self-interaction collapses the readout onto the spike
+    tier (measured 99%+ narrow occupancy from an exact-equilibrium
+    start) and the equilibrium-preservation gates must catch it. Small
+    buffers are deliberately NOT a spec validation error — the bias is
+    continuous in buffer memory and production may cap deliberately —
+    so the guard is this failing gate plus the harness warning.
+    """
+    reset_seed_guard_for_tests()
+    n_blocks = 320
+    with pytest.warns(UserWarning, match='DE buffer memory'):
+        spec, sampler = _warm_started_gold_sampler(555, n_blocks, de_size=256)
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+    reset_seed_guard_for_tests()
+
+    second_half = sampler.samples_store[sampler.store_size // 2:, 0, :]
+    r2 = (second_half**2).sum(axis=1)
+    narrow_frac = float((r2 < 1.).mean())
+
+    # the preservation gates from test_gold_ladder_warm_start_preserves_target
+    assert float(r2.mean()) < 1.0, 'the crippled buffer no longer collapses the tier balance: recalibrate the negative control'
+    assert narrow_frac > 0.96
+
+
+@pytest.mark.slow
+def test_adaptive_default_cake_structural(tmp_path) -> None:
+    """Default (0.1-width) cake: adaptation completes with sane structure.
+
+    Under honest (whole-run-buffer) dynamics at 12 chains, discovery of
+    the default cake's 1e-8-volume spike within a unit-test budget is a
+    coin flip, so this test asserts only what every run must satisfy
+    regardless of discovery: a recorded freeze, applied updates,
+    sub-readout rungs with the readout pinned at T=1, and second-half
+    readout statistics inside the physically possible band (no tier
+    collapse in either direction). Full posterior certification for the
+    default cake is a production-scale (E-series) measurement; the
+    reference-anchored battery runs on BATTERY_CAKE_WIDTHS above.
+    """
+    reset_seed_guard_for_tests()
+    data = adaptive_spec_data(
+        'adaptive_cake_structural', 558,
+        {'name': 'cake', 'n_par': 5, 'cutoff': 10},
+        n_chain=12, block_size=512, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        store_thin=BATTERY_STORE_THIN,
+    )
+    spec = RunSpec.from_dict(data)
+    artifact_path = run_from_spec(spec, tmp_path)
+    reset_seed_guard_for_tests()
+
+    run = load_post_freeze(artifact_path, block_size=512, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
+    assert_readout_structure(run)
+    assert run['n_applied'] >= 5
+
+    r2 = (run['cold']**2).sum(axis=1)
+    narrow_frac = float((r2 < 1.).mean())
+    assert narrow_frac <= 0.98, 'spike-tier collapse: the readout no longer leaves the spike'
+    assert 0.05 <= float(r2.mean()) <= 15.5
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
@@ -459,15 +633,27 @@ def test_eggbox_mode_retention_gate() -> None:
 
 
 def test_adaptive_spec_validation() -> None:
-    """[adaptive] rejects unknown keys, missing budget_blocks, and sub-unit T_min_factor."""
+    """[adaptive] rejects unknown keys, missing budget_blocks, and out-of-range T_min_factor."""
     base: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
     base['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8}
     RunSpec.from_dict(base)
 
+    # sub-unit T_min_factor is supported now that storage is index-based
+    # (issue #19), as is the spec-owned controller geometry
+    good = dict(base)
+    good['adaptive'] = {
+        'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.9,
+        'window_extension_factor': 3.0, 'ds_link_cap': 2.0, 'cold_cap_links': 5,
+        'cap_ratio_min': 1.02, 'cap_ratio_max': 1.5, 'var_history_length': 6,
+        'pool_dlog_tol': 0.015, 'discard_blocks_after_update': 2, 'min_updates_at_target': 4,
+    }
+    RunSpec.from_dict(good)
+
     bad_tables = (
         {'mode': 'entropy', 'budget_blocks': 8, 'forgeting': 0.15},    # typo'd key must fail loudly
         {'mode': 'entropy'},                                           # budget_blocks is required
-        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.9},  # sub-unit rungs locked out pending amendment
+        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 1.5},  # target is a multiple of T=1, capped at the readout
+        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.},   # and must be positive
     )
     for table in bad_tables:
         data = dict(base)
@@ -556,6 +742,7 @@ def test_pessimistic_var_estimator_ratchets_and_ages_out() -> None:
         controller = AdaptiveLadderController(
             mode='entropy', update_every_blocks=1, forgetting=0.,
             freeze_criterion=(1.e9, 10**6), budget_blocks=10**6, var_estimator=estimator,
+            discard_blocks_after_update=0,
         )
         # huge freeze_dlog holds every rebuild, so the stub's temperatures
         # recur every segment — the regime where the estimators differ
@@ -580,6 +767,141 @@ def test_pessimistic_var_estimator_ratchets_and_ages_out() -> None:
     # spike ages out and the pessimistic candidate relaxes again
     ratio_pessimistic_late = _coldest_ratio(controllers[1].history[-1].Ts)
     assert ratio_pessimistic_late > ratio_pessimistic
+
+
+def test_pool_tolerance_preserves_variance_history() -> None:
+    """Rungs drifting within pool_dlog_tol keep feeding one pool row (issue #19).
+
+    Exact float keying spawned a fresh length-1 variance history at
+    every applied rebuild, so the pessimistic max degenerated to the
+    latest estimate precisely during active adaptation. With tolerance
+    matching, a rung drifting 0.5% between segments accumulates history;
+    with the tolerance disabled it splits into separate rows.
+    """
+    for tol, expect_merged in ((0.02, True), (0., False)):
+        controller = AdaptiveLadderController(
+            mode='entropy', update_every_blocks=1, freeze_criterion=(1.e9, 10**6),
+            budget_blocks=10**6, pool_dlog_tol=tol, discard_blocks_after_update=0,
+        )
+        controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
+        stub = _StubSampler(np.array([1., 2., 4., 8., 16., np.inf]))
+        sampler = cast('DTMCMCSampler', stub)
+        stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
+        controller.post_block(sampler)
+        # the coldest rung drifts 0.5% (well under converged link spacing)
+        stub.Ts = np.array([1.005, 2., 4., 8., 16., np.inf])
+        stub.feed_block([9., 0.5, 0.5, 0.5, 0.5, 0.25])
+        controller.post_block(sampler)
+
+        cold_rows = [idx for idx, T_loc in enumerate(controller._pool_Ts) if np.isfinite(T_loc) and T_loc < 1.5]  # noqa: SLF001
+        histories = [controller._pool_var_history[idx] for idx in cold_rows]  # noqa: SLF001
+        if expect_merged:
+            assert len(cold_rows) == 1
+            assert len(histories[0]) == 2
+            assert max(histories[0]) == 9.
+        else:
+            assert len(cold_rows) == 2
+            assert all(len(history) == 1 for history in histories)
+
+
+def test_discard_blocks_after_update_drops_transients() -> None:
+    """The head of each segment is excluded from the pooled statistics.
+
+    The remap leaves chains equilibrated to their previous temperatures,
+    so the first post-update block measures a transient (issue #19). A
+    cadence-2 controller with discard 1 must pool only the second block
+    of each segment — including the very first segment, whose chains
+    start from prior draws.
+    """
+    controller = AdaptiveLadderController(
+        mode='entropy', update_every_blocks=2, freeze_criterion=(1.e9, 10**6),
+        budget_blocks=10**6, discard_blocks_after_update=1, pool_dlog_tol=0.,
+    )
+    controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
+    stub = _StubSampler(np.array([1., 2., 4., 8., 16., np.inf]))
+    sampler = cast('DTMCMCSampler', stub)
+    stub.feed_block([999., 999., 999., 999., 999., 999.])  # transient: must not pool
+    controller.post_block(sampler)
+    stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
+    controller.post_block(sampler)
+
+    coldest_idx = int(np.argmin([T_loc if np.isfinite(T_loc) else np.inf for T_loc in controller._pool_Ts]))  # noqa: SLF001
+    assert controller._pool_vars[coldest_idx] == 0.5  # noqa: SLF001
+    assert max(controller._pool_var_history[coldest_idx]) == 0.5  # noqa: SLF001
+
+
+def test_resolve_cap_links_scales_with_chain_count() -> None:
+    """The auto cold-cap link count scales with the ladder instead of a fixed 3."""
+    controller = AdaptiveLadderController(mode='entropy', budget_blocks=8)
+    assert controller._resolve_cap_links(12, 1) == 3  # noqa: SLF001 — historical floor at battery scale
+    assert controller._resolve_cap_links(64, 1) == 15  # noqa: SLF001
+    explicit = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=7)
+    assert explicit._resolve_cap_links(64, 1) == 7  # noqa: SLF001
+
+
+def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
+    """The cap never moves a rung pinned at T_cold, and cold_cap_links=0 disables it."""
+    controller = AdaptiveLadderController(
+        mode='entropy', budget_blocks=8, cap_ratio_bounds=(1.01, 1.02),
+    )
+    # pool rows with tiny variance make the measured cap ratio clip to its
+    # minimum, so every non-pinned capped link must move
+    for T_loc, var_loc in ((0.9, 1.e-6), (1., 1.e-6), (4., 1.e-6), (64., 1.e-6)):
+        controller._pool_Ts.append(T_loc)  # noqa: SLF001
+        controller._pool_means.append(0.)  # noqa: SLF001
+        controller._pool_vars.append(var_loc)  # noqa: SLF001
+        controller._pool_weights.append(1.)  # noqa: SLF001
+        controller._pool_var_history.append([var_loc])  # noqa: SLF001
+
+    ladder = TemperatureLadder(1, np.array([0.9, 1., 2., 4., 16., np.inf]), T_cold=1.)
+    capped = controller._cap_cold_links(ladder, 1)  # noqa: SLF001
+    capped_Ts = np.asarray(capped.Ts)
+    # the readout pin is untouched even though its link violates the cap
+    assert 1.0 in capped_Ts
+    assert capped.get_arg_cold().size == 1
+    # the link above the pin was pulled down to the clipped ratio
+    assert capped_Ts[2] <= 1.0 * 1.02 + 1.e-12
+    # disabling the cap returns the ladder unchanged
+    disabled = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=0)
+    assert disabled._cap_cold_links(ladder, 1) is ladder  # noqa: SLF001
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_adaptive_t_min_factor_pins_readout_with_subcold_rungs(tmp_path) -> None:
+    """T_min_factor < 1 extends the ladder below T=1 while recording stays at T=1.
+
+    End-to-end on the tiny Gaussian: after the window reaches its
+    sub-unit target the readout chains are pinned at exactly T=1 with
+    rungs below them (no special casing in the spacing), and the
+    artifact's record map points at the T=1 chains rather than the
+    coldest ones — the storage semantics that blocked plan S2.
+    """
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['name'] = 'tmin_gaussian'
+    data['ladder'] = {'kind': 'geometric', 'n_chain': 8, 'n_cold': 1}
+    data['run'] = {'n_steps': 64 * 24, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 8}
+    data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 2, 'freeze_dlog': 0.02,
+                        'freeze_consecutive': 3, 'budget_blocks': 20, 'T_min_factor': 0.9}
+    spec = RunSpec.from_dict(data)
+
+    artifact_path = run_from_spec(spec, tmp_path)
+
+    with h5py.File(str(artifact_path), 'r') as hf:
+        final_Ts = np.asarray(hf['ladder/Ts'])
+        record_indices = np.asarray(hf['store/record_indices'])
+        history_itrns = np.asarray(hf['store/record_history_itrns'])
+        history_indices = np.asarray(hf['store/record_history_indices'])
+        t_cold_window = np.asarray(hf['ladder/history/t_cold_window'])
+
+    assert float(t_cold_window[-1]) <= 0.9 + 1.e-12, 'window must reach its sub-unit target within budget'
+    finite_Ts = final_Ts[np.isfinite(final_Ts)]
+    assert np.min(finite_Ts) < 1., 'sub-readout rungs must be present'
+    assert record_indices.size == 1
+    assert final_Ts[record_indices[0]] == 1., 'the recorded chain is the T=1 readout, not the coldest rung'
+    assert record_indices[0] > 0, 'the readout chain sits interior to the sorted ladder'
+    # the record map tracked the move off index 0 when sub-cold rungs appeared
+    assert history_indices.shape[0] == history_itrns.size
+    assert history_indices[0][0] == 0
 
 
 # reuse the shared guard fixture from the harness tests

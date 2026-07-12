@@ -19,6 +19,7 @@ from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import AcceptanceTemperatureLadder, EntropyTemperatureLadder, GeometricTemperatureLadder
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
+from experiments.harness.paths import resolve
 from experiments.harness.runner import build_sampler
 from experiments.harness.spec import RunSpec
 from experiments.metrics import (
@@ -40,7 +41,9 @@ from experiments.reference_samplers import (
     CAKE_AMPS,
     CAKE_EXPONENTS,
     CAKE_WIDTHS,
+    cake_logL_radial,
     cake_moment_r2,
+    cake_tempered_cumulants,
     draw_cake,
     draw_eggbox,
     draw_truncated_gaussian,
@@ -185,6 +188,42 @@ def test_cake_constants_match_engine() -> None:
             for amp, width, exponent in zip(CAKE_AMPS, CAKE_WIDTHS, CAKE_EXPONENTS, strict=True)
         ]
         assert like_obj.get_loglike(point) == pytest.approx(np.logaddexp(tier_logs[0], tier_logs[1]), rel=1.e-12)
+
+
+def test_cake_radial_logL_matches_engine() -> None:
+    """The vectorized radial cake logL reproduces the engine exactly.
+
+    The quadrature gold standard (cake_tempered_cumulants) rests on this
+    reconstruction, so it gets the same drift guard as the reference
+    sampler constants.
+    """
+    n_par = 5
+    like_obj = CakeLikelihood(n_par=n_par, cutoff=10)
+    rng = get_rng(29)
+    points = rng.uniform(-9., 9., size=(64, n_par))
+    radii = np.linalg.norm(points, axis=1)
+    radial = cake_logL_radial(radii, n_par)
+    for point, expected in zip(points, radial, strict=True):
+        assert like_obj.get_loglike(point) == pytest.approx(expected, rel=1.e-12)
+
+
+def test_cake_tempered_cumulants_match_measured_gold() -> None:
+    """Quadrature Var(logL) agrees with the measured gold arrays where valid.
+
+    The spherical quadrature is exact below the temperature where the
+    prior box's corners start to matter (tier width * T^(1/e) << box
+    half-width); the gold arrays were measured on the box, so agreement
+    over T <= 4 validates the quadrature exactly where the adaptive
+    batteries anchor their ladder gates. Hotter rungs legitimately
+    diverge (corner mass) and are excluded from any analytic anchoring.
+    """
+    Ts_gold = np.load(resolve('data/Ts_cake_gold.npy'))
+    vars_gold = np.load(resolve('data/vars_cake_gold.npy'))
+    keep = np.isfinite(Ts_gold) & (Ts_gold >= 1.) & (Ts_gold <= 4.)
+    betas = 1. / Ts_gold[keep]
+    _means, vars_quad = cake_tempered_cumulants(betas, 5)
+    ratio = vars_quad / vars_gold[keep]
+    assert np.all((ratio > 0.9) & (ratio < 1.1)), ratio
 
 
 def test_truncated_gaussian_reference() -> None:

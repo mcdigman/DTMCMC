@@ -8,6 +8,7 @@ counting-proxy eval accounting; and batch sweep expansion.
 
 import shlex
 import tomllib
+import warnings as warnings_module
 from typing import Any
 
 import h5py
@@ -271,6 +272,46 @@ def test_eggbox_end_to_end(tmp_path) -> None:
 
     artifact_path = run_from_spec(spec, tmp_path)
     assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
+    """Finite cold/hot Fisher weights run through the full stack (issue #19 note).
+
+    Every shipped spec runs the Fisher weights at 0, so this smoke keeps
+    the finite-weight code path exercised in the fast suite; the
+    convergence-quality check with finite weights is the slow
+    gaussian_fisher battery arm in test_likelihood_convergence.
+    """
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['name'] = 'tiny_fisher_weights'
+    data['proposals'] = {
+        'FisherJumpManager': {'verbose_fisher': False, 'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333},
+        'DEJumpManager': {'de_size': 256},
+    }
+    spec = RunSpec.from_dict(data)
+    artifact_path = run_from_spec(spec, tmp_path)
+    assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_short_memory_de_buffer_warns() -> None:
+    """A DE buffer spanning less than the run draws the harness warning.
+
+    The rolling-buffer self-interaction bias (issue #19) is continuous
+    in buffer memory, so deficits warn rather than fail validation;
+    the boundary case (memory == run length) must stay silent.
+    """
+    seed_run(4321)
+    with pytest.warns(UserWarning, match='DE buffer memory'):
+        build_sampler(make_tiny_spec(n_steps=64 * 8))
+
+    reset_seed_guard_for_tests()
+    seed_run(4322)
+    # de_size 256 == n_steps 256: exactly whole-run memory, no warning
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter('error', UserWarning)
+        build_sampler(make_tiny_spec())
 
 
 def test_paths_anchored_to_repo_root() -> None:

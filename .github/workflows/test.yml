@@ -36,5 +36,7 @@ jobs:
           uv venv
           uv pip install ".[dev,plots]"
 
+      # Heavy convergence batteries carry the slow marker and are excluded
+      # per-push; an occasional/scheduled job can run them with -m slow.
       - name: Run tests
-        run: .venv/bin/python -m pytest
+        run: .venv/bin/python -m pytest -m "not slow"
