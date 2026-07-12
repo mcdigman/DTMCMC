@@ -27,7 +27,7 @@ TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
     'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
-    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2},
+    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
         'FisherJumpManager': {'verbose_fisher': False},
@@ -266,7 +266,7 @@ def test_eggbox_end_to_end(tmp_path) -> None:
     data['name'] = 'tiny_eggbox_test'
     data['likelihood'] = {'name': 'eggbox', 'n_par': 3}
     data['ladder'] = {'kind': 'geometric', 'n_chain': 4, 'n_cold': 1, 'T_max': 50.0}
-    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2}
+    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2}
     spec = RunSpec.from_dict(data)
 
     artifact_path = run_from_spec(spec, tmp_path)

@@ -18,7 +18,6 @@ n_cold = 1
 n_steps = 163840
 block_size = 512
 store_thin = 16
-n_record = -1
 checkpoint_every_blocks = 160
 
 # the adaptive burn-in controller (plan §4 Phase 5). Keys are validated

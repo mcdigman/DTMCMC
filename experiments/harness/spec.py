@@ -123,6 +123,21 @@ def _opt_int(table: dict[str, object], key: str, ctx: str, default: int) -> int:
     return _require_int(table, key, ctx)
 
 
+def _opt_int_list(table: dict[str, object], key: str, ctx: str) -> list[int]:
+    """Fetch an optional list-of-integers entry from parsed TOML data (default empty)."""
+    if key not in table:
+        return []
+    value = table.get(key)
+    if not isinstance(value, list):
+        msg = f'{ctx}.{key} must be a list of integers'
+        raise SpecError(msg)
+    for item in value:
+        if not isinstance(item, int) or isinstance(item, bool):
+            msg = f'{ctx}.{key} entries must be integers'
+            raise SpecError(msg)
+    return list(value)
+
+
 def _opt_bool(table: dict[str, object], key: str, ctx: str, default: bool) -> bool:
     """Fetch an optional boolean entry from parsed TOML data."""
     value = table.get(key, default)
@@ -238,8 +253,11 @@ class RunSpec:
         Iterations per block
     store_thin: int
         Thinning applied to the stored cold-chain samples
-    n_record: int
-        Number of chains recorded in storage (-1 means n_cold)
+    arg_record: list[int]
+        Indices of additional chains recorded in storage beyond the
+        ladder's n_cold readout chains (default none). The readout chains
+        always occupy the first n_cold store columns and their indices
+        are recomputed at every ladder update; duplicates are kept
     checkpoint_every_blocks: int
         Artifact flush cadence in blocks
     exchange_strategy: str
@@ -259,7 +277,7 @@ class RunSpec:
     n_steps_per_major_report: int = 0
     block_size: int = 0
     store_thin: int = 1
-    n_record: int = -1
+    arg_record: list[int] = field(default_factory=list)
     checkpoint_every_blocks: int = 8
     exchange_strategy: str = 'sequential'
     track_full_exchanges: bool = False
@@ -317,9 +335,10 @@ class RunSpec:
         if self.store_thin < 1:
             msg = 'run.store_thin must be >= 1'
             raise SpecError(msg)
-        if self.n_record != -1 and not 1 <= self.n_record <= n_chain:
-            msg = 'run.n_record must be -1 or in [1, n_chain]'
-            raise SpecError(msg)
+        for record_idx in self.arg_record:
+            if isinstance(record_idx, bool) or not isinstance(record_idx, int) or not 0 <= record_idx < n_chain:
+                msg = 'run.arg_record entries must be integers in [0, n_chain)'
+                raise SpecError(msg)
         if self.checkpoint_every_blocks < 1:
             msg = 'run.checkpoint_every_blocks must be >= 1'
             raise SpecError(msg)
@@ -430,7 +449,7 @@ class RunSpec:
             n_steps_per_major_report=_opt_int(run, 'n_steps_per_major_report', 'run', 0),
             block_size=_require_int(run, 'block_size', 'run'),
             store_thin=_opt_int(run, 'store_thin', 'run', 1),
-            n_record=_opt_int(run, 'n_record', 'run', -1),
+            arg_record=_opt_int_list(run, 'arg_record', 'run'),
             checkpoint_every_blocks=_opt_int(run, 'checkpoint_every_blocks', 'run', 8),
             exchange_strategy=_require_str(exchange, 'strategy', 'exchange') if 'strategy' in exchange else 'sequential',
             track_full_exchanges=_opt_bool(exchange, 'track_full_exchanges', 'exchange', False),
@@ -457,7 +476,7 @@ class RunSpec:
                 'n_steps_per_major_report': self.n_steps_per_major_report,
                 'block_size': self.block_size,
                 'store_thin': self.store_thin,
-                'n_record': self.n_record,
+                'arg_record': list(self.arg_record),
                 'checkpoint_every_blocks': self.checkpoint_every_blocks,
             },
             'exchange': {

@@ -61,7 +61,7 @@ GAUSSIAN_INVARIANT_SPEC: dict[str, object] = {
     # hottest tested rung on the CI platform's realization without it)
     'likelihood': {'name': 'gaussian', 'n_par': 4, 'cutoff': 12},
     'ladder': {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [*GAUSSIAN_INVARIANT_TS, 16., float('inf')]},
-    'run': {'n_steps': 49152, 'block_size': 512, 'store_thin': 16, 'n_record': -1, 'checkpoint_every_blocks': 96},
+    'run': {'n_steps': 49152, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 96},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
         'FisherJumpManager': {'verbose_fisher': False},

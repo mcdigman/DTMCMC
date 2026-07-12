@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from .spec import RunSpec
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # root attrs written at flush time rather than carried by RunProvenance
 _FLUSH_ATTRS: tuple[str, ...] = (
@@ -81,6 +81,9 @@ REQUIRED_DATASETS: tuple[str, ...] = (
     'flow/labeled_counts',
     'store/samples',
     'store/logLs',
+    'store/record_indices',
+    'store/record_history_itrns',
+    'store/record_history_indices',
 )
 
 
@@ -283,7 +286,13 @@ def write_artifact(
 
         store_grp = hf.create_group('store')
         store_grp.attrs['store_thin'] = sampler.store_thin
-        store_grp.attrs['n_record'] = sampler.n_record
+        # store column j holds chain record_indices[j]; the history maps
+        # every iteration range to the recorded set active during it (the
+        # readout-chain indices move when a ladder update adds or removes
+        # rungs below T_cold)
+        store_grp.create_dataset('record_indices', data=np.asarray(sampler.record_indices, dtype=np.int64))
+        store_grp.create_dataset('record_history_itrns', data=np.asarray([itrn for itrn, _ in sampler.record_history], dtype=np.int64))
+        store_grp.create_dataset('record_history_indices', data=np.asarray([indices for _, indices in sampler.record_history], dtype=np.int64))
         store_grp.create_dataset('samples', data=sampler.samples_store[:rows_written])
         store_grp.create_dataset('logLs', data=sampler.logLs_store[:rows_written])
 

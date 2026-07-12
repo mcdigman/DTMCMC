@@ -41,7 +41,6 @@ def make_spec(name: str, seed: int, likelihood: dict[str, Any], ladder: dict[str
             'n_steps': n_steps,
             'block_size': block_size,
             'store_thin': store_thin,
-            'n_record': -1,
             'checkpoint_every_blocks': max(n_steps // block_size // 4, 1),
         },
         'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
