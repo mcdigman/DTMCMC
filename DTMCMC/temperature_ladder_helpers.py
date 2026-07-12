@@ -40,7 +40,7 @@ def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
 class TemperatureLadder:
     """Store a temperature ladder for parallel tempering."""
 
-    def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1) -> None:
+    def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1, T_cold: float | None = None) -> None:
         """Create the temperature ladder object.
 
         Parameters
@@ -51,6 +51,12 @@ class TemperatureLadder:
             Ts to store
         sort_mode: int
             Selector for how to sort the input temperatures
+        T_cold: float | None
+            temperature of the n_cold readout chains; None (default) keeps
+            the historical convention that the first n_cold rungs are the
+            readout chains. Ladders that may extend below the readout
+            temperature must set T_cold so get_arg_cold can locate the
+            readout rungs by temperature instead of by position.
 
         Raises
         ------
@@ -72,6 +78,25 @@ class TemperatureLadder:
 
         self.n_chain: int = Ts_in.size
         self.n_cold: int = n_cold
+        self.T_cold: float | None = T_cold
+
+    def get_arg_cold(self) -> NDArray[np.int64]:
+        """Get the indices of the n_cold readout chains in this ladder.
+
+        With T_cold set, the readout chains are the n_cold rungs pinned at
+        exactly T_cold (every ladder family pins them there by
+        construction) — not necessarily the coldest rungs, since a ladder
+        may extend below T_cold (T_min < T_cold, sort_mode=1). Without
+        T_cold the first n_cold rungs are the readout chains, preserving
+        the historical positional convention for raw ladders.
+        """
+        if self.T_cold is None:
+            return np.arange(self.n_cold, dtype=np.int64)
+        matches = np.flatnonzero(self.Ts == self.T_cold)
+        # every ladder family pins exactly n_cold rungs at T_cold; a spaced
+        # rung landing there exactly only adds interchangeable duplicates
+        assert matches.size >= self.n_cold
+        return matches[:self.n_cold].astype(np.int64)
 
 
 def betas_to_Ts(betas_in: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -199,7 +224,6 @@ class GeometricTemperatureLadder(TemperatureLadder):
         n_inf_final: int
             How many infinite temperature chains to insert at the end
         """
-        self.T_cold: float = T_cold
         self.T_min: float = T_min
         self.T_max: float = T_max
         self.n_inf_final: int = n_inf_final
@@ -207,7 +231,7 @@ class GeometricTemperatureLadder(TemperatureLadder):
         _, Ts = geometric_spaced_betas(
             n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final, sort_mode=sort_mode
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
 
 
 def _standardize_stats_core(betas_in: NDArray[np.floating], stats_in: list[NDArray[np.floating]], nonfinite_msg: str) -> tuple[NDArray[np.floating], list[NDArray[np.floating]]]:
@@ -548,7 +572,6 @@ class EntropyTemperatureLadder(TemperatureLadder):
         sort_mode: int
             Select mode for how temperatures are sorted.
         """
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts = entropy_spaced_betas(
@@ -561,7 +584,7 @@ class EntropyTemperatureLadder(TemperatureLadder):
             correct_last=correct_last,
             sort_mode=sort_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
 
 
 class LengthTemperatureLadder(TemperatureLadder):
@@ -595,7 +618,6 @@ class LengthTemperatureLadder(TemperatureLadder):
             sort_mode: int = 1,
     ) -> None:
         """Create the temperature ladder object; parameters as EntropyTemperatureLadder."""
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts = entropy_spaced_betas(
@@ -610,7 +632,7 @@ class LengthTemperatureLadder(TemperatureLadder):
             p=0.5,
             q=0.,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
 
 
 def standardize_input_stats(betas_in: NDArray[np.floating], logL_means_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
@@ -816,7 +838,6 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
         Parameters as EntropyTemperatureLadder, plus logL_means_in: the
         per-input-temperature mean log likelihoods.
         """
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts, a_star = acceptance_spaced_betas(
@@ -830,7 +851,7 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             sort_mode=sort_mode,
         )
         self.achieved_acceptance: float = a_star
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
 
 
 def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:
