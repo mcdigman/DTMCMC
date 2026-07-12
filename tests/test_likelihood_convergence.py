@@ -174,7 +174,7 @@ def test_rosenbrock_20d_structural(tmp_path) -> None:
     full descent to a T=1 readout with sub-readout rungs, applied
     updates throughout, and a recorded freeze.
     """
-    cfg = {'params': {'n_par': 20}, 'n_chain': 40, 'block': 512, 'blocks': 448, 'budget': 352}
+    cfg: dict[str, Any] = {'params': {'n_par': 20}, 'n_chain': 40, 'block': 512, 'blocks': 448, 'budget': 352}
     data = adaptive_spec_data(
         'conv_rosenbrock20', BATTERY_SEED, {'name': 'rosenbrock', **cfg['params']},
         n_chain=cfg['n_chain'], block_size=cfg['block'], n_blocks=cfg['blocks'], budget_blocks=cfg['budget'],
