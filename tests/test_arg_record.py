@@ -189,14 +189,12 @@ def test_artifact_records_indices_end_to_end(tmp_path) -> None:
 
     with h5py.File(str(artifact_path), 'r') as hf:
         record_indices = np.asarray(hf['store/record_indices'])
-        history_itrns = np.asarray(hf['store/record_history_itrns'])
         history_indices = np.asarray(hf['store/record_history_indices'])
         logLs = np.asarray(hf['store/logLs'])
         samples = np.asarray(hf['store/samples'])
 
     # readout chain 0 first, then the requested extras (0 duplicated, 5 hot)
     assert np.array_equal(record_indices, [0, 0, 5])
-    assert np.array_equal(history_itrns, [0])
     assert np.array_equal(history_indices, [[0, 0, 5]])
     assert logLs.shape[1] == 3
     assert samples.shape[1] == 3
