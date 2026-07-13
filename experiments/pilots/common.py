@@ -28,6 +28,57 @@ PILOT_PROPOSALS: dict[str, dict[str, object]] = {
 
 GOLD_LADDER_FILES = {'Ts_file': 'data/Ts_cake_gold.npy', 'vars_file': 'data/vars_cake_gold.npy'}
 
+# standard adaptive DE ring-buffer span, in blocks: with the standard
+# cadence (update_every_blocks = 8) this is eight adaptation windows —
+# long enough to bridge rebuilds, short enough that the buffer has fully
+# turned over (and forgotten adaptation burn-in) well before the run ends.
+# Whole-run buffers never forget burn-in and are reserved for explicit
+# old-behavior controls.
+ADAPTIVE_DE_WINDOW_BLOCKS = 64
+
+
+def make_adaptive_spec(
+        name: str,
+        seed: int,
+        likelihood: dict[str, Any],
+        *,
+        n_chain: int,
+        block_size: int,
+        n_blocks: int,
+        budget_blocks: int,
+        store_thin: int = 4,
+        t_min_factor: float = 0.9,
+        remap_rule: str = 'no_remap',
+        mode: str = 'entropy',
+        de_window_blocks: int | None = ADAPTIVE_DE_WINDOW_BLOCKS,
+        proposals_extra: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build the shared adaptive spec dict (batteries and family arms).
+
+    de_window_blocks sizes the DE ring buffer in blocks (None = whole-run,
+    reserved for old-behavior controls).
+    """
+    de_blocks = n_blocks if de_window_blocks is None else min(de_window_blocks, n_blocks)
+    proposals: dict[str, dict[str, Any]] = {
+        'FisherJumpManager': {'verbose_fisher': False},
+        'DEJumpManager': {'de_size': block_size * de_blocks},
+    }
+    for section, entries in (proposals_extra or {}).items():
+        proposals.setdefault(section, {}).update(entries)
+    return {
+        'name': name,
+        'seed': seed,
+        'likelihood': likelihood,
+        'ladder': {'kind': 'geometric', 'n_chain': n_chain, 'n_cold': 1},
+        'run': {'n_steps': block_size * n_blocks, 'block_size': block_size, 'store_thin': store_thin,
+                'checkpoint_every_blocks': n_blocks},
+        'adaptive': {'mode': mode, 'update_every_blocks': 8, 'forgetting': 0.15,
+                     'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': budget_blocks,
+                     'remap_rule': remap_rule, 'T_min_factor': t_min_factor},
+        'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
+        'proposals': proposals,
+    }
+
 
 def make_spec(name: str, seed: int, likelihood: dict[str, Any], ladder: dict[str, Any], n_steps: int, block_size: int = 1024, store_thin: int = 16) -> dict[str, Any]:
     """Build a pilot spec dict with the shared conventions."""
@@ -99,6 +150,12 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
     Round trips use the full event log; n_eff uses the post-burn stored
     cold samples with the frozen scramble-block estimator (minimum over
     parameters) and a fixed recorded analysis seed.
+
+    The burn boundary is the LATER of the burn_fraction heuristic and, on
+    adaptive artifacts, the recorded freeze iteration: everything before
+    the freeze was spent tuning the ladder rather than sampling a fixed
+    target, so a fractional burn alone would let adaptation-era samples
+    into the metrics whenever the freeze lands past the fraction.
     """
     with h5py.File(str(artifact_path), 'r') as hf:
         events: NDArray[np.int64] = np.asarray(hf['events/rt_events'])
@@ -108,11 +165,17 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
         n_evals = int(np.asarray(hf.attrs['n_likelihood_evals']).item())
         n_chain = int(np.asarray(hf['ladder/Ts']).shape[0])
         wall_seconds = float(np.asarray(hf.attrs['wall_seconds']).item())
+        store_thin = int(np.asarray(hf['store'].attrs['store_thin']).item())
+        freeze_itrn = 0
+        if 'ladder/history' in hf:
+            frozen_block = int(np.asarray(hf['ladder/history'].attrs['frozen_block']).item())
+            if frozen_block >= 0:
+                freeze_itrn = frozen_block * int(np.asarray(hf.attrs['block_size']).item())
 
-    n_burn_rows = int(samples.shape[0] * burn_fraction)
+    burn_itrn = max(int(n_iterations * burn_fraction), freeze_itrn)
+    n_burn_rows = burn_itrn // store_thin
     post_burn = samples[n_burn_rows:]
-    # exclude burn-in round trips proportionally: keep events after the burn iteration
-    burn_itrn = int(n_iterations * burn_fraction)
+    # exclude burn-in round trips: keep events after the burn iteration
     post_events = events[events[:, 1] > burn_itrn]
 
     # Ladder-segment boundaries must ride along so adaptive artifacts do

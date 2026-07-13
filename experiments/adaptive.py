@@ -183,7 +183,11 @@ class AdaptiveLadderController:
     update_every_blocks: int = 8
     forgetting: float = 0.
     freeze_criterion: tuple[float, int] = (0.02, 3)
-    remap_rule: str = 'at_or_hotter'
+    # no_remap preserves DE-buffer columns by slot on ladder updates and
+    # lets each column re-burn-in under its new temperature; the cloning
+    # rules ('at_or_hotter', 'nearest') are retained for tests of the old
+    # behavior and for pilot A/Bs
+    remap_rule: str = 'no_remap'
     T_min_factor: float = 1.
     budget_blocks: int = -1
     var_estimator: int = VAR_ESTIMATOR_PESSIMISTIC
@@ -478,10 +482,11 @@ class AdaptiveLadderController:
             if capped[itrt] == capped[itrt - 1]:
                 # zero-width duplicate link (e.g. the pinned cold block)
                 continue
-            n_capped += 1
             if ladder.T_cold is not None and finite_Ts[itrt] == ladder.T_cold:
-                # never move the readout pin
+                # never move the readout pin — and the pinned link does not
+                # consume a cap slot, so cold_cap_links counts capped links
                 continue
+            n_capped += 1
             max_allowed = capped[itrt - 1] * local_ratio_cap(float(capped[itrt - 1]))
             if capped[itrt] > max_allowed:
                 capped[itrt] = max_allowed

@@ -66,6 +66,12 @@ from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
 # random buffer-difference pairs per temperature in the checkpoint DE spectrum
 DE_SPECTRUM_PAIRS = 256
 
+# DE buffer-memory floors (in adaptation windows / blocks) below which the
+# harness warns: shorter spans cannot bridge ladder rebuilds (adaptive) or
+# a block's own decorrelation scale (fixed ladders)
+DE_MEMORY_MIN_WINDOWS = 2
+DE_MEMORY_MIN_BLOCKS_FIXED = 4
+
 
 class LikelihoodLike(Protocol):
     """Structural interface the engine requires of a likelihood object.
@@ -355,14 +361,34 @@ class HarnessSampler(DTMCMCSampler):
             arg_record=np.asarray(spec.arg_record, dtype=np.int64),
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
-        # Warn when the DE buffer is shorter than the configured run.
-        # Short buffers are allowed, but tests should choose them explicitly.
-        if self.de_manager is not None and self.de_manager.de_size * self.de_manager.de_thin < spec.n_steps:
-            warn(
-                f'DE buffer memory de_size*de_thin = {self.de_manager.de_size * self.de_manager.de_thin} '
-                f'< run length {spec.n_steps}; short DE buffers can change proposal behavior',
-                stacklevel=3,
-            )
+        # DE buffer-memory hygiene: the ring buffer's memory span is sized
+        # to the ADAPTATION timescale, not the run. Too short and the
+        # buffer cannot bridge ladder rebuilds; spanning the whole run and
+        # the proposal support never forgets burn-in — post-freeze samples
+        # stay conditioned on prior-fill and adaptation-era states, which
+        # is not a production configuration.
+        if self.de_manager is not None:
+            memory_span = self.de_manager.de_size * self.de_manager.de_thin
+            if spec.adaptive is not None:
+                window = int(_scalar(spec.adaptive.get('update_every_blocks', 8))) * spec.block_size
+                if memory_span < DE_MEMORY_MIN_WINDOWS * window:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_WINDOWS} adaptation '
+                        f'windows ({DE_MEMORY_MIN_WINDOWS * window}): too short to bridge ladder rebuilds',
+                        stacklevel=3,
+                    )
+                elif memory_span >= spec.n_steps:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} spans the whole run ({spec.n_steps}): '
+                        'proposal support never forgets burn-in (not a production configuration)',
+                        stacklevel=3,
+                    )
+            elif memory_span < DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size:
+                warn(
+                    f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_BLOCKS_FIXED} blocks '
+                    f'({DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size}): short DE buffers can change proposal behavior',
+                    stacklevel=3,
+                )
 
     def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
@@ -514,7 +540,9 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     (pool down-weighting per evaluation, default 0), `freeze_dlog` /
     `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
     `remap_rule` (DE-buffer remap applied on ladder updates, default
-    'at_or_hotter'),
+    'no_remap': columns keep their slot and re-burn-in under the new
+    temperature; 'at_or_hotter'/'nearest' clone columns and are retained
+    for old-behavior tests and pilot A/Bs),
     `T_min_factor` (cold-edge target in (0, 1] as a multiple of the T=1
     readout; sub-unit values extend the ladder below the readout),
     `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
@@ -532,7 +560,7 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
         update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
         forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
         freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
-        remap_rule=str(adaptive_table.get('remap_rule', 'at_or_hotter')),
+        remap_rule=str(adaptive_table.get('remap_rule', 'no_remap')),
         T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),

@@ -22,6 +22,7 @@ from experiments.harness.runner import LIKELIHOOD_BUILDERS, build_likelihood, ru
 from experiments.harness.spec import LIKELIHOOD_NAMES, RunSpec
 from experiments.metrics import nn_divergence_symmetric, nn_kl
 from experiments.pilots.common import load_run_metrics
+from experiments.pilots.family_compare import summarize_arms
 
 # tiny-but-representative dimensionality per likelihood for smoke runs:
 # fixed-dimension targets pin their n_par, flexible ones shrink for speed
@@ -176,7 +177,35 @@ def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarra
         hf.create_dataset('ladder/Ts', data=np.array([1., 2., 4.]))
         hf.create_dataset('events/rt_events', data=events.astype(np.int64))
         hf.create_dataset('events/rt_segment_itrns', data=segment_itrns.astype(np.int64))
-        hf.create_dataset('store/samples', data=rng.standard_normal((400, 1, 2)))
+        hf.create_dataset('store/samples', data=rng.standard_normal((n_iterations // 2, 1, 2)))
+        hf['store'].attrs['store_thin'] = 2
+
+
+def test_family_compare_summarize_ranks_only_passing_arms() -> None:
+    """The family comparison ranks efficiency ONLY among gate-passing arms.
+
+    A failing arm with spectacular n_eff/eval must stay unranked (the
+    issue-19 gate hierarchy: efficiency is a metric for the wrong
+    distribution until posterior recovery passes).
+    """
+    def run_result(passed: bool, n_eff_per_eval: float, violations: list[str] | None = None) -> dict:
+        return {'passed': passed, 'n_eff_per_eval': n_eff_per_eval, 'frozen_by': 'criterion',
+                'violations': violations or []}
+
+    results = {
+        'entropy': [run_result(True, 1.0e-3), run_result(True, 2.0e-3)],
+        'length': [run_result(True, 4.0e-3), run_result(False, 5.0e-3, ['nn: too far'])],
+        'acceptance': [run_result(False, 9.0e-3, ['tiers: collapsed']), run_result(False, 8.0e-3, ['tiers: collapsed'])],
+    }
+    summary = summarize_arms(results)
+
+    assert summary['ranking_by_efficiency_among_passing'] == ['length', 'entropy']
+    assert summary['unranked_failing_arms'] == ['acceptance']
+    assert summary['arms']['entropy']['median_n_eff_per_eval'] == pytest.approx(1.5e-3)
+    # the failing run's efficiency does not contaminate the passing median
+    assert summary['arms']['length']['median_n_eff_per_eval'] == pytest.approx(4.0e-3)
+    assert summary['arms']['acceptance']['median_n_eff_per_eval'] is None
+    assert summary['arms']['acceptance']['violations'] == ['tiers: collapsed']
 
 
 def test_load_run_metrics_respects_segment_boundaries(tmp_path) -> None:
