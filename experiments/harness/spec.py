@@ -42,6 +42,19 @@ LIKELIHOOD_NAMES: frozenset[str] = frozenset({'gaussian', 'cake', 'eggbox', 'haw
 
 LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_file', 'acceptance_file', 'explicit'})
 
+# the [run] table's full key set: like [adaptive], an unknown key must fail
+# loudly rather than be silently dropped. This closes the gap where a legacy
+# run.n_record spec parsed successfully and silently recorded nothing extra
+# (its recording intent lost) after n_record was replaced by arg_record.
+RUN_KEYS: frozenset[str] = frozenset({
+    'n_steps',
+    'n_steps_per_major_report',
+    'block_size',
+    'store_thin',
+    'arg_record',
+    'checkpoint_every_blocks',
+})
+
 # the ConfigParser sections the proposal mixture maps onto
 PROPOSAL_SECTIONS: frozenset[str] = frozenset({
     'FisherJumpManager',
@@ -413,6 +426,14 @@ class RunSpec:
         ladder = {key: _check_toml_value(value, f'ladder.{key}') for key, value in ladder_raw.items()}
 
         run = _require_table(data, 'run')
+        if 'n_record' in run:
+            msg = ('run.n_record was replaced by run.arg_record (a list of extra chain indices to '
+                   'record beyond the readout chains); update the spec instead of relying on n_record')
+            raise SpecError(msg)
+        unknown_run_keys = set(run) - RUN_KEYS
+        if unknown_run_keys:
+            msg = f'unknown [run] keys {sorted(unknown_run_keys)}; known: {sorted(RUN_KEYS)}'
+            raise SpecError(msg)
 
         exchange_raw = data.get('exchange', {})
         if not isinstance(exchange_raw, dict):
