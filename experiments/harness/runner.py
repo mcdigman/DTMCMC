@@ -245,7 +245,7 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
     if not isinstance(Ts_raw, list):
         msg = 'explicit ladder requires a Ts list'
         raise TypeError(msg)
-    return TemperatureLadder(spec.n_cold, np.asarray(Ts_raw, dtype=np.float64))
+    return TemperatureLadder(np.asarray(Ts_raw, dtype=np.float64), n_cold=spec.n_cold)
 
 
 # one builder per spec ladder kind; a test asserts the keys stay in sync with

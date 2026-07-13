@@ -54,14 +54,14 @@ def fresh_seed_guard():
 
 def test_arg_cold_positional_without_t_cold() -> None:
     """A raw ladder without T_cold keeps the historical first-n_cold convention."""
-    ladder = TemperatureLadder(2, np.array([1.0, 1.0, 4.0, np.inf]))
-    assert ladder.T_cold is None
+    ladder = TemperatureLadder(np.array([1.0, 1.0, 4.0, np.inf]), n_cold=2)
+    assert ladder.T_cold == 1.0
     assert np.array_equal(ladder.get_arg_cold(), [0, 1])
 
 
 def test_arg_cold_geometric_t_min_below_t_cold() -> None:
     """With T_min < T_cold the readout chains are interior sorted-ladder rungs."""
-    ladder = GeometricTemperatureLadder(8, n_cold=2, T_cold=1.0, T_min=0.9, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=8, T_cold=1.0, T_min=0.9, T_max=100.0, n_inf_final=1, n_cold=2)
     arg_cold = ladder.get_arg_cold()
     assert arg_cold.size == 2
     assert np.all(ladder.Ts[arg_cold] == 1.0)
@@ -72,7 +72,7 @@ def test_arg_cold_geometric_t_min_below_t_cold() -> None:
 
 def test_arg_cold_geometric_default_matches_positional() -> None:
     """With T_min == T_cold the readout chains are the first n_cold rungs."""
-    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     assert np.array_equal(ladder.get_arg_cold(), [0])
 
 
@@ -115,7 +115,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     the readout chains when a ladder update moves them.
     """
     seed_run(987)
-    ladder = GeometricTemperatureLadder(8, n_cold=2, T_cold=1.0, T_min=0.9, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=8, n_cold=2, T_cold=1.0, T_min=0.9, T_max=100.0, n_inf_final=1)
     like_obj = GaussianLikelihood(n_par=3, cutoff=5)
     sampler = DTMCMCSampler(ladder, like_obj, 32, 64, arg_record=[0, 7, 1])
 
@@ -135,7 +135,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
     assert np.allclose(sampler.samples_store[:, 4], sampler.samples_store[:, 0])
 
     # a ladder update that adds a second sub-cold rung shifts the readout indices
-    new_ladder = TemperatureLadder(2, np.array([0.85, 0.9, 1.0, 1.0, 2.0, 5.0, 20.0, np.inf]), T_cold=1.0)
+    new_ladder = TemperatureLadder(np.array([0.85, 0.9, 1.0, 1.0, 2.0, 5.0, 20.0, np.inf]), T_cold=1.0, n_cold=2)
     old_indices = sampler.record_indices.copy()
     sampler.apply_ladder_update(new_ladder)
     assert np.array_equal(sampler.record_indices, np.concatenate([[2, 3], [0, 7, 1]]))
@@ -149,7 +149,7 @@ def test_sampler_records_readout_plus_extras_and_tracks_updates() -> None:
 def test_sampler_accepts_tuple_arg_record_at_runtime() -> None:
     """Tuple inputs are runtime-permitted even though the typed API is list-only."""
     seed_run(989)
-    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     like_obj = GaussianLikelihood(n_par=3, cutoff=5)
     arg_record: tuple[int, ...] = (0, 5)
 
@@ -164,7 +164,7 @@ def test_sampler_accepts_tuple_arg_record_at_runtime() -> None:
 def test_sampler_accepts_int64_ndarray_arg_record_at_runtime() -> None:
     """NDArray inputs are runtime-permitted even though the typed API is list-only."""
     seed_run(990)
-    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     like_obj = GaussianLikelihood(n_par=3, cutoff=5)
     arg_record: NDArray[np.int64] = np.array([0, 5], dtype=np.int64)
 
@@ -179,11 +179,11 @@ def test_sampler_accepts_int64_ndarray_arg_record_at_runtime() -> None:
 def test_identical_ladder_update_keeps_record_history() -> None:
     """An update that does not move the readout chains appends no history row."""
     seed_run(988)
-    ladder = GeometricTemperatureLadder(6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
+    ladder = GeometricTemperatureLadder(n_chain=6, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     like_obj = GaussianLikelihood(n_par=3, cutoff=5)
     sampler = DTMCMCSampler(ladder, like_obj, 32, 32)
     sampler.advance_block()
-    sampler.apply_ladder_update(TemperatureLadder(1, ladder.Ts.copy(), T_cold=1.0))
+    sampler.apply_ladder_update(TemperatureLadder(ladder.Ts.copy(), T_cold=1.0, n_cold=1))
     assert len(sampler.record_history) == 1
 
 

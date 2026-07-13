@@ -143,7 +143,7 @@ def test_apply_ladder_update_identical_ladder_strict_noop() -> None:
     de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
     old_buffer = de_manager.de_buffer.copy()
 
-    same_ladder = TemperatureLadder(spec.n_cold, np.asarray(sampler.Ts).copy())
+    same_ladder = TemperatureLadder(np.asarray(sampler.Ts).copy(), n_cold=spec.n_cold)
     sampler.apply_ladder_update(same_ladder, 'at_or_hotter')
 
     assert_array_equal(sampler.samples[0], old_states)
