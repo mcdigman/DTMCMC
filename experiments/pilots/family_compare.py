@@ -86,9 +86,12 @@ def summarize_arms(results: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
     """Aggregate per-arm runs into the gate-then-efficiency ranking.
 
     Pure aggregation (unit-tested without MCMC runs): each arm reports its
-    pass count and, over its PASSING runs only, the median efficiency;
-    the ranking orders fully or partially passing arms by that median and
-    lists arms with zero passes separately with their violations.
+    pass rate and, over its PASSING runs only, the median efficiency. The
+    ranking key is (pass rate, then median passing efficiency), so a
+    partially failing arm can never outrank a fully passing one on
+    efficiency alone — reliability is the primary claim, efficiency the
+    tiebreaker. Arms with zero passes are listed separately with their
+    violations.
     """
     arms: dict[str, Any] = {}
     for arm, runs in results.items():
@@ -96,18 +99,19 @@ def summarize_arms(results: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         arms[arm] = {
             'n_runs': len(runs),
             'n_passed': len(passing),
+            'pass_rate': len(passing) / len(runs) if runs else 0.,
             'median_n_eff_per_eval': float(np.median([run['n_eff_per_eval'] for run in passing])) if passing else None,
             'frozen_by': [run['frozen_by'] for run in runs],
             'violations': sorted({violation for run in runs for violation in run['violations']}),
         }
     ranked = sorted(
         (arm for arm, summary in arms.items() if summary['n_passed'] > 0),
-        key=lambda arm: arms[arm]['median_n_eff_per_eval'],
+        key=lambda arm: (arms[arm]['pass_rate'], arms[arm]['median_n_eff_per_eval']),
         reverse=True,
     )
     return {
         'arms': arms,
-        'ranking_by_efficiency_among_passing': ranked,
+        'ranking_by_pass_rate_then_efficiency': ranked,
         'unranked_failing_arms': sorted(arm for arm, summary in arms.items() if summary['n_passed'] == 0),
     }
 
@@ -182,7 +186,7 @@ def main() -> None:
         block_size=args.block_size, n_blocks=args.n_blocks, budget_blocks=args.budget_blocks,
         nn_threshold=args.nn_threshold, jobs=args.jobs,
     )
-    print(summary['ranking_by_efficiency_among_passing'], summary['unranked_failing_arms'])
+    print(summary['ranking_by_pass_rate_then_efficiency'], summary['unranked_failing_arms'])
 
 
 if __name__ == '__main__':

@@ -39,7 +39,9 @@ behavior already implemented and verified on the branch.
 
 ## B. Buffer remap on ladder updates (amends D6)
 
-5. **`remap_rule = 'no_remap'` is the default**: columns keep their slot
+5. **`remap_rule = 'no_remap'` is the default at every layer** — the
+   engine hook (`DTMCMCSampler.apply_ladder_update`), the adaptive
+   controller, and the spec builder all agree: columns keep their slot
    across equal-size ladder updates and re-burn-in under their new
    temperatures; the cloning rules (`at_or_hotter`, `nearest`) are
    retained for old-behavior tests and pilot A/Bs. `RATIFY?` — flipped in

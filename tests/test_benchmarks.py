@@ -181,12 +181,14 @@ def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarra
         hf['store'].attrs['store_thin'] = 2
 
 
-def test_family_compare_summarize_ranks_only_passing_arms() -> None:
-    """The family comparison ranks efficiency ONLY among gate-passing arms.
+def test_family_compare_summarize_ranks_pass_rate_before_efficiency() -> None:
+    """Reliability outranks efficiency, and failing arms stay unranked.
 
-    A failing arm with spectacular n_eff/eval must stay unranked (the
-    issue-19 gate hierarchy: efficiency is a metric for the wrong
-    distribution until posterior recovery passes).
+    A partially failing arm must never outrank a fully passing one on
+    efficiency alone, and an all-failing arm with spectacular n_eff/eval
+    must stay unranked entirely (the issue-19 gate hierarchy: efficiency
+    is a metric for the wrong distribution until posterior recovery
+    passes).
     """
     def run_result(passed: bool, n_eff_per_eval: float, violations: list[str] | None = None) -> dict:
         return {'passed': passed, 'n_eff_per_eval': n_eff_per_eval, 'frozen_by': 'criterion',
@@ -199,13 +201,24 @@ def test_family_compare_summarize_ranks_only_passing_arms() -> None:
     }
     summary = summarize_arms(results)
 
-    assert summary['ranking_by_efficiency_among_passing'] == ['length', 'entropy']
+    # entropy (2/2 passing, median 1.5e-3) outranks length (1/2 passing,
+    # median 4.0e-3): pass rate is the primary key, efficiency the tiebreaker
+    assert summary['ranking_by_pass_rate_then_efficiency'] == ['entropy', 'length']
     assert summary['unranked_failing_arms'] == ['acceptance']
+    assert summary['arms']['entropy']['pass_rate'] == pytest.approx(1.0)
+    assert summary['arms']['length']['pass_rate'] == pytest.approx(0.5)
     assert summary['arms']['entropy']['median_n_eff_per_eval'] == pytest.approx(1.5e-3)
     # the failing run's efficiency does not contaminate the passing median
     assert summary['arms']['length']['median_n_eff_per_eval'] == pytest.approx(4.0e-3)
     assert summary['arms']['acceptance']['median_n_eff_per_eval'] is None
     assert summary['arms']['acceptance']['violations'] == ['tiers: collapsed']
+
+    # efficiency still breaks ties among equal pass rates
+    tie = summarize_arms({
+        'entropy': [run_result(True, 1.0e-3)],
+        'length': [run_result(True, 4.0e-3)],
+    })
+    assert tie['ranking_by_pass_rate_then_efficiency'] == ['length', 'entropy']
 
 
 def test_load_run_metrics_respects_segment_boundaries(tmp_path) -> None:

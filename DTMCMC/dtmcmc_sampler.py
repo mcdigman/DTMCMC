@@ -402,7 +402,7 @@ class DTMCMCSampler:
         self.block_end()
         self.block_advance_iterators()
 
-    def apply_ladder_update(self, new_ladder: TemperatureLadder, remap_rule: str = 'at_or_hotter') -> None:
+    def apply_ladder_update(self, new_ladder: TemperatureLadder, remap_rule: str = 'no_remap') -> None:
         """Swap the temperature ladder at a block boundary.
 
         RNG-neutral: pure deterministic state remapping, no draws. The
@@ -410,8 +410,11 @@ class DTMCMCSampler:
         manager's ladder reference. Chain states remap by temperature
         rank; for equal-size sorted ladders this is the identity, so no
         walker state is cloned or discarded. logLs carry over because
-        they are T-independent. DE-buffer columns remap per remap_rule;
-        any rung whose column was resourced then gets its current state
+        they are T-independent. DE-buffer columns remap per remap_rule —
+        default 'no_remap' (columns keep their slot and re-burn-in under
+        their new temperatures, matching the adaptive controller/spec
+        default); under the cloning rules ('at_or_hotter', 'nearest') any
+        rung whose column was resourced then gets its current state
         written at the buffer's most recently written row. Fisher scales
         refresh from the existing diagonals, and trackers are segmented
         with a round-trip event-log boundary. Walker identities restart
