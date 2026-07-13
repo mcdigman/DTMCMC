@@ -431,7 +431,7 @@ def _plug_cold_and_inf(
     spaced rungs all lie at or above T_cold; they differ only for
     ladders extending below T_cold (T_min < T_cold), where mode 0 can
     eat the sole sub-T_cold rung exactly in the starved regime those
-    rungs exist to stabilize (issue #19).
+    rungs exist to stabilize.
     """
     if n_inf_final > 0:
         Ts_got[n_chain_space - n_inf_final:] = np.inf
@@ -900,12 +900,22 @@ def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floati
       under cold support extension this rule is many-to-one and stands
       subject to the Phase 5 mode-retention gate.
     - 'nearest': nearest old temperature in log T (a pilot A/B arm).
+    - 'no_remap': preserve DE-buffer columns by slot. This is bijective
+      for equal-size ladder updates and intentionally leaves each column's
+      history to burn in under its new temperature instead of cloning or
+      dropping buffer information.
 
     Exact-temperature ties resolve slot-preservingly, else to the lowest
     tied slot (D6), so an identical-ladder update — including duplicate
     temperatures — maps every slot to itself. Infinite temperatures are
     clipped to 1e300 for the log comparison.
     """
+    if remap_rule == 'no_remap':
+        if Ts_old.size != Ts_new.size:
+            msg = 'no_remap requires equal-size old and new ladders'
+            raise ValueError(msg)
+        return np.arange(Ts_new.size, dtype=np.int64)
+
     sources = np.zeros(Ts_new.size, dtype=np.int64)
     Ts_old_clip = np.minimum(Ts_old, 1.e300)
     log_old = np.log(Ts_old_clip)

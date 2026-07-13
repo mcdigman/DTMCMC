@@ -52,6 +52,10 @@ def test_remap_ladder_indices_hand_computed() -> None:
     # the receiving slot, which therefore keeps its slot (D6); 10 is
     # nearer 16 than 4; 64 is closer to 16 than to inf(=1e300)
     assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'nearest'), [0, 1, 2, 2])
+    # no_remap is explicitly bijective: preserve DE columns by slot and
+    # burn in under the new temperatures rather than cloning/dropping
+    # buffer history.
+    assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'no_remap'), [0, 1, 2, 3])
     # at-or-hotter: coolest old rung at or above each new temperature
     assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'at_or_hotter'), [0, 1, 2, 3])
     # a new rung hotter than every finite old rung falls back to the hottest
@@ -294,14 +298,14 @@ CONVERGENCE_BATTERY_SEEDS = (555, 556, 557, 558, 559, 560)
 # the battery cake: same 5D two-tier phase-transition structure as the
 # default cake (T=1 is exactly the tier transition), with the spike wide
 # enough (0.4 vs 0.1) that tier discovery and interconversion are routine
-# at unit-test budgets. At the default 0.1 width, spike discovery under
-# HONEST dynamics is a rare event at 12 chains (the pre-issue-#19 battery
+# at unit-test budgets. At the default 0.1 width, spike discovery
+# is a rare event at 12 chains (the pre-issue-#19 battery
 # runs that looked converged were substantially shaped by DE-buffer
 # self-interaction bias — see test_gold_ladder_warm_start_preserves_target)
 # and tier-fraction recovery is not certifiable at any unit-test budget;
 # the default cake keeps a structural battery below and its full posterior
 # certification belongs to the production-scale E-series.
-BATTERY_CAKE_WIDTHS = (4., 0.4)
+BATTERY_CAKE_WIDTHS = (4., 0.15)
 BATTERY_NARROW_R2 = 2.25  # tier-assignment radius^2 (narrow spike sigma 0.4)
 BATTERY_N_BLOCKS = 320
 BATTERY_BUDGET_BLOCKS = 240
@@ -384,14 +388,14 @@ def test_adaptive_cake_battery_recovers_posterior(tmp_path, seed: int) -> None:
     data = adaptive_spec_data(
         'adaptive_cake_battery', seed,
         {'name': 'cake', 'n_par': 5, 'cutoff': 10, 'widths': list(BATTERY_CAKE_WIDTHS)},
-        n_chain=12, block_size=512, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        n_chain=48, block_size=1024, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
         store_thin=BATTERY_STORE_THIN,
     )
     spec = RunSpec.from_dict(data)
     artifact_path = run_from_spec(spec, tmp_path)
     reset_seed_guard_for_tests()
 
-    run = load_post_freeze(artifact_path, block_size=512, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
+    run = load_post_freeze(artifact_path, block_size=1024, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
     assert_readout_structure(run)
     assert run['n_applied'] >= 6
 
@@ -434,8 +438,6 @@ def test_gold_ladder_warm_start_preserves_target(seed: int) -> None:
     detailed-balance regression — the second-half tier statistics must
     stay inside a band that the measured DE-buffer self-interaction
     failure (see the negative control) misses by an order of magnitude.
-    Whole-run DE buffer: this very test measured ~0.85 narrow-tier
-    occupancy (truth 0.49) at de_size covering a tenth of the run.
     """
     reset_seed_guard_for_tests()
     n_blocks = 640
@@ -488,9 +490,9 @@ def test_small_de_buffer_fails_posterior_gate() -> None:
 def test_adaptive_default_cake_structural(tmp_path) -> None:
     """Default (0.1-width) cake: adaptation completes with sane structure.
 
-    Under honest (whole-run-buffer) dynamics at 12 chains, discovery of
-    the default cake's 1e-8-volume spike within a unit-test budget is a
-    coin flip, so this test asserts only what every run must satisfy
+    With small number of chains (12) and short DE buffer/number of iterations,
+    the default cake problem is too hard for the sampler to reliably converge.
+    Therefore, this test asserts only what every run must satisfy
     regardless of discovery: a recorded freeze, applied updates,
     sub-readout rungs with the readout pinned at T=1, and second-half
     readout statistics inside the physically possible band (no tier
@@ -643,6 +645,7 @@ def test_adaptive_spec_validation() -> None:
     good = dict(base)
     good['adaptive'] = {
         'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.9,
+        'remap_rule': 'no_remap',
         'window_extension_factor': 3.0, 'ds_link_cap': 2.0, 'cold_cap_links': 5,
         'cap_ratio_min': 1.02, 'cap_ratio_max': 1.5, 'var_history_length': 6,
         'pool_dlog_tol': 0.015, 'discard_blocks_after_update': 2, 'min_updates_at_target': 4,
@@ -671,6 +674,8 @@ def test_adaptive_modes_sync_and_validation() -> None:
         AdaptiveLadderController(mode='entropy')
     with pytest.raises(ValueError, match='unknown var_estimator'):
         AdaptiveLadderController(mode='entropy', budget_blocks=8, var_estimator=7)
+    with pytest.raises(ValueError, match='unknown remap_rule'):
+        AdaptiveLadderController(mode='entropy', budget_blocks=8, remap_rule='nonsense')
 
 
 class _StubLikelihood:

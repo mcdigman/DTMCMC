@@ -355,12 +355,7 @@ class HarnessSampler(DTMCMCSampler):
             arg_record=np.asarray(spec.arg_record, dtype=np.int64),
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
-        # buffer-memory hygiene (issue #19): a DE ring buffer spanning less
-        # than the run is a self-interacting proposal whose feedback
-        # measurably biases the cold posterior toward compact modes
-        # (cake 5D warm-start probes: de_size covering 1/640 of the run
-        # collapsed the spike tier to 99%+ occupancy; 1/10 of the run drifted
-        # ~0.85 vs the true 0.49; a whole-run buffer removed the drift).
+        # buffer-memory hygiene (issue #19): a tiny DE ring buffer generates biased/meaningless proposals
         # Deliberately capped buffers must treat this as a known bias source.
         if self.de_manager is not None and self.de_manager.de_size * self.de_manager.de_thin < spec.n_steps:
             warn(
@@ -519,6 +514,8 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     `update_every_blocks` (rebuild cadence, default 8), `forgetting`
     (pool down-weighting per evaluation, default 0), `freeze_dlog` /
     `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
+    `remap_rule` (DE-buffer remap applied on ladder updates, default
+    'at_or_hotter'),
     `T_min_factor` (cold-edge target in (0, 1] as a multiple of the T=1
     readout; sub-unit values extend the ladder below the readout),
     `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
@@ -537,6 +534,7 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
         update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
         forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
         freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
+        remap_rule=str(adaptive_table.get('remap_rule', 'at_or_hotter')),
         T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),

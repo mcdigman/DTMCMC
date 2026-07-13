@@ -1,8 +1,8 @@
 """Shared plumbing for the adaptive convergence batteries (not a test module).
 
-Builds standard adaptive specs (whole-run DE buffer, T_min_factor 0.9,
+Builds current adaptive spec (whole-run DE buffer, T_min_factor 0.9,
 entropy mode) and loads the post-freeze readout column plus freeze
-metadata from an artifact, so every battery reads runs the same way.
+metadata from an artifact, so every batterny reads runs the same way.
 """
 
 from typing import Any
@@ -22,16 +22,10 @@ def adaptive_spec_data(
         budget_blocks: int,
         store_thin: int = 4,
         t_min_factor: float = 0.9,
+        remap_rule: str = 'no_remap',
         proposals_extra: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Standard adaptive battery spec: whole-run DE buffer, sub-readout target.
-
-    The whole-run buffer is deliberate (issue #19): a shorter ring
-    buffer is a self-interacting proposal that measurably biases the
-    cold posterior toward compact modes, so batteries gate honest
-    dynamics and the small-buffer failure is exercised by its own
-    negative control.
-    """
+    """Current adaptive battery spec: whole-run DE buffer, sub-readout target."""
     proposals: dict[str, dict[str, Any]] = {
         'FisherJumpManager': {'verbose_fisher': False},
         'DEJumpManager': {'de_size': block_size * n_blocks},
@@ -47,7 +41,7 @@ def adaptive_spec_data(
                 'checkpoint_every_blocks': n_blocks},
         'adaptive': {'mode': 'entropy', 'update_every_blocks': 8, 'forgetting': 0.15,
                      'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': budget_blocks,
-                     'T_min_factor': t_min_factor},
+                     'remap_rule': remap_rule, 'T_min_factor': t_min_factor},
         'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
         'proposals': proposals,
     }

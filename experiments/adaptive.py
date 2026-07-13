@@ -235,6 +235,7 @@ class AdaptiveLadderController:
     update_every_blocks: int = 8
     forgetting: float = 0.
     freeze_criterion: tuple[float, int] = (0.02, 3)
+    remap_rule: str = 'at_or_hotter'
     T_min_factor: float = 1.
     budget_blocks: int = -1
     var_estimator: int = VAR_ESTIMATOR_PESSIMISTIC
@@ -284,6 +285,9 @@ class AdaptiveLadderController:
             raise ValueError(msg)
         if self.var_estimator not in _KNOWN_VAR_ESTIMATORS:
             msg = f'unknown var_estimator {self.var_estimator!r}; known: {sorted(_KNOWN_VAR_ESTIMATORS)}'
+            raise ValueError(msg)
+        if self.remap_rule not in {'at_or_hotter', 'nearest', 'no_remap'}:
+            msg = f'unknown remap_rule {self.remap_rule!r}'
             raise ValueError(msg)
         if self.window_extension_factor <= 1.:
             msg = 'window_extension_factor must be > 1'
@@ -642,7 +646,7 @@ class AdaptiveLadderController:
         dlog_thresh, n_consecutive = self.freeze_criterion
         applied = max_dlog >= dlog_thresh
         if applied:
-            sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
+            sampler.apply_ladder_update(new_ladder, self.remap_rule)
             # segmentation reset the cycle counters with the segment
             self._trips_at_prev_eval = 0
             # the new segment starts as a remap transient: discard its

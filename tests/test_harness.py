@@ -298,8 +298,7 @@ def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
 def test_short_memory_de_buffer_warns() -> None:
     """A DE buffer spanning less than the run draws the harness warning.
 
-    The rolling-buffer self-interaction bias (issue #19) is continuous
-    in buffer memory, so deficits warn rather than fail validation;
+    Deficits warn rather than fail validation;
     the boundary case (memory == run length) must stay silent.
     """
     seed_run(4321)
@@ -308,7 +307,6 @@ def test_short_memory_de_buffer_warns() -> None:
 
     reset_seed_guard_for_tests()
     seed_run(4322)
-    # de_size 256 == n_steps 256: exactly whole-run memory, no warning
     with warnings_module.catch_warnings():
         warnings_module.simplefilter('error', UserWarning)
         build_sampler(make_tiny_spec())
