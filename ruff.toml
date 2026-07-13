@@ -85,7 +85,7 @@ min-file-size = 1024
 # legitimately reseed (golden/determinism/freeze tests).
 "DTMCMC/rng_helpers.py" = ["TID251"]
 "entropy_process.py" = ["TID251"]
-"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251"]
+"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251", "SLF001"]
 "speed_tests/*" = ["C90", "FBT", "ANN", "PLR"]
 "notebooks/*" = ["ARG001", "PERF401", "B007"]
 "explorations/*" = ["B007", "F821", "E402"]

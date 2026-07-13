@@ -465,5 +465,5 @@ def test_dash_app_builds(fixed_artifact: Path) -> None:
 
     app = create_app(DashboardConfig(artifact=fixed_artifact))
     assert isinstance(app, dash.Dash)
-    layout_ids = {component.id for component in app.layout._traverse() if getattr(component, 'id', None)}  # noqa: SLF001
+    layout_ids = {component.id for component in app.layout._traverse() if getattr(component, 'id', None)}
     assert {'poll', 'snapshot-token', 'header', 'tab-select', 'tab-content', 'artifact-select', 'theme-select', 'status-checks'} <= layout_ids

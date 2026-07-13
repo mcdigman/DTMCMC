@@ -547,7 +547,7 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
     """
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
-    monkeypatch.setattr(TrackerManager, 'n_cycles', lambda self: np.zeros(self.n_chain, dtype=np.int64))
+    monkeypatch.setattr(TrackerManager, 'n_cycles', property(lambda self: np.zeros(self.n_chain, dtype=np.int64)))
 
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
     like_obj = CountingLikelihood(build_likelihood(spec))
@@ -575,7 +575,7 @@ def test_freeze_requires_trips_in_every_streak_window(monkeypatch) -> None:
     """
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
-    monkeypatch.setattr(TrackerManager, 'n_cycles', lambda self: np.ones(self.n_chain, dtype=np.int64))
+    monkeypatch.setattr(TrackerManager, 'n_cycles', property(lambda self: np.ones(self.n_chain, dtype=np.int64)))
 
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
     like_obj = CountingLikelihood(build_likelihood(spec))
@@ -805,8 +805,8 @@ def test_pool_tolerance_preserves_variance_history() -> None:
         stub.feed_block([9., 0.5, 0.5, 0.5, 0.5, 0.25])
         controller.post_block(sampler)
 
-        cold_rows = [idx for idx, T_loc in enumerate(controller._pool_Ts) if np.isfinite(T_loc) and T_loc < 1.5]  # noqa: SLF001
-        histories = [controller._pool_var_history[idx] for idx in cold_rows]  # noqa: SLF001
+        cold_rows = [idx for idx, T_loc in enumerate(controller._pool_Ts) if np.isfinite(T_loc) and T_loc < 1.5]
+        histories = [controller._pool_var_history[idx] for idx in cold_rows]
         if expect_merged:
             assert len(cold_rows) == 1
             assert len(histories[0]) == 2
@@ -836,18 +836,18 @@ def test_discard_blocks_after_update_drops_transients() -> None:
     stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
     controller.post_block(sampler)
 
-    coldest_idx = int(np.argmin([T_loc if np.isfinite(T_loc) else np.inf for T_loc in controller._pool_Ts]))  # noqa: SLF001
-    assert controller._pool_vars[coldest_idx] == 0.5  # noqa: SLF001
-    assert max(controller._pool_var_history[coldest_idx]) == 0.5  # noqa: SLF001
+    coldest_idx = int(np.argmin([T_loc if np.isfinite(T_loc) else np.inf for T_loc in controller._pool_Ts]))
+    assert controller._pool_vars[coldest_idx] == 0.5
+    assert max(controller._pool_var_history[coldest_idx]) == 0.5
 
 
 def test_resolve_cap_links_scales_with_chain_count() -> None:
     """The auto cold-cap link count scales with the ladder instead of a fixed 3."""
     controller = AdaptiveLadderController(mode='entropy', budget_blocks=8)
-    assert controller._resolve_cap_links(12, 1) == 3  # noqa: SLF001 — historical floor at battery scale
-    assert controller._resolve_cap_links(64, 1) == 15  # noqa: SLF001
+    assert controller._resolve_cap_links(12, 1) == 3  # historical floor at battery scale
+    assert controller._resolve_cap_links(64, 1) == 15
     explicit = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=7)
-    assert explicit._resolve_cap_links(64, 1) == 7  # noqa: SLF001
+    assert explicit._resolve_cap_links(64, 1) == 7
 
 
 def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
@@ -858,14 +858,14 @@ def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
     # pool rows with tiny variance make the measured cap ratio clip to its
     # minimum, so every non-pinned capped link must move
     for T_loc, var_loc in ((0.9, 1.e-6), (1., 1.e-6), (4., 1.e-6), (64., 1.e-6)):
-        controller._pool_Ts.append(T_loc)  # noqa: SLF001
-        controller._pool_means.append(0.)  # noqa: SLF001
-        controller._pool_vars.append(var_loc)  # noqa: SLF001
-        controller._pool_weights.append(1.)  # noqa: SLF001
-        controller._pool_var_history.append([var_loc])  # noqa: SLF001
+        controller._pool_Ts.append(T_loc)
+        controller._pool_means.append(0.)
+        controller._pool_vars.append(var_loc)
+        controller._pool_weights.append(1.)
+        controller._pool_var_history.append([var_loc])
 
     ladder = TemperatureLadder(np.array([0.9, 1., 2., 4., 16., np.inf]), T_cold=1., n_cold=1)
-    capped = controller._cap_cold_links(ladder, 1)  # noqa: SLF001
+    capped = controller._cap_cold_links(ladder, 1)
     capped_Ts = np.asarray(capped.Ts)
     # the readout pin is untouched even though its link violates the cap
     assert 1.0 in capped_Ts
@@ -877,7 +877,7 @@ def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
     assert capped_Ts[4] <= capped_Ts[3] * 1.02 + 1.e-12
     # disabling the cap returns the ladder unchanged
     disabled = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=0)
-    assert disabled._cap_cold_links(ladder, 1) is ladder  # noqa: SLF001
+    assert disabled._cap_cold_links(ladder, 1) is ladder
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')

@@ -4,6 +4,7 @@ Helpersfor computing the temperature ladder for parallel tempering.
 C 2023 Matthew C. Digman
 """
 
+from functools import partial
 from typing import TYPE_CHECKING
 from warnings import warn
 
@@ -837,6 +838,12 @@ def acceptance_spaced_betas(
             interp_scalar(var_interp, beta_hi_loc), interp_scalar(var_interp, beta_lo),
         )
 
+    def acceptance_residual(beta_lo: float, a_target: float, beta_hi_loc: float) -> float:
+        # brentq root form of acceptance_from(beta_lo, ·) == a_target; the
+        # first two args are bound per rung with partial (no loop-variable
+        # closure), leaving beta_hi_loc as the variable brentq solves for.
+        return acceptance_from(beta_lo, beta_hi_loc) - a_target
+
     def walk_positions(a_target: float) -> NDArray[np.floating]:
         positions = np.zeros(n_walk)
         positions[0] = beta_hot
@@ -847,7 +854,7 @@ def acceptance_spaced_betas(
                 positions[itrs] = beta_upper
             else:
                 start = beta_prev + 1.e-14 * (1. + beta_prev)
-                positions[itrs] = brentq(lambda x: acceptance_from(beta_prev, x) - a_target, start, beta_upper)  # noqa: B023
+                positions[itrs] = brentq(partial(acceptance_residual, beta_prev, a_target), start, beta_upper)
         return positions
 
     # outer bisection: higher targets give tighter rungs, so the walk end
