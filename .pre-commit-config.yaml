@@ -78,3 +78,17 @@ repos:
   rev: v1.7.12
   hooks:
   - id: actionlint
+
+- repo: local
+  hooks:
+  # RNG-stream discipline (methods-paper plan D5): numba's parallel=True is a
+  # decorator kwarg, not an importable API path, so ruff TID251 cannot ban it;
+  # this grep hook guards the single-threaded RNG-stream guarantee instead.
+  - id: forbid-numba-parallel
+    name: forbid numba parallel=True (D5 RNG-stream discipline)
+    language: pygrep
+    entry: parallel\s*=\s*True
+    types: [python]
+    # exclusions mirror the D5 whitelist exactly (plan §3): rng_helpers
+    # (seeding), entropy_process (prange), tests
+    exclude: ^(tests/|entropy_process\.py$|DTMCMC/rng_helpers\.py$)

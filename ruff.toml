@@ -49,6 +49,23 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+[lint.flake8-tidy-imports.banned-api]
+# RNG-stream discipline (methods-paper plan D5): reproducibility requires that
+# both RNG streams are seeded exactly once per run via rng_helpers.seed_run,
+# and that no code creates side streams the run seed does not control.
+# Verified on this ruff version to flag attribute usage (np.random.seed(...)),
+# not just imports. numba.prange guards the per-thread numba streams; the
+# parallel=True decorator kwarg is not an API path TID251 can match, so a
+# prek grep hook covers it (.pre-commit-config.yaml).
+"numpy.random.seed".msg = 'seed via DTMCMC.rng_helpers.seed_run (D1: once per run, both streams)'
+"numpy.random.default_rng".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
+"numpy.random.RandomState".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
+"numba.prange".msg = 'prange breaks the single-threaded RNG-stream guarantee (D5)'
+# the jitted seeder cannot consult the once-per-run guard (numba cannot type
+# the guard dict), so guard enforcement lives in seed_run and direct calls to
+# the private helper are banned here instead (PR #9 review)
+"DTMCMC.rng_helpers._seed_numba".msg = 'call DTMCMC.rng_helpers.seed_run; the raw numba seeder bypasses the D1 once-per-run guard'
+
 [lint.flake8-type-checking]
 # numba resolves annotations at runtime (via inspect/PEP 649 __annotate__), so
 # imports used in @njit/@jitclass signatures must NOT be gated behind
@@ -63,7 +80,12 @@ author = "Matthew C. Digman"
 min-file-size = 1024
 
 [lint.per-file-ignores]
-"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114"]
+# TID251 whitelists per plan D5: rng_helpers is the one place seeding APIs are
+# allowed; entropy_process retains its (currently serial) prange import; tests
+# legitimately reseed (golden/determinism/freeze tests).
+"DTMCMC/rng_helpers.py" = ["TID251"]
+"entropy_process.py" = ["TID251"]
+"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251"]
 "speed_tests/*" = ["C90", "FBT", "ANN", "PLR"]
 "notebooks/*" = ["ARG001", "PERF401", "B007"]
 "explorations/*" = ["B007", "F821", "E402"]
