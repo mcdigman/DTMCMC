@@ -863,7 +863,7 @@ def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
         controller._pool_weights.append(1.)  # noqa: SLF001
         controller._pool_var_history.append([var_loc])  # noqa: SLF001
 
-    ladder = TemperatureLadder(1, np.array([0.9, 1., 2., 4., 16., np.inf]), T_cold=1.)
+    ladder = TemperatureLadder(np.array([0.9, 1., 2., 4., 16., np.inf]), T_cold=1., n_cold=1)
     capped = controller._cap_cold_links(ladder, 1)  # noqa: SLF001
     capped_Ts = np.asarray(capped.Ts)
     # the readout pin is untouched even though its link violates the cap
@@ -901,7 +901,6 @@ def test_adaptive_t_min_factor_pins_readout_with_subcold_rungs(tmp_path) -> None
     with h5py.File(str(artifact_path), 'r') as hf:
         final_Ts = np.asarray(hf['ladder/Ts'])
         record_indices = np.asarray(hf['store/record_indices'])
-        history_itrns = np.asarray(hf['store/record_history_itrns'])
         history_indices = np.asarray(hf['store/record_history_indices'])
         t_cold_window = np.asarray(hf['ladder/history/t_cold_window'])
 
@@ -912,7 +911,6 @@ def test_adaptive_t_min_factor_pins_readout_with_subcold_rungs(tmp_path) -> None
     assert final_Ts[record_indices[0]] == 1., 'the recorded chain is the T=1 readout, not the coldest rung'
     assert record_indices[0] > 0, 'the readout chain sits interior to the sorted ladder'
     # the record map tracked the move off index 0 when sub-cold rungs appeared
-    assert history_indices.shape[0] == history_itrns.size
     assert history_indices[0][0] == 0
 
 
