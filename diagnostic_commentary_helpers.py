@@ -46,16 +46,17 @@ def print_diagnostic_commentary(mcc) -> None:
 
     # TODO improve variance and burn in estimates
 
-    # store column j holds chain record_indices[j]; the readout (cold)
-    # chains always occupy the first n_cold columns
-    betas_record = mcc.betas[mcc.record_indices]
-    df_predict = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:] * betas_record, axis=0) / 2
-    df_mean = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, :mcc.n_cold] * betas_record[:mcc.n_cold]) / 2
+    # NOTE: this broadcasts a width-record_indices store against the full
+    # betas vector, which is only numerically meaningful for full-width or
+    # single-column storage; mapping store columns through record_indices is
+    # deferred so this PR preserves the pre-arg_record diagnostic output
+    # exactly (see issue #30).
+    df_predict = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:] * mcc.betas, axis=0) / 2
+    df_mean = np.var(-2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, :mcc.n_cold] * mcc.betas[:mcc.n_cold]) / 2
     df_res, _loc_res, _scale_res = scipy.stats.chi2.fit(2 * max_logL_found - 2 * mcc.logLs_store[mcc.logLs_store.shape[0] // 2:, 0:mcc.n_cold].flatten(), df_mean)
     print('Cold likelihood distribution estimate %8.5f effective dimensions (best fit: %8.5f): %5d expected if all dimensions are gaussian' % (df_mean, df_res, mcc.n_par))
 
-    if df_predict.size >= 2:
-        print('Effective dimension hottest two recorded chains: %8.5f %8.5f' % (df_predict[-2], df_predict[-1]))
+    print('Effective dimension hottest two chains: %8.5f %8.5f' % (df_predict[-2], df_predict[-1]))
 
     # Look for potential disconnections based on direct log-likelihood diagnostics
     print('=========Mean likelihood analysis==========')

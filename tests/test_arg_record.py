@@ -202,6 +202,25 @@ def test_spec_arg_record_roundtrip_and_validation() -> None:
             RunSpec.from_dict(data)
 
 
+def test_spec_rejects_legacy_n_record() -> None:
+    """A legacy run.n_record spec fails loudly instead of silently dropping it."""
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+    data['run'] = dict(data['run'])
+    del data['run']['arg_record']
+    data['run']['n_record'] = 4
+    with pytest.raises(SpecError, match='n_record'):
+        RunSpec.from_dict(data)
+
+
+def test_spec_rejects_unknown_run_key() -> None:
+    """An unknown [run] key fails loudly rather than being silently ignored."""
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+    data['run'] = dict(data['run'])
+    data['run']['n_steps_typo'] = 128
+    with pytest.raises(SpecError, match='unknown \\[run\\] keys'):
+        RunSpec.from_dict(data)
+
+
 def test_spec_arg_record_defaults_empty() -> None:
     """Omitting arg_record records only the readout chains."""
     data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}

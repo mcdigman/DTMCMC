@@ -45,6 +45,15 @@ def test_temperature_ladder_accepts_numpy_integer_n_cold() -> None:
     assert np.array_equal(ladder.get_arg_cold(), [0])
 
 
+def test_temperature_ladder_accepts_zero_cold_rungs() -> None:
+    # n_cold == 0 is the inclusive lower bound of the range check; the readout
+    # set is then empty rather than the constructor rejecting it off-by-one
+    ladder = TemperatureLadder(np.array([1.0, 2.0]), n_cold=0)
+
+    assert ladder.n_cold == 0
+    assert ladder.get_arg_cold().size == 0
+
+
 def test_temperature_ladder_accepts_all_cold_rungs() -> None:
     ladder = TemperatureLadder(np.array([1.0, 1.0]), T_cold=1.0, n_cold=2)
 
