@@ -38,7 +38,20 @@ EXCHANGE_STRATEGY_CODES: dict[str, int] = {
     'alternate_sequential': em.ALTERNATE_SEQUENTIAL_TARGETS,
 }
 
-LIKELIHOOD_NAMES: frozenset[str] = frozenset({'gaussian', 'cake', 'eggbox', 'hawaii'})
+LIKELIHOOD_NAMES: frozenset[str] = frozenset({
+    'gaussian',
+    'cake',
+    'eggbox',
+    'hawaii',
+    'ar1',
+    'banana',
+    'gaussian_mixture',
+    'gaussian_shell',
+    'hyperpyramid',
+    'random_wheel',
+    'rosenbrock',
+    'spoke_wheel',
+})
 
 LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_file', 'acceptance_file', 'explicit'})
 
