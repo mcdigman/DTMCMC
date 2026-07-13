@@ -8,3 +8,4 @@ DTMCMC.egg-info/
 .ipynb_checkpoints/
 bak/
 build/
+artifacts/

@@ -253,6 +253,26 @@ def test_batch_expansion(tmp_path) -> None:
     assert seen == {(n_chain, seed) for n_chain in (6, 8) for seed in (101, 102, 103)}
 
 
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_eggbox_end_to_end(tmp_path) -> None:
+    """The eggbox jitclass runs through the full default proposal mixture.
+
+    Regression for a pre-existing engine bug found in the Phase 4 pilots:
+    eggbox.prior_factor's del-based body raised a numba TypingError on
+    every call, so eggbox had never run end-to-end (prior jumps evaluate
+    prior_factor on each proposal).
+    """
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['name'] = 'tiny_eggbox_test'
+    data['likelihood'] = {'name': 'eggbox', 'n_par': 3}
+    data['ladder'] = {'kind': 'geometric', 'n_chain': 4, 'n_cold': 1, 'T_max': 50.0}
+    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2}
+    spec = RunSpec.from_dict(data)
+
+    artifact_path = run_from_spec(spec, tmp_path)
+    assert validate(artifact_path, mode='complete') == []
+
+
 def test_paths_anchored_to_repo_root() -> None:
     """Path resolution is CWD-independent and finds the shipped config."""
     assert default_config_path().is_file()
