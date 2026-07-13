@@ -195,8 +195,14 @@ def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_
     consistent-length cross term. Deterministic: no random draws.
     """
     n_rows, n_cold, n_par = samples_store.shape
+    Ts = np.ones(n_cold)
+    logLs_store = np.zeros((n_rows, n_cold)) # TODO need to actually wire in logLs_store and have checks based on it; not really an issue since production doesn't call this now
+    itrn_store = 0
     view = StoreView(
         samples_store=samples_store,
+        logLs_store=logLs_store,
+        Ts = Ts,
+        itrn = itrn_store,
         store_size=n_rows,
         n_cold=n_cold,
         n_chain=n_cold,
