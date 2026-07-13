@@ -41,10 +41,6 @@ ignore-missing-imports = [
 
 [tool.pyright]
 # Settings for the pyright job in .github/workflows/typecheck.yml. pyright
-# resolves types from the installed environment (the CI job installs .[dev,plots]),
-# so numpy/scipy/matplotlib/h5py are checked for real via their py.typed/stubs.
-# numba ships no py.typed, so missing-import reporting is disabled here --
-# mirroring the --ignore-missing-imports posture of the mypy job.
 pythonVersion = "3.14"
 reportMissingImports = "none"
 # Exclude dot-directories (e.g. the CI job's .venv) from analysis; otherwise
@@ -54,18 +50,17 @@ reportMissingImports = "none"
 exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build", "notebooks", "explorations"]
 
 [tool.mypy]
-# The mypy job in .github/workflows/typecheck.yml runs mypy without installing
-# the project, so third-party imports are resolved with --ignore-missing-imports
-# on the command line. numba is called out explicitly here (it ships no py.typed)
-# so that runs which DO have the deps installed (local/editor) still ignore it.
+# The mypy job in .github/workflows/typecheck.yml installs the project with its
+# typed extras (.[dev,dashboard]) and runs mypy against that venv, so third-party
+# virtualenv and the wheel-build copy of the package (build/lib) so mypy does not
+# type-check installed dependencies or report the build tree as a duplicate
+# module; a clean CI checkout has neither, so build/.venv only matter locally.
 exclude = [
     "^notebooks/",
     "^explorations/",
+    "^build/",
+    "^\\.venv/",
 ]
-
-[[tool.mypy.overrides]]
-module = ["numba", "numba.*"]
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 # Needed to follow plotly imports
