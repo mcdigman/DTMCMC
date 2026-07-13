@@ -52,7 +52,7 @@ def fig_corner(snapshot: RunSnapshot, opts: ViewOptions, theme: Theme) -> go.Fig
     for row in range(1, n_dims):
         fig.update_yaxes(title={'text': labels[row], 'font': {'color': theme.ink_secondary, 'size': 11}}, showticklabels=True, row=row + 1, col=1)
     n_points = matrix.shape[0]
-    fig.update_layout(title={'text': f'chain {opts.chain}, {n_points} stored points', 'font': {'size': 12, 'color': theme.ink_secondary}})
+    fig.update_layout(title={'text': f'{diag.store_column_label(snapshot, opts.chain)}, {n_points} stored points', 'font': {'size': 12, 'color': theme.ink_secondary}})
     return fig
 
 
@@ -127,7 +127,7 @@ def fig_logl_trace(snapshot: RunSnapshot, opts: ViewOptions, theme: Theme) -> go
     start = max(0, min(int(opts.burnin_rows), int(snapshot.logLs.shape[0])))
     rows = diag.downsample_rows(snapshot.logLs.shape[0] - start, 5000) + start
     curves = [
-        diag.Curve(f'logL chain {chain}', rows * snapshot.store_thin, snapshot.logLs[rows, chain], 'applied')
+        diag.Curve(f'logL {diag.store_column_label(snapshot, chain)}', rows * snapshot.store_thin, snapshot.logLs[rows, chain], 'applied')
         for chain in opts.chains
         if 0 <= chain < snapshot.logLs.shape[1]
     ]

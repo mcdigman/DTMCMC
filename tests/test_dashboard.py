@@ -32,7 +32,7 @@ TINY_FIXED_SPEC: dict[str, Any] = {
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
     'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
-    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2},
+    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'arg_record': [3], 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 256}},
 }
@@ -41,7 +41,7 @@ TINY_ADAPTIVE_SPEC: dict[str, Any] = {
     **TINY_FIXED_SPEC,
     'name': 'dash_tiny_adaptive',
     'seed': 43,
-    'run': {'n_steps': 512, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 4},
+    'run': {'n_steps': 512, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4},
     'adaptive': {'mode': 'entropy', 'update_every_blocks': 2, 'budget_blocks': 4, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'n_prior_draws': 64},
 }
 
@@ -82,6 +82,12 @@ def test_snapshot_shapes_and_labels(fixed_artifact: Path) -> None:
     assert snapshot.likelihood_name == 'gaussian'
     assert snapshot.n_par == 3
     assert snapshot.block_size == 64
+    # store columns: the n_cold readout chains, then the arg_record extras
+    assert snapshot.record_indices.tolist() == [0, 3]
+    assert snapshot.n_recorded == 2
+    assert snapshot.samples.shape[1] == snapshot.n_recorded
+    assert snapshot.logLs.shape[1] == snapshot.n_recorded
+    assert snapshot.record_history_indices.shape == (snapshot.n_blocks, snapshot.n_recorded)
 
 
 def test_artifact_records_dashboard_metadata(fixed_artifact: Path) -> None:

@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 
 # artifact schema this reader understands (experiments/harness/artifact.py)
-SUPPORTED_SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSION = 4
 
 
 @dataclass(frozen=True)
@@ -35,6 +35,10 @@ class LadderHistory:
     n_pool_points: np.ndarray
     frozen: bool
     frozen_by: str
+    # burn-in boundary in blocks: -1 while still adapting (schema v4 stores
+    # this so every reader shares one convention)
+    frozen_block: int
+    budget_blocks: int
 
 
 @dataclass(frozen=True)
@@ -93,11 +97,20 @@ class RunSnapshot:
     checkpoint_itrns: np.ndarray
     de_spectrum_eigvals: np.ndarray
 
-    # thinned sample store (recorded chains only)
+    # thinned sample store (recorded chains only): store column j holds
+    # chain record_indices[j]; record_history_indices maps each completed
+    # block to the recorded set active during it (readout-chain indices
+    # move when a ladder update adds or removes rungs below T_cold)
     samples: np.ndarray
     logLs: np.ndarray
     store_thin: int
-    n_record: int
+    record_indices: np.ndarray
+    record_history_indices: np.ndarray
+
+    @property
+    def n_recorded(self) -> int:
+        """Number of recorded store columns (readout chains + arg_record extras)."""
+        return int(self.record_indices.size)
 
     @property
     def n_chain(self) -> int:
@@ -116,7 +129,9 @@ class RunSnapshot:
 
     @property
     def block_size(self) -> int:
-        """Iterations per block, from the embedded spec."""
+        """Iterations per block (schema v4 root attr, spec fallback)."""
+        if 'block_size' in self.attrs:
+            return int(cast('SupportsInt', self.attrs['block_size']))
         return int(self.spec.get('run', {}).get('block_size', 0))
 
     @property
@@ -193,6 +208,8 @@ def _load_history(hf: h5py.File) -> LadderHistory | None:
         n_pool_points=np.asarray(history['n_pool_points'], dtype=np.int64),
         frozen=bool(history.attrs['frozen']),
         frozen_by=str(history.attrs['frozen_by']),
+        frozen_block=int(cast('SupportsInt', history.attrs.get('frozen_block', -1))),
+        budget_blocks=int(cast('SupportsInt', history.attrs.get('budget_blocks', -1))),
     )
 
 
@@ -286,7 +303,8 @@ def load_snapshot(path: str | Path, *, load_store: bool = True) -> RunSnapshot:
             samples=samples,
             logLs=logLs,
             store_thin=int(np.asarray(store_grp.attrs['store_thin']).item()),
-            n_record=int(np.asarray(store_grp.attrs['n_record']).item()),
+            record_indices=np.asarray(hf['store/record_indices'], dtype=np.int64),
+            record_history_indices=np.asarray(hf['store/record_history_indices'], dtype=np.int64),
         )
 
 

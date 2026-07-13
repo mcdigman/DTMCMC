@@ -18,7 +18,7 @@ from dash import Dash, Input, Output, State, dcc, html, no_update
 if TYPE_CHECKING:
     from pathlib import Path
 
-from dashboard.core.diagnostics import header_items
+from dashboard.core.diagnostics import header_items, store_column_label
 from dashboard.core.reader import ArtifactWatcher, RunSnapshot, list_artifacts
 from dashboard.figures.options import ViewOptions
 from dashboard.figures.registry import LAYOUTS, PLOTS, build_figure
@@ -242,8 +242,12 @@ def create_app(config: DashboardConfig) -> Dash:
         header = _header_children(snapshot, watcher.last_error, config.stale_after_seconds)
         if token == previous_token or snapshot is None:
             return (no_update if token == previous_token else token), header, no_update, no_update, no_update, options_out
-        n_recorded = int(snapshot.logLs.shape[1]) if snapshot.logLs.ndim == 2 else 0
-        chain_options = list(range(max(n_recorded, 1)))
+        # selector values are store columns; label each with the chain it
+        # currently records (readout chains first, then arg_record extras)
+        chain_options = [
+            {'label': store_column_label(snapshot, column), 'value': column}
+            for column in range(max(snapshot.n_recorded, 1))
+        ]
         dim_options = list(range(max(snapshot.n_par, 1)))
         return token, header, chain_options, chain_options, dim_options, options_out
 

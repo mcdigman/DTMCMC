@@ -509,11 +509,29 @@ def _store_rows(snapshot: RunSnapshot, burnin_rows: int) -> int:
     return max(0, min(int(burnin_rows), int(snapshot.logLs.shape[0])))
 
 
+def store_column_label(snapshot: RunSnapshot, column: int) -> str:
+    """Readable identity of one store column via the current chain mapping.
+
+    Store columns are the ladder's readout chains first, then arg_record
+    extras; a column that is currently a readout chain is just its chain
+    index, an extra is tagged with the temperature it currently records.
+    """
+    if not 0 <= column < snapshot.record_indices.size:
+        return f'col {column}'
+    chain = int(snapshot.record_indices[column])
+    if column < snapshot.n_cold:
+        return f'chain {chain}'
+    T_chain = snapshot.Ts[chain] if 0 <= chain < snapshot.n_chain else float('nan')
+    T_tag = f'T={T_chain:.4g}' if np.isfinite(T_chain) else 'T=inf'
+    return f'chain {chain} ({T_tag})'
+
+
 def logl_acf(snapshot: RunSnapshot, chains: list[int], max_lag: int, burnin_rows: int = 0) -> list[AcfResult]:
     """Autocorrelation of stored logL for the selected recorded chains.
 
     Lags are in stored rows; multiply by store_thin for iterations. Chains
-    index the recorded slots (0..n_record-1, coldest first).
+    index the store columns (0..n_recorded-1: the ladder's readout chains
+    first, then the arg_record extras in spec order).
     """
     start = _store_rows(snapshot, burnin_rows)
     results: list[AcfResult] = []
@@ -521,7 +539,7 @@ def logl_acf(snapshot: RunSnapshot, chains: list[int], max_lag: int, burnin_rows
         if not 0 <= chain < snapshot.logLs.shape[1]:
             continue
         rho = normalized_acf(snapshot.logLs[start:, chain], max_lag)
-        results.append(AcfResult(f'logL chain {chain}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
+        results.append(AcfResult(f'logL {store_column_label(snapshot, chain)}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
     return results
 
 
@@ -535,7 +553,7 @@ def parameter_acf(snapshot: RunSnapshot, chain: int, dims: list[int], max_lag: i
         if not 0 <= dim < snapshot.samples.shape[2]:
             continue
         rho = normalized_acf(snapshot.samples[start:, chain, dim], max_lag)
-        results.append(AcfResult(f'par {dim} chain {chain}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
+        results.append(AcfResult(f'par {dim} {store_column_label(snapshot, chain)}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
     return results
 
 
@@ -556,7 +574,7 @@ def logl_cross_correlation(snapshot: RunSnapshot, chain_a: int, chain_b: int, ma
     lags_keep = min(int(max_lag), n_samples - 1)
     lags = np.arange(-lags_keep, lags_keep + 1)
     cross = np.asarray([np.dot(series_a[max(0, -lag):n_samples - max(0, lag)], series_b[max(0, lag):n_samples - max(0, -lag)]) for lag in lags]) / norm
-    return AcfResult(f'logL chains {chain_a}x{chain_b}', lags, cross, float('nan'))
+    return AcfResult(f'logL {store_column_label(snapshot, chain_a)} vs {store_column_label(snapshot, chain_b)}', lags, cross, float('nan'))
 
 
 def downsample_rows(n_rows: int, max_points: int) -> np.ndarray:
@@ -606,6 +624,14 @@ def _format_wall_seconds(wall_seconds: float) -> str:
     return f'{total // 3600}:{(total % 3600) // 60:02d}:{total % 60:02d}'
 
 
+def _format_record_indices(snapshot: RunSnapshot) -> str:
+    """Compact current store-column → chain mapping for the header."""
+    indices = [int(idx) for idx in snapshot.record_indices]
+    if len(indices) > 8:
+        return f'[{", ".join(str(idx) for idx in indices[:8])}, …] ({len(indices)} cols)'
+    return str(indices)
+
+
 def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
     """Ordered (label, value) pairs summarizing the run configuration/state."""
     spec = snapshot.spec
@@ -624,7 +650,10 @@ def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
     else:
         adaptive_desc = str(adaptive.get('mode', '?'))
         if snapshot.history is not None and snapshot.history.frozen:
-            adaptive_desc += f' (frozen by {snapshot.history.frozen_by or "n/a"})'
+            adaptive_desc += f' (frozen by {snapshot.history.frozen_by or "n/a"}'
+            if snapshot.history.frozen_block >= 0:
+                adaptive_desc += f' at block {snapshot.history.frozen_block}'
+            adaptive_desc += ')'
         elif snapshot.history is not None:
             adaptive_desc += ' (adapting)'
 
@@ -640,7 +669,7 @@ def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
         ('exchange', str(exchange.get('strategy', 'sequential'))),
         ('block size', str(snapshot.block_size)),
         ('progress', progress),
-        ('store', f'thin={snapshot.store_thin} n_record={snapshot.n_record}'),
+        ('store', f'thin={snapshot.store_thin} recorded chains {_format_record_indices(snapshot)}'),
         ('DE buffer', str(de_size)),
         ('seed', str(snapshot.attrs.get('run_seed', spec.get('seed', '?')))),
         ('git', git_commit),
