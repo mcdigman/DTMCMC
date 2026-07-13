@@ -32,6 +32,9 @@ cadence, which is already a spec knob.
 Artifacts are read **server-side**; only plotly figure JSON crosses the
 network to the browser. Watching a multi-GB run from a laptop over an ssh
 tunnel transmits kilobytes per update, never the archived data volume.
+Artifact selection is allowlisted: a request can only open files the
+server itself enumerated under its configured root, so a crafted browser
+request cannot read arbitrary server-side HDF5 paths.
 
 ## Layering (what swaps out, what stays)
 
@@ -117,8 +120,14 @@ The `core` and `themes` layers deliberately run without either installed.
 
 - **burn-in blocks** trims the start of block-history plots (the block
   mean logL plot's range is otherwise dominated by the first block or two).
-- **rate window** switches tracker-rate plots between whole-run counts
-  and counts since the last tracker archive (recent behavior).
+- **rate window** selects the counts behind the tracker-rate plots:
+  'current ladder' (default) uses everything since the last applied
+  ladder update, so every count sits on the ladder now in effect; 'whole
+  run' bins each archive window at the temperatures its own ladder held
+  (on adaptive runs the temperature axis is the union over segments);
+  'since last archive' shows only the most recent window. Windows are
+  never attributed to a ladder they did not run under — tracker archives
+  are snapshotted before an update mutates the ladder.
 - **history stride** thins ladder-history curves on long adaptive runs.
 - **chains / dims** select the recorded-chain and dimension subsets for
   the posterior plots (corner plots must use a subset — some likelihoods

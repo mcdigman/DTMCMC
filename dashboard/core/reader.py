@@ -145,6 +145,18 @@ class RunSnapshot:
         return bool(self.attrs.get('finalized', False))
 
     @property
+    def run_complete(self) -> bool:
+        """Whether the run reached its spec-requested length.
+
+        The finalized flag alone only marks a major-report flush, which
+        occurs mid-run whenever n_steps_per_major_report < n_steps; a
+        completed run is one whose iteration count reached run.n_steps.
+        """
+        if self.n_steps > 0:
+            return self.n_iterations >= self.n_steps
+        return self.finalized
+
+    @property
     def name(self) -> str:
         """Run name recorded by the harness."""
         return str(self.attrs.get('name', self.path.stem))

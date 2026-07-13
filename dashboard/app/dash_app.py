@@ -53,6 +53,25 @@ def _watcher(path: str, load_store: bool) -> ArtifactWatcher:
     return _WATCHERS[key]
 
 
+def _served_artifacts(config: DashboardConfig) -> list[str]:
+    """The artifact paths this server is willing to open."""
+    return [str(path) for path in list_artifacts(config.artifact)]
+
+
+def _allowed_artifact(config: DashboardConfig, value: str | None, served: list[str] | None = None) -> str | None:
+    """Validate a client-supplied artifact selection against the served set.
+
+    Callback inputs are attacker-controllable in the remote-viewing model:
+    only paths the server itself enumerated under its configured root may
+    reach the HDF5 reader, so a crafted request cannot disclose an
+    arbitrary server-side .h5 file.
+    """
+    served_set = set(_served_artifacts(config) if served is None else served)
+    if value and value in served_set:
+        return value
+    return None
+
+
 def _theme_css_block(theme: Theme) -> str:
     """CSS custom properties for one theme, keyed by data-theme."""
     return (
@@ -133,8 +152,17 @@ def _controls_row(config: DashboardConfig, artifact_options: list[str]) -> html.
             inline=True, style={'fontSize': '12px'})),
         _control('burn-in blocks', dcc.Input(id='burnin-blocks', type='number', value=1, min=0, step=1, debounce=True)),
         _control('rate window', dcc.Dropdown(
-            id='rate-window', options=[{'label': 'whole run', 'value': 'total'}, {'label': 'since last archive', 'value': 'latest'}],
-            value='total', clearable=False, className='dash-dropdown')),
+            id='rate-window',
+            options=[
+                # 'current ladder' is the default: every count sits on the
+                # ladder now in effect, so adaptive runs stay uncluttered;
+                # 'whole run' bins each slice at its own segment's
+                # temperatures (union axis on adaptive runs)
+                {'label': 'current ladder', 'value': 'segment'},
+                {'label': 'whole run', 'value': 'total'},
+                {'label': 'since last archive', 'value': 'latest'},
+            ],
+            value='segment', clearable=False, className='dash-dropdown')),
         _control('history stride', dcc.Input(id='segment-stride', type='number', value=1, min=1, step=1, debounce=True)),
         _control('chain', dcc.Dropdown(id='chain-select', options=[0], value=0, clearable=False, className='dash-dropdown')),
         _control('chains (ACF/trace)', dcc.Dropdown(id='chains-select', options=[0], value=[0], multi=True, className='dash-dropdown'), wide=True),
@@ -159,7 +187,9 @@ def _status_chip(snapshot: RunSnapshot | None, error: str, stale_after_seconds: 
         flush_age = f' ({age_seconds:.0f}s ago)'
     except ValueError:
         age_seconds = 0.
-    if snapshot.finalized:
+    # the artifact's finalized flag marks any major-report flush; only a
+    # run that reached its requested length is displayed as finalized
+    if snapshot.run_complete:
         return html.Span('■ finalized' + flush_age, className='status-chip status-finalized')
     if age_seconds > stale_after_seconds:
         return html.Span('⚠ stale' + flush_age, className='status-chip status-stale')
@@ -232,10 +262,11 @@ def create_app(config: DashboardConfig) -> Dash:
     def poll_artifact(_n_intervals: int, artifact_value: str | None, previous_token: str | None, previous_options: list[str] | None):
         """Re-read the artifact only when its flush changed; bump the token."""
         # pick up run artifacts created after server start
-        current_options = [str(path) for path in list_artifacts(config.artifact)]
+        current_options = _served_artifacts(config)
         options_out = current_options if current_options != (previous_options or []) else no_update
+        artifact_value = _allowed_artifact(config, artifact_value, current_options)
         if not artifact_value:
-            return no_update, _header_children(None, 'no artifact selected', config.stale_after_seconds), no_update, no_update, no_update, options_out
+            return no_update, _header_children(None, 'no artifact selected (or selection not under the served root)', config.stale_after_seconds), no_update, no_update, no_update, options_out
         watcher = _watcher(artifact_value, config.load_store)
         snapshot = watcher.poll()
         token = f'{artifact_value}:{snapshot.stat_token if snapshot is not None else "none"}'
@@ -274,12 +305,13 @@ def create_app(config: DashboardConfig) -> Dash:
         esd_normalization: str, max_lag: int | None, artifact_value: str | None,
     ):
         """Rebuild the active tab's figures from the in-memory snapshot."""
+        artifact_value = _allowed_artifact(config, artifact_value)
         snapshot = _watcher(artifact_value, config.load_store).snapshot if artifact_value else None
         theme = get_theme(theme_name)
         chains_use = [int(value) for value in chains] if chains else [0]
         opts = ViewOptions(
             burnin_blocks=int(burnin_blocks or 0),
-            window=rate_window or 'total',
+            window=rate_window or 'segment',
             segment_stride=max(int(segment_stride or 1), 1),
             accepted_only=esd_normalization == 'accepted',
             chain=int(chain or 0),

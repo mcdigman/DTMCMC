@@ -63,7 +63,7 @@ class RateTable:
 
 @dataclass(frozen=True)
 class ExchangeRates:
-    """Per-temperature-slot exchange acceptance for one counting window."""
+    """Exchange acceptance per unique temperature for one counting window."""
 
     Ts: np.ndarray
     nn_rate: np.ndarray
@@ -267,33 +267,97 @@ def window_counts(record: np.ndarray, archive: np.ndarray, window: str | int) ->
     return archive_arr[idx] - archive_arr[idx - 1]
 
 
-def _rates_by_unique_temperature(Ts: np.ndarray, yes: np.ndarray, no: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Combine per-chain yes/no counts over identical temperatures."""
-    Ts_unique = np.unique(np.asarray(Ts))
-    n_jump = yes.shape[-1]
-    yes_unique = np.zeros((Ts_unique.size, n_jump))
-    no_unique = np.zeros((Ts_unique.size, n_jump))
+def _ladder_timeline(snapshot: RunSnapshot) -> tuple[np.ndarray, list[np.ndarray]]:
+    """Start iterations and ladders of each fixed-ladder interval of the run."""
+    starts = [0]
+    ladders = [np.asarray(snapshot.initial_Ts)]
+    history = snapshot.history
+    if history is not None and snapshot.block_size > 0:
+        for idx in range(history.block_index.size):
+            if history.applied[idx]:
+                starts.append(int(history.block_index[idx]) * snapshot.block_size)
+                ladders.append(np.asarray(history.Ts[idx]))
+    return np.asarray(starts, dtype=np.int64), ladders
+
+
+def _window_spans(snapshot: RunSnapshot, window: str | int) -> list[tuple[int, str | int]]:
+    """(start_itrn, window key) pairs for the requested counting window.
+
+    'total' expands to every archive window plus the live tail so each
+    slice can be labeled with the ladder in effect during it; 'segment'
+    keeps only the windows since the last applied ladder update (every
+    count on the current ladder); 'latest' and integer windows resolve to
+    their single slice.
+    """
+    n_archived = int(snapshot.itrn_archive.size)
+    if window in ('total', 'segment'):
+        spans: list[tuple[int, str | int]] = [(0 if idx == 0 else int(snapshot.itrn_archive[idx - 1]), idx) for idx in range(n_archived)]
+        spans.append((int(snapshot.itrn_archive[-1]) if n_archived else 0, 'latest'))
+        if window == 'segment':
+            segment_start = int(_ladder_timeline(snapshot)[0][-1])
+            spans = [(start, key) for start, key in spans if start >= segment_start]
+        return spans
+    if window == 'latest':
+        return [(int(snapshot.itrn_archive[-1]) if n_archived else 0, 'latest')]
+    idx = int(window)
+    return [(0 if idx == 0 else int(snapshot.itrn_archive[idx - 1]), idx)]
+
+
+def _windows_with_ladders(snapshot: RunSnapshot, record: np.ndarray, archive: np.ndarray, window: str | int) -> list[tuple[np.ndarray, np.ndarray]]:
+    """(window counts, ladder Ts in effect during the window) pairs.
+
+    Tracker archives are cumulative snapshots taken *before* a ladder
+    update mutates Ts (TrackerManager.segment_for_ladder_update), so every
+    archive window lies within one fixed-ladder interval and must be
+    attributed to that interval's temperatures — grouping cumulative
+    counters by the final snapshot.Ts assigns old-ladder counts to
+    final-ladder temperatures on adaptive runs.
+    """
+    starts, ladders = _ladder_timeline(snapshot)
+    pairs: list[tuple[np.ndarray, np.ndarray]] = []
+    for start_itrn, key in _window_spans(snapshot, window):
+        counts = window_counts(record, archive, key)
+        ladder = ladders[int(np.searchsorted(starts, start_itrn, side='right')) - 1]
+        pairs.append((counts, ladder))
+    return pairs
+
+
+def _sums_by_unique_temperature(Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Sum stacked per-slot numerator/denominator rows over identical temperatures."""
+    Ts_unique = np.unique(np.asarray(Ts_rows))
+    n_jump = numerators.shape[-1]
+    numerator_unique = np.zeros((Ts_unique.size, n_jump))
+    denominator_unique = np.zeros((Ts_unique.size, n_jump))
     for itrt, T_loc in enumerate(Ts_unique):
-        mask = np.asarray(Ts) == T_loc
-        yes_unique[itrt] = yes[mask].sum(axis=0)
-        no_unique[itrt] = no[mask].sum(axis=0)
-    return Ts_unique, yes_unique, no_unique
+        mask = np.asarray(Ts_rows) == T_loc
+        numerator_unique[itrt] = numerators[mask].sum(axis=0)
+        denominator_unique[itrt] = denominators[mask].sum(axis=0)
+    return Ts_unique, numerator_unique, denominator_unique
+
+
+def _ratio_table(snapshot: RunSnapshot, Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray) -> RateTable:
+    """Group stacked ratio counts by temperature into a labeled RateTable."""
+    Ts_unique, numerator_unique, denominator_unique = _sums_by_unique_temperature(Ts_rows, numerators, denominators)
+    tried = np.any(denominator_unique > 0, axis=0)
+    labels = [label for label, keep in zip(snapshot.jump_labels, tried, strict=True) if keep]
+    with np.errstate(invalid='ignore', divide='ignore'):
+        values = np.where(denominator_unique[:, tried] > 0, numerator_unique[:, tried] / denominator_unique[:, tried], np.nan)
+    return RateTable(Ts_unique, values, denominator_unique[:, tried], labels)
 
 
 def acceptance_by_temperature(snapshot: RunSnapshot, window: str | int = 'total') -> RateTable:
     """Per-proposal acceptance rate against temperature for one window.
 
-    Jump types never tried in the window are dropped; entries with no
-    trials at a particular temperature are NaN.
+    Each counting window is grouped by the ladder in effect during it, so
+    adaptive runs bin old-segment counts at their own temperatures ('total'
+    unions the temperatures of every ladder the run visited). Jump types
+    never tried are dropped; entries with no trials at a temperature are NaN.
     """
-    counts = window_counts(snapshot.accept_record, snapshot.accept_archive, window)
-    Ts_unique, yes_unique, no_unique = _rates_by_unique_temperature(snapshot.Ts, counts[0], counts[1])
-    trials = yes_unique + no_unique
-    tried = np.any(trials > 0, axis=0)
-    labels = [label for label, keep in zip(snapshot.jump_labels, tried, strict=True) if keep]
-    with np.errstate(invalid='ignore', divide='ignore'):
-        rates = np.where(trials[:, tried] > 0, yes_unique[:, tried] / trials[:, tried], np.nan)
-    return RateTable(Ts_unique, rates, trials[:, tried], labels)
+    pairs = _windows_with_ladders(snapshot, snapshot.accept_record, snapshot.accept_archive, window)
+    Ts_rows = np.concatenate([ladder for _counts, ladder in pairs])
+    yes_rows = np.concatenate([counts[0] for counts, _ladder in pairs], axis=0)
+    no_rows = np.concatenate([counts[1] for counts, _ladder in pairs], axis=0)
+    return _ratio_table(snapshot, Ts_rows, yes_rows, yes_rows + no_rows)
 
 
 def esd_by_temperature(snapshot: RunSnapshot, window: str | int = 'total', *, accepted_only: bool = False) -> RateTable:
@@ -301,26 +365,15 @@ def esd_by_temperature(snapshot: RunSnapshot, window: str | int = 'total', *, ac
 
     Per-proposal (default) divides the all-proposal |delta|^2 sums by the
     number of proposals; accepted_only divides the accepted-only sums by
-    the number of acceptances.
+    the number of acceptances. Windows are grouped by the ladder in effect
+    during them, as in acceptance_by_temperature.
     """
-    esd_sums = window_counts(snapshot.esd_record, snapshot.esd_archive, window)
-    accept_counts = window_counts(snapshot.accept_record, snapshot.accept_archive, window)
-    sums = esd_sums[1] if accepted_only else esd_sums[0]
-    counts = accept_counts[0] if accepted_only else accept_counts[0] + accept_counts[1]
-
-    Ts_unique = np.unique(np.asarray(snapshot.Ts))
-    n_jump = sums.shape[-1]
-    sums_unique = np.zeros((Ts_unique.size, n_jump))
-    counts_unique = np.zeros((Ts_unique.size, n_jump))
-    for itrt, T_loc in enumerate(Ts_unique):
-        mask = np.asarray(snapshot.Ts) == T_loc
-        sums_unique[itrt] = sums[mask].sum(axis=0)
-        counts_unique[itrt] = counts[mask].sum(axis=0)
-    tried = np.any(counts_unique > 0, axis=0)
-    labels = [label for label, keep in zip(snapshot.jump_labels, tried, strict=True) if keep]
-    with np.errstate(invalid='ignore', divide='ignore'):
-        values = np.where(counts_unique[:, tried] > 0, sums_unique[:, tried] / counts_unique[:, tried], np.nan)
-    return RateTable(Ts_unique, values, counts_unique[:, tried], labels)
+    esd_pairs = _windows_with_ladders(snapshot, snapshot.esd_record, snapshot.esd_archive, window)
+    accept_pairs = _windows_with_ladders(snapshot, snapshot.accept_record, snapshot.accept_archive, window)
+    Ts_rows = np.concatenate([ladder for _counts, ladder in esd_pairs])
+    sums_rows = np.concatenate([counts[1] if accepted_only else counts[0] for counts, _ladder in esd_pairs], axis=0)
+    counts_rows = np.concatenate([counts[0] if accepted_only else counts[0] + counts[1] for counts, _ladder in accept_pairs], axis=0)
+    return _ratio_table(snapshot, Ts_rows, sums_rows, counts_rows)
 
 
 def _nn_exchange_counts(snapshot: RunSnapshot, counts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -350,16 +403,26 @@ def _nn_exchange_counts(snapshot: RunSnapshot, counts: np.ndarray) -> tuple[np.n
 
 
 def exchange_rates(snapshot: RunSnapshot, window: str | int = 'total') -> ExchangeRates:
-    """Exchange acceptance against temperature slot for one counting window."""
-    counts = window_counts(snapshot.exchange_tracker, snapshot.exchange_archive, window)
-    nn_yes, nn_no, all_yes, all_no = _nn_exchange_counts(snapshot, counts)
+    """Exchange acceptance against temperature for one counting window.
+
+    Slot counts from each window are binned at the temperatures that
+    window's ladder actually held (identical temperatures combined), so
+    adaptive runs never attribute old-ladder exchanges to final-ladder
+    rungs; Ts is the sorted union over the counted windows.
+    """
+    pairs = _windows_with_ladders(snapshot, snapshot.exchange_tracker, snapshot.exchange_archive, window)
+    Ts_rows = np.concatenate([ladder for _counts, ladder in pairs])
+    per_slot = [np.stack(_nn_exchange_counts(snapshot, counts), axis=-1) for counts, _ladder in pairs]
+    stacked = np.concatenate(per_slot, axis=0)
+    Ts_unique, sums_unique, _unused = _sums_by_unique_temperature(Ts_rows, stacked, stacked)
+    nn_yes, nn_no, all_yes, all_no = sums_unique.T
     nn_trials = nn_yes + nn_no
     all_trials = all_yes + all_no
     with np.errstate(invalid='ignore', divide='ignore'):
         nn_rate = np.where(nn_trials > 0, nn_yes / nn_trials, np.nan)
         all_rate = np.where(all_trials > 0, all_yes / all_trials, np.nan)
     overall = float(nn_yes.sum() / nn_trials.sum()) if nn_trials.sum() > 0 else float('nan')
-    return ExchangeRates(np.asarray(snapshot.Ts), nn_rate, nn_trials, all_rate, all_trials, overall)
+    return ExchangeRates(Ts_unique, nn_rate, nn_trials, all_rate, all_trials, overall)
 
 
 def exchange_history(snapshot: RunSnapshot) -> ExchangeHistory:
@@ -632,6 +695,15 @@ def _format_record_indices(snapshot: RunSnapshot) -> str:
     return str(indices)
 
 
+def _run_status(snapshot: RunSnapshot) -> str:
+    """Run state for display: the finalized flag alone is not completion."""
+    if snapshot.run_complete:
+        return 'finalized'
+    if snapshot.finalized:
+        return 'in progress (major report)'
+    return 'in progress'
+
+
 def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
     """Ordered (label, value) pairs summarizing the run configuration/state."""
     spec = snapshot.spec
@@ -677,5 +749,5 @@ def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
         ('wall time', _format_wall_seconds(float(snapshot.attrs.get('wall_seconds', 0.)))),
         ('logL evals', f'{int(snapshot.attrs.get("n_likelihood_evals", 0)):.4g}'.replace('e+0', 'e')),
         ('last flush', str(snapshot.attrs.get('flush_time_utc', '?'))[:19]),
-        ('status', 'finalized' if snapshot.finalized else 'in progress'),
+        ('status', _run_status(snapshot)),
     ]

@@ -13,8 +13,9 @@ class ViewOptions:
 
     # blocks trimmed from the start of block-history plots (burn-in)
     burnin_blocks: int = 1
-    # counting window for tracker-rate plots: 'total', 'latest', or archive index
-    window: str | int = 'total'
+    # counting window for tracker-rate plots: 'segment' (since the last
+    # applied ladder update), 'total', 'latest', or an archive index
+    window: str | int = 'segment'
     # plot every nth ladder-history curve (declutters long adaptive runs)
     segment_stride: int = 1
     # ESD normalization: per accepted jump instead of per proposal

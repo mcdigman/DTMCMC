@@ -8,12 +8,14 @@ additions (trackers jump_labels attr, ladder/initial_Ts dataset).
 
 import itertools
 import os
+import tomllib
 from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
 import plotly.graph_objects as go
 import pytest
+from setuptools import find_packages
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,9 +25,11 @@ from dashboard.core.reader import ArtifactWatcher, list_artifacts, load_snapshot
 from dashboard.figures.options import ViewOptions
 from dashboard.figures.registry import LAYOUTS, PLOTS, build_figure
 from dashboard.themes import THEMES, get_theme
-from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests
-from experiments.harness.runner import run_from_spec
-from experiments.harness.spec import RunSpec
+from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
+from experiments.harness.artifact import collect_provenance
+from experiments.harness.paths import repo_root
+from experiments.harness.runner import build_sampler, run_from_spec
+from experiments.harness.spec import RunSpec, config_to_text
 
 TINY_FIXED_SPEC: dict[str, Any] = {
     'name': 'dash_tiny_fixed',
@@ -65,6 +69,31 @@ def fixed_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def adaptive_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """A completed adaptive run artifact (has ladder history)."""
     return _run_tiny(TINY_ADAPTIVE_SPEC, tmp_path_factory.mktemp('dash_adaptive'))
+
+
+@pytest.fixture(scope='module')
+def midrun_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """An artifact flushed at a mid-run major report (finalized flag set).
+
+    Advances 2 of 4 blocks with n_steps_per_major_report at the halfway
+    point, then stops: the on-disk flush carries finalized=True while the
+    run is only half done, exactly the state a live dashboard polls.
+    """
+    spec_data = dict(TINY_FIXED_SPEC)
+    spec_data['name'] = 'dash_midrun'
+    spec_data['run'] = {'n_steps': 256, 'n_steps_per_major_report': 128, 'block_size': 64, 'checkpoint_every_blocks': 2}
+    spec = RunSpec.from_dict(spec_data)
+    out_path = tmp_path_factory.mktemp('dash_midrun') / 'midrun.h5'
+    reset_seed_guard_for_tests()
+    try:
+        seeds = seed_run(spec.seed)
+        config = spec.build_proposal_config()
+        provenance = collect_provenance(spec.seed, *seeds, spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config))
+        sampler, _like_obj = build_sampler(spec, config=config, artifact_path=out_path, provenance=provenance)
+        sampler.advance_N_blocks(2)
+    finally:
+        reset_seed_guard_for_tests()
+    return out_path
 
 
 def test_snapshot_shapes_and_labels(fixed_artifact: Path) -> None:
@@ -249,6 +278,83 @@ def test_header_items_cover_key_config(adaptive_artifact: Path) -> None:
     assert items['adaptive'].startswith('entropy')
     assert items['block size'] == '64'
     assert items['status'] == 'finalized'
+
+
+def test_rate_tables_use_segment_ladders(adaptive_artifact: Path) -> None:
+    """Tracker windows are grouped by the ladder in effect during them.
+
+    Archives are taken before a ladder update mutates Ts, so counts from
+    the first window belong to the initial ladder's temperatures, and the
+    whole-run table must keep old-ladder temperatures as their own bins
+    rather than relabeling those counts with the final ladder.
+    """
+    snapshot = load_snapshot(adaptive_artifact)
+    assert snapshot.history is not None
+    applied_Ts = snapshot.history.Ts[snapshot.history.applied]
+    assert applied_Ts.shape[0] > 0, 'fixture must apply at least one ladder update'
+    assert not np.array_equal(np.unique(snapshot.initial_Ts), np.unique(snapshot.Ts)), 'fixture ladder must actually move'
+
+    first_window = diag.acceptance_by_temperature(snapshot, 0)
+    assert np.array_equal(first_window.Ts, np.unique(snapshot.initial_Ts))
+    assert np.array_equal(diag.exchange_rates(snapshot, 0).Ts, np.unique(snapshot.initial_Ts))
+    assert np.array_equal(diag.esd_by_temperature(snapshot, 0).Ts, np.unique(snapshot.initial_Ts))
+
+    total = diag.acceptance_by_temperature(snapshot, 'total')
+    initial_only = set(np.unique(snapshot.initial_Ts)) - set(np.unique(snapshot.Ts))
+    assert initial_only <= set(total.Ts)
+    # rebinning must conserve counts: every trial lands in exactly one bin
+    record = snapshot.accept_record
+    assert total.trials.sum() == pytest.approx(float((record[0] + record[1]).sum()))
+
+    # 'segment' keeps only post-last-update counts: every bin on the current ladder
+    segment = diag.acceptance_by_temperature(snapshot, 'segment')
+    assert set(segment.Ts) <= set(np.unique(snapshot.Ts))
+    assert segment.trials.sum() < total.trials.sum()
+
+
+def test_segment_window_equals_total_on_fixed_ladder(fixed_artifact: Path) -> None:
+    """Without ladder updates the 'segment' and 'total' windows coincide."""
+    snapshot = load_snapshot(fixed_artifact)
+    segment = diag.acceptance_by_temperature(snapshot, 'segment')
+    total = diag.acceptance_by_temperature(snapshot, 'total')
+    assert np.array_equal(segment.Ts, total.Ts)
+    assert np.array_equal(segment.trials, total.trials)
+    assert np.array_equal(segment.values, total.values, equal_nan=True)
+
+
+def test_run_complete_vs_major_report(midrun_artifact: Path, fixed_artifact: Path) -> None:
+    """A mid-run major-report flush is not displayed as a finalized run."""
+    midrun = load_snapshot(midrun_artifact)
+    assert midrun.finalized, 'writer marks major-report flushes finalized'
+    assert midrun.n_iterations < midrun.n_steps
+    assert not midrun.run_complete
+    assert dict(diag.header_items(midrun))['status'] == 'in progress (major report)'
+    completed = load_snapshot(fixed_artifact)
+    assert completed.run_complete
+    assert dict(diag.header_items(completed))['status'] == 'finalized'
+
+
+def test_wheel_packaging_includes_dashboard() -> None:
+    """Package discovery ships dashboard so python -m dashboard works installed."""
+    with (repo_root() / 'pyproject.toml').open('rb') as handle:
+        include = tomllib.load(handle)['tool']['setuptools']['packages']['find']['include']
+    found = find_packages(where=str(repo_root()), include=include)
+    assert {'dashboard', 'dashboard.core', 'dashboard.figures', 'dashboard.themes', 'dashboard.app'} <= set(found)
+
+
+def test_artifact_selection_allowlist(tmp_path: Path, fixed_artifact: Path) -> None:
+    """Client-supplied artifact paths outside the served root are rejected."""
+    pytest.importorskip('dash')
+    # imported lazily so the reader/diagnostics tests run without dash installed
+    from dashboard.app.dash_app import DashboardConfig, _allowed_artifact  # noqa: PLC0415
+
+    served = tmp_path / 'served.h5'
+    served.write_bytes(fixed_artifact.read_bytes())
+    config = DashboardConfig(artifact=tmp_path)
+    assert _allowed_artifact(config, str(served)) == str(served)
+    assert _allowed_artifact(config, str(fixed_artifact)) is None
+    assert _allowed_artifact(config, str(tmp_path / '..' / 'served.h5')) is None
+    assert _allowed_artifact(config, None) is None
 
 
 def test_registry_layouts_reference_known_plots() -> None:
