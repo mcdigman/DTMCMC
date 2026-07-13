@@ -40,29 +40,67 @@ def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
 class TemperatureLadder:
     """Store a temperature ladder for parallel tempering."""
 
-    def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1, T_cold: float | None = None) -> None:
+    def __init__(self, Ts_in: NDArray[np.floating], sort_mode: int = 1, T_cold: float | None = None, n_cold: int=1) -> None:
         """Create the temperature ladder object.
 
         Parameters
         ----------
-        n_cold: int
-            n_cold<=n_chain, total number of T=T_cold chains
         Ts_in: NDArray[np.floating]
-            Ts to store
+            1D array of Ts to store
         sort_mode: int
             Selector for how to sort the input temperatures
         T_cold: float | None
             temperature of the n_cold readout chains; None (default) keeps
             the historical convention that the first n_cold rungs are the
-            readout chains. Ladders that may extend below the readout
+            readout chains, and reads T_cold from those. Ladders that may extend below the readout
             temperature must set T_cold so get_arg_cold can locate the
             readout rungs by temperature instead of by position.
+        n_cold: int
+            n_cold<=n_chain, minimum total number of T=T_cold chains.
+
 
         Raises
         ------
         ValueError
             If the sort mode is not recognized
+            If T_cold is nan
+            If n_cold not in [0, Ts_in.size]
+            If Ts_in.size is 0
+            If less than n_cold values of T_cold were specified
+            If any input Ts are nan
+            If Ts is not 1 dimensional
+        TypeError
+            If n_cold is not an integer
         """
+        if len(Ts_in.shape) != 1:
+            msg = 'Ts_in must be 1D'
+            raise ValueError(msg)
+
+        if Ts_in.size == 0:
+            msg = 'Temperature ladder with zero temperatures specified is undefined'
+            raise ValueError(msg)
+
+        if np.any(np.isnan(Ts_in)):
+            msg = 'Some input temperatures were nan'
+            raise ValueError(msg)
+
+        if T_cold is None:
+            self.T_cold: float = Ts_in[0]
+        else:
+            self.T_cold = T_cold
+
+        if np.isnan(self.T_cold):
+            msg = 'Undefined behavior for T_cold of nan'
+            raise ValueError(msg)
+
+        if not isinstance(n_cold, (int, np.integer)) or isinstance(n_cold, (bool, np.bool_)):
+            msg = 'n_cold must be an integer'
+            raise TypeError(msg)
+
+        if not (0 <= n_cold <= Ts_in.size):
+            msg = f'n_cold {n_cold} not in [0, {Ts_in.size}]'
+            raise ValueError(msg)
+
         if sort_mode == 0:
             self.Ts: NDArray[np.floating] = Ts_in.copy()
         elif sort_mode == 1:
@@ -71,14 +109,17 @@ class TemperatureLadder:
             msg = f'Unrecognized option sort_mode {sort_mode}'
             raise ValueError(msg)
 
-        # self.Ts = Ts_in
+        n_cold_actual = np.sum(self.Ts == self.T_cold)
+        if n_cold_actual < n_cold:
+            msg = f'Must be at least n_cold={n_cold} values of T_cold={self.T_cold}, got {n_cold_actual}'
+            raise ValueError(msg)
+
         self.sort_mode: int = sort_mode
 
         self.betas: NDArray[np.floating] = Ts_to_betas(self.Ts)
 
         self.n_chain: int = Ts_in.size
         self.n_cold: int = n_cold
-        self.T_cold: float | None = T_cold
 
     def get_arg_cold(self) -> NDArray[np.int64]:
         """Get the indices of the n_cold readout chains in this ladder.
@@ -231,7 +272,7 @@ class GeometricTemperatureLadder(TemperatureLadder):
         _, Ts = geometric_spaced_betas(
             n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final, sort_mode=sort_mode
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def _standardize_stats_core(betas_in: NDArray[np.floating], stats_in: list[NDArray[np.floating]], nonfinite_msg: str) -> tuple[NDArray[np.floating], list[NDArray[np.floating]]]:
@@ -607,7 +648,7 @@ class EntropyTemperatureLadder(TemperatureLadder):
             sort_mode=sort_mode,
             snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 class LengthTemperatureLadder(TemperatureLadder):
@@ -657,7 +698,7 @@ class LengthTemperatureLadder(TemperatureLadder):
             q=0.,
             snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def standardize_input_stats(betas_in: NDArray[np.floating], logL_means_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
@@ -879,7 +920,7 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             snap_mode=snap_mode,
         )
         self.achieved_acceptance: float = a_star
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode, T_cold=T_cold)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:

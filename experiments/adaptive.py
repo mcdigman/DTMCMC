@@ -305,7 +305,7 @@ class AdaptiveLadderController:
         self._pool_var_history.append([prior_var])
 
         return GeometricTemperatureLadder(
-            n_chain, n_cold=n_cold, T_cold=self._t_cold_window, T_min=self._t_cold_window,
+            n_chain=n_chain, n_cold=n_cold, T_cold=self._t_cold_window, T_min=self._t_cold_window,
             T_max=t_hot, n_inf_final=self.n_inf_final,
         )
 
@@ -488,7 +488,7 @@ class AdaptiveLadderController:
         if np.allclose(capped, finite_Ts, rtol=1.e-12):
             return ladder
         Ts[finite] = capped
-        return TemperatureLadder(n_cold, Ts, T_cold=ladder.T_cold)
+        return TemperatureLadder(Ts, n_cold=n_cold, T_cold=ladder.T_cold)
 
     def _build_ladder(self, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Rebuild the ladder from pooled cumulants over the extended window."""

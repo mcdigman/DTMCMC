@@ -82,7 +82,6 @@ REQUIRED_DATASETS: tuple[str, ...] = (
     'store/samples',
     'store/logLs',
     'store/record_indices',
-    'store/record_history_itrns',
     'store/record_history_indices',
 )
 
@@ -291,8 +290,7 @@ def write_artifact(
         # readout-chain indices move when a ladder update adds or removes
         # rungs below T_cold)
         store_grp.create_dataset('record_indices', data=np.asarray(sampler.record_indices, dtype=np.int64))
-        store_grp.create_dataset('record_history_itrns', data=np.asarray([itrn for itrn, _ in sampler.record_history], dtype=np.int64))
-        store_grp.create_dataset('record_history_indices', data=np.asarray([indices for _, indices in sampler.record_history], dtype=np.int64))
+        store_grp.create_dataset('record_history_indices', data=np.asarray(sampler.record_history, dtype=np.int64))
         store_grp.create_dataset('samples', data=sampler.samples_store[:rows_written])
         store_grp.create_dataset('logLs', data=sampler.logLs_store[:rows_written])
 
