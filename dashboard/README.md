@@ -42,7 +42,8 @@ request cannot read arbitrary server-side HDF5 paths.
 dashboard/
 ├── core/            framework-agnostic data layer (numpy + h5py only)
 │   ├── reader.py      artifact -> RunSnapshot; polling watcher; run listing
-│   └── diagnostics.py pure functions: RunSnapshot -> plot-ready series
+│   ├── diagnostics.py pure functions: RunSnapshot -> plot-ready series
+│   └── checks.py      status lights: RunSnapshot -> ok/warn/alert/na results
 ├── themes/          style tokens (light/dark), no plotting imports
 ├── figures/         thin plotly factories over core outputs
 │   ├── base.py        the ONLY module that maps Theme -> plotly styling
@@ -115,6 +116,40 @@ Beyond the core project requirements (numpy, h5py) and the in-repo
 
 Both are declared as the `dashboard` optional extra in `pyproject.toml`.
 The `core` and `themes` layers deliberately run without either installed.
+
+## Status lights
+
+The Status tab (the landing tab) evaluates a registry of run-health
+checks against the current snapshot and renders one card per light,
+most severe first; a header badge summarizes the worst enabled status
+next to the run-state chip. Statuses are ok / warning / alert, plus n/a
+with a reason when a check lacks data (young runs) or does not apply
+(fixed-ladder runs). Shipped lights:
+
+| light | watches |
+|---|---|
+| Finite moments | NaN/inf in recent block logL moments |
+| Ladder freeze | adaptation finished, and by criterion rather than budget |
+| Mean logL drift | blockwise mean logL drifting between recent halves |
+| Thermodynamic stability | Var(logL) (the C(T) profile) moving between recent halves |
+| Round trips | walkers completing hot-cold cycles at a healthy rate |
+| Walker flow | up-flow fraction far from the linear constant-flow ideal |
+| Exchange uniformity | nn exchange acceptance spread across temperatures |
+| Exchange bottleneck | a near-zero exchange link splitting the ladder |
+| Exchange flow share | exchanges carrying nearly all accepted movement |
+| Acceptance smoothness | acceptance jumping between adjacent temperatures |
+| Cold-chain acceptance | the coldest chain accepting almost nothing |
+| Cold-chain correlation | stored history spanning too few autocorrelation times |
+| DE buffer rank | DE difference spectrum losing effective rank |
+
+Adding a light is one evaluator function `RunSnapshot -> (status,
+message)` plus one `CheckSpec` row in `core/checks.py` — the tab, the
+badge, and the silencing control pick it up automatically. Thresholds
+are keyword arguments with heuristic defaults, ready for a future
+configuration surface. Any subset of lights can be silenced with the
+"status checks" control (persisted per browser session); silenced
+lights leave both the tab and the badge. A check that raises reports
+itself as an alert rather than taking the dashboard down.
 
 ## Notable view options
 

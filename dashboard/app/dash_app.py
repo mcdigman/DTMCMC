@@ -1,12 +1,13 @@
-"""The Dash application: header, controls, tabbed figure grid, live polling.
+"""The Dash application: header, controls, status lights, tabbed figures.
 
 The app is a thin shell over dashboard.core and dashboard.figures: one
 interval callback polls the artifact watcher and bumps a token store only
 when the file actually changed; one render callback rebuilds the active
-tab's figures from the in-memory snapshot whenever the token, tab, theme,
-or a control changes. All figure payloads travel to the browser as plotly
-JSON — the artifact itself never leaves the server, so remote viewing
-(e.g. an ssh tunnel to a cluster head node) transmits only plot data.
+tab (status-light cards or plotly figures) from the in-memory snapshot
+whenever the token, tab, theme, or a control changes. All payloads travel
+to the browser as JSON — the artifact itself never leaves the server, so
+remote viewing (e.g. an ssh tunnel to a cluster head node) transmits only
+plot data.
 """
 
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from dash import Dash, Input, Output, State, dcc, html, no_update
 if TYPE_CHECKING:
     from pathlib import Path
 
+from dashboard.core.checks import CHECKS, STATUS_ALERT, STATUS_NA, STATUS_OK, STATUS_WARN, CheckResult, evaluate_checks, status_counts, worst_status
 from dashboard.core.diagnostics import header_items, store_column_label
 from dashboard.core.reader import ArtifactWatcher, RunSnapshot, list_artifacts
 from dashboard.figures.options import ViewOptions
@@ -28,6 +30,18 @@ from dashboard.themes import THEMES, Theme, get_theme
 _WATCHERS: dict[tuple[str, bool], ArtifactWatcher] = {}
 
 GRAPH_CONFIG: Any = {'displaylogo': False, 'modeBarButtonsToRemove': ['lasso2d', 'select2d']}
+
+# the status-lights tab rendered ahead of the figure tabs
+STATUS_TAB = 'Status'
+
+# per-status presentation: icon + word, so severity is never color-alone
+_LIGHT_BADGES = {
+    STATUS_OK: ('●', 'ok'),
+    STATUS_WARN: ('⚠', 'warning'),
+    STATUS_ALERT: ('✖', 'alert'),
+    STATUS_NA: ('○', 'n/a'),
+}
+_LIGHT_ORDER = {STATUS_ALERT: 0, STATUS_WARN: 1, STATUS_OK: 2, STATUS_NA: 3}
 
 
 @dataclass
@@ -125,13 +139,35 @@ def _index_css() -> str:
     .tab-bar .tab--selected { background: var(--surface) !important; color: var(--ink) !important;
                               border-top: 2px solid var(--accent) !important; }
     .poll-note { font-size: 11px; color: var(--ink-muted); padding: 2px 18px 10px; }
-    /* best-effort react-select theming for dcc.Dropdown in dark mode */
-    .Select-control, .Select-menu-outer, .Select-value, .Select-input > input {
+    .light-card { background: var(--surface); border: 1px solid var(--border);
+                  border-left-width: 4px; border-radius: 8px; padding: 10px 14px; min-width: 0; }
+    .light-head { display: flex; align-items: baseline; gap: 8px; }
+    .light-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+    .light-word { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;
+                  margin-left: auto; }
+    .light-message { font-size: 12px; color: var(--ink-secondary); margin-top: 4px; }
+    .light-desc { font-size: 11px; color: var(--ink-muted); margin-top: 3px; }
+    .light-ok { border-left-color: var(--good); }
+    .light-ok .light-dot, .light-ok .light-word { color: var(--good); }
+    .light-warn { border-left-color: var(--warning); }
+    .light-warn .light-dot, .light-warn .light-word { color: var(--warning); }
+    .light-alert { border-left-color: var(--critical); }
+    .light-alert .light-dot, .light-alert .light-word { color: var(--critical); }
+    .light-na { border-left-color: var(--border); }
+    .light-na .light-dot, .light-na .light-word { color: var(--ink-muted); }
+    .light-silenced { grid-column: 1 / -1; }
+    .status-na { color: var(--ink-muted); }
+    /* theme the dash 4 dropdown component (white by default) */
+    .dash-dropdown .dash-dropdown-grid-container, .dash-dropdown-trigger, .dash-dropdown-menu,
+    .dash-dropdown-search, .dash-dropdown-options {
         background: var(--surface) !important; color: var(--ink) !important;
         border-color: var(--border) !important; font-size: 12px; }
-    .Select-value-label, .Select-placeholder { color: var(--ink) !important; }
-    .VirtualizedSelectOption { background: var(--surface); color: var(--ink); font-size: 12px; }
-    .VirtualizedSelectFocusedOption { background: var(--page); }
+    .dash-dropdown-value, .dash-dropdown-value-item, .dash-dropdown-option,
+    .dash-dropdown-placeholder, .dash-dropdown-search input {
+        background: transparent; color: var(--ink) !important; }
+    .dash-dropdown-option:hover, .dash-dropdown-option-focused { background: var(--page) !important; }
+    /* radio/checkbox option labels inside a control (the caption is .control > label) */
+    .control div label { color: var(--ink-secondary); font-size: 12px; }
     """
 
 
@@ -171,6 +207,13 @@ def _controls_row(config: DashboardConfig, artifact_options: list[str]) -> html.
             id='esd-normalization', options=[{'label': 'per proposal', 'value': 'proposal'}, {'label': 'per accepted', 'value': 'accepted'}],
             value='proposal', inline=True, style={'fontSize': '12px'})),
         _control('max lag (rows)', dcc.Input(id='max-lag', type='number', value=256, min=8, step=8, debounce=True)),
+        # silencing a light removes it from the Status tab and the header
+        # badge; persistence keeps the selection across polls and reloads
+        _control('status checks', dcc.Dropdown(
+            id='status-checks',
+            options=[{'label': spec.title, 'value': check_id} for check_id, spec in CHECKS.items()],
+            value=list(CHECKS), multi=True, persistence=True, persistence_type='session',
+            className='dash-dropdown'), wide=True),
     ], className='controls')
 
 
@@ -196,16 +239,59 @@ def _status_chip(snapshot: RunSnapshot | None, error: str, stale_after_seconds: 
     return html.Span('● live' + flush_age, className='status-chip status-live')
 
 
-def _header_children(snapshot: RunSnapshot | None, error: str, stale_after_seconds: float) -> list[Any]:
-    """Header contents: run name, status chip, config key-values."""
+def _checks_badge(results: list[CheckResult]) -> html.Span:
+    """One-glance summary of the enabled status lights."""
+    if not results:
+        return html.Span('○ checks off', className='status-chip status-na')
+    counts = status_counts(results)
+    worst = worst_status(results)
+    if worst == STATUS_ALERT:
+        detail = f'✖ {counts[STATUS_ALERT]} alert' + (f', {counts[STATUS_WARN]} warn' if counts[STATUS_WARN] else '')
+        return html.Span(detail, className='status-chip status-error')
+    if worst == STATUS_WARN:
+        return html.Span(f'⚠ {counts[STATUS_WARN]} warning{"s" if counts[STATUS_WARN] > 1 else ""}', className='status-chip status-stale')
+    if worst == STATUS_OK:
+        return html.Span('● checks ok', className='status-chip status-live')
+    return html.Span('○ checks n/a', className='status-chip status-na')
+
+
+def _header_children(snapshot: RunSnapshot | None, error: str, stale_after_seconds: float, check_results: list[CheckResult] | None = None) -> list[Any]:
+    """Header contents: run name, status chips, config key-values."""
     title = snapshot.name if snapshot is not None else 'DTMCMC dashboard'
     children: list[Any] = [html.H1(title), _status_chip(snapshot, error, stale_after_seconds)]
     if snapshot is not None:
+        if check_results is not None:
+            children.append(_checks_badge(check_results))
         children.extend(
             html.Span([html.B(f'{label}: '), value], className='header-item')
             for label, value in header_items(snapshot)
         )
     return children
+
+
+def status_tab_children(snapshot: RunSnapshot | None, enabled: list[str]) -> list[html.Div]:
+    """Status-light cards for the Status tab, most severe first."""
+    if snapshot is None:
+        return [html.Div('no artifact loaded yet', className='plot-desc')]
+    results = sorted(evaluate_checks(snapshot, enabled), key=lambda result: _LIGHT_ORDER.get(result.status, 9))
+    n_silenced = len(CHECKS) - len(results)
+    cards: list[html.Div] = []
+    for result in results:
+        icon, word = _LIGHT_BADGES.get(result.status, ('○', result.status))
+        cards.append(html.Div([
+            html.Div([
+                html.Span(icon, className='light-dot'),
+                html.Span(result.title, className='light-title'),
+                html.Span(word, className='light-word'),
+            ], className='light-head'),
+            html.Div(result.message, className='light-message'),
+            html.Div(result.description, className='light-desc'),
+        ], className=f'light-card light-{result.status}'))
+    if n_silenced:
+        cards.append(html.Div(f'{n_silenced} check{"s" if n_silenced > 1 else ""} silenced via the status checks control', className='plot-desc light-silenced'))
+    if not results:
+        cards.append(html.Div('every check is silenced — re-enable some in the status checks control', className='plot-desc light-silenced'))
+    return cards
 
 
 def _tab_children(snapshot: RunSnapshot | None, plot_ids: tuple[str, ...], opts: ViewOptions, theme: Theme) -> list[html.Div]:
@@ -240,8 +326,11 @@ def create_app(config: DashboardConfig) -> Dash:
         html.Div(id='header', className='header'),
         _controls_row(config, artifact_options),
         dcc.Tabs(
-            id='tab-select', value=next(iter(tabs_layout)), className='tab-bar',
-            children=[dcc.Tab(label=tab_name, value=tab_name, className='tab', selected_className='tab--selected') for tab_name in tabs_layout],
+            id='tab-select', value=STATUS_TAB, className='tab-bar',
+            children=[
+                dcc.Tab(label=tab_name, value=tab_name, className='tab', selected_className='tab--selected')
+                for tab_name in (STATUS_TAB, *tabs_layout)
+            ],
         ),
         html.Div(id='tab-content', className='plot-grid'),
         html.Div(f'polling every {config.poll_seconds:g}s — artifacts are read server-side; only plot data reaches the browser', className='poll-note'),
@@ -256,10 +345,11 @@ def create_app(config: DashboardConfig) -> Dash:
         Output('artifact-select', 'options'),
         Input('poll', 'n_intervals'),
         Input('artifact-select', 'value'),
+        Input('status-checks', 'value'),
         State('snapshot-token', 'data'),
         State('artifact-select', 'options'),
     )
-    def poll_artifact(_n_intervals: int, artifact_value: str | None, previous_token: str | None, previous_options: list[str] | None):
+    def poll_artifact(_n_intervals: int, artifact_value: str | None, enabled_checks: list[str] | None, previous_token: str | None, previous_options: list[str] | None):
         """Re-read the artifact only when its flush changed; bump the token."""
         # pick up run artifacts created after server start
         current_options = _served_artifacts(config)
@@ -270,7 +360,8 @@ def create_app(config: DashboardConfig) -> Dash:
         watcher = _watcher(artifact_value, config.load_store)
         snapshot = watcher.poll()
         token = f'{artifact_value}:{snapshot.stat_token if snapshot is not None else "none"}'
-        header = _header_children(snapshot, watcher.last_error, config.stale_after_seconds)
+        check_results = evaluate_checks(snapshot, enabled_checks or []) if snapshot is not None else None
+        header = _header_children(snapshot, watcher.last_error, config.stale_after_seconds, check_results)
         if token == previous_token or snapshot is None:
             return (no_update if token == previous_token else token), header, no_update, no_update, no_update, options_out
         # selector values are store columns; label each with the chain it
@@ -296,18 +387,22 @@ def create_app(config: DashboardConfig) -> Dash:
         Input('dims-select', 'value'),
         Input('esd-normalization', 'value'),
         Input('max-lag', 'value'),
+        Input('status-checks', 'value'),
         State('artifact-select', 'value'),
     )
     def render_tab(
         _token: str | None, tab_name: str, theme_name: str,
         burnin_blocks: int | None, rate_window: str, segment_stride: int | None,
         chain: int | None, chains: list[int] | None, dims: list[int] | None,
-        esd_normalization: str, max_lag: int | None, artifact_value: str | None,
+        esd_normalization: str, max_lag: int | None, enabled_checks: list[str] | None,
+        artifact_value: str | None,
     ):
-        """Rebuild the active tab's figures from the in-memory snapshot."""
+        """Rebuild the active tab's figures (or status lights) from the snapshot."""
         artifact_value = _allowed_artifact(config, artifact_value)
         snapshot = _watcher(artifact_value, config.load_store).snapshot if artifact_value else None
         theme = get_theme(theme_name)
+        if tab_name == STATUS_TAB:
+            return status_tab_children(snapshot, enabled_checks or []), theme.name
         chains_use = [int(value) for value in chains] if chains else [0]
         opts = ViewOptions(
             burnin_blocks=int(burnin_blocks or 0),

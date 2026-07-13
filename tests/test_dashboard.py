@@ -6,6 +6,7 @@ artifacts the writer actually produces, including the dashboard-support
 additions (trackers jump_labels attr, ladder/initial_Ts dataset).
 """
 
+import dataclasses
 import itertools
 import os
 import tomllib
@@ -20,6 +21,7 @@ from setuptools import find_packages
 if TYPE_CHECKING:
     from pathlib import Path
 
+from dashboard.core import checks
 from dashboard.core import diagnostics as diag
 from dashboard.core.reader import ArtifactWatcher, list_artifacts, load_snapshot
 from dashboard.figures.options import ViewOptions
@@ -357,6 +359,84 @@ def test_artifact_selection_allowlist(tmp_path: Path, fixed_artifact: Path) -> N
     assert _allowed_artifact(config, None) is None
 
 
+def _single_check(check_id: str, snapshot) -> checks.CheckResult:
+    """Evaluate one status light by id."""
+    results = checks.evaluate_checks(snapshot, [check_id])
+    assert len(results) == 1
+    return results[0]
+
+
+def test_checks_registry_and_silencing(fixed_artifact: Path) -> None:
+    """Every registered light evaluates; silencing filters by id."""
+    snapshot = load_snapshot(fixed_artifact)
+    results = checks.evaluate_checks(snapshot)
+    assert [result.check_id for result in results] == list(checks.CHECKS)
+    valid = {checks.STATUS_OK, checks.STATUS_WARN, checks.STATUS_ALERT, checks.STATUS_NA}
+    assert all(result.status in valid for result in results)
+    assert all(result.message for result in results)
+    subset = checks.evaluate_checks(snapshot, ['finite_moments'])
+    assert [result.check_id for result in subset] == ['finite_moments']
+    assert checks.evaluate_checks(snapshot, []) == []
+    assert checks.worst_status([]) == checks.STATUS_NA
+    counts = checks.status_counts(results)
+    assert sum(counts.values()) == len(results)
+
+
+def test_checks_flag_synthetic_pathologies(adaptive_artifact: Path) -> None:
+    """Each light trips on a snapshot doctored to show its failure mode."""
+    snapshot = load_snapshot(adaptive_artifact)
+
+    # DE rank collapse: only one nonzero eigenvalue at the latest checkpoint
+    eigvals = snapshot.de_spectrum_eigvals.copy()
+    eigvals[-1, :, 1:] = 0.
+    collapsed = dataclasses.replace(snapshot, de_spectrum_eigvals=eigvals)
+    assert _single_check('de_rank', collapsed).status == checks.STATUS_ALERT
+
+    # numerical trouble: a NaN in a recent block moment
+    means = snapshot.logL_means.copy()
+    means[-1, 0] = np.nan
+    poisoned = dataclasses.replace(snapshot, logL_means=means)
+    assert _single_check('finite_moments', poisoned).status == checks.STATUS_ALERT
+
+    # no round trips despite a long-enough run
+    quiet = dataclasses.replace(snapshot, rt_events=np.zeros((0, 3), dtype=np.int64))
+    assert _single_check('round_trips', quiet).status == checks.STATUS_ALERT
+
+    # the healthy artifact itself does not alert on these lights
+    assert _single_check('de_rank', snapshot).status in (checks.STATUS_OK, checks.STATUS_WARN)
+    assert _single_check('finite_moments', snapshot).status == checks.STATUS_OK
+    assert _single_check('round_trips', snapshot).status in (checks.STATUS_OK, checks.STATUS_WARN)
+
+
+def test_checks_na_paths(fixed_artifact: Path) -> None:
+    """Lights report n/a with a reason when their data is absent."""
+    snapshot = load_snapshot(fixed_artifact)
+    no_checkpoints = dataclasses.replace(
+        snapshot,
+        checkpoint_itrns=np.zeros(0),
+        de_spectrum_eigvals=np.zeros((0, snapshot.n_chain, max(snapshot.n_par, 1))),
+    )
+    assert _single_check('de_rank', no_checkpoints).status == checks.STATUS_NA
+    # fixed-ladder runs have no adaptation state to grade
+    assert _single_check('ladder_freeze', snapshot).status == checks.STATUS_NA
+
+
+def test_status_tab_children(fixed_artifact: Path) -> None:
+    """The Status tab renders one card per enabled light plus silencing notes."""
+    pytest.importorskip('dash')
+    # imported lazily so the reader/diagnostics tests run without dash installed
+    from dashboard.app.dash_app import status_tab_children  # noqa: PLC0415
+
+    snapshot = load_snapshot(fixed_artifact)
+    all_cards = status_tab_children(snapshot, list(checks.CHECKS))
+    assert len(all_cards) == len(checks.CHECKS)
+    one_enabled = status_tab_children(snapshot, ['finite_moments'])
+    assert len(one_enabled) == 2  # the card plus the silenced-count note
+    none_enabled = status_tab_children(snapshot, [])
+    assert len(none_enabled) == 2  # silenced-count note plus the re-enable hint
+    assert status_tab_children(None, list(checks.CHECKS))
+
+
 def test_registry_layouts_reference_known_plots() -> None:
     """Every layout entry points at a registered plot."""
     for layout in LAYOUTS.values():
@@ -386,4 +466,4 @@ def test_dash_app_builds(fixed_artifact: Path) -> None:
     app = create_app(DashboardConfig(artifact=fixed_artifact))
     assert isinstance(app, dash.Dash)
     layout_ids = {component.id for component in app.layout._traverse() if getattr(component, 'id', None)}  # noqa: SLF001
-    assert {'poll', 'snapshot-token', 'header', 'tab-select', 'tab-content', 'artifact-select', 'theme-select'} <= layout_ids
+    assert {'poll', 'snapshot-token', 'header', 'tab-select', 'tab-content', 'artifact-select', 'theme-select', 'status-checks'} <= layout_ids
