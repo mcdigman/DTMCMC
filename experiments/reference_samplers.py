@@ -30,19 +30,18 @@ import numpy as np
 from scipy.special import gamma as gamma_func
 
 from DTMCMC.likelihoods import eggbox as eggbox_module
+from DTMCMC.likelihoods.cake_likelihood import CAKE_DEFAULT_AMPS, CAKE_DEFAULT_EXPONENTS, CAKE_DEFAULT_WIDTHS
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-# cake tier constants matching DTMCMC/likelihoods/cake_likelihood.py, where
-# they are currently function-local and cannot be imported; a test
-# reconstructs the engine logL from these values so any drift fails CI.
-# TODO(Phase 3): the tunable-cake work promotes the tier params to
-# constructor args with identical defaults — import them from
-# cake_likelihood then and delete these copies (single-sourcing).
-CAKE_AMPS: tuple[float, float] = (0.5, 0.5)
-CAKE_WIDTHS: tuple[float, float] = (4., 0.1)
-CAKE_EXPONENTS: tuple[float, float] = (8., 2.)
+# single-sourced from the engine (Phase 3 promoted the tier params to
+# CakeLikelihood constructor args); the cross-check test still
+# reconstructs the engine logL from these values to guard the density
+# formula itself
+CAKE_AMPS: tuple[float, ...] = tuple(float(amp) for amp in CAKE_DEFAULT_AMPS)
+CAKE_WIDTHS: tuple[float, ...] = tuple(float(width) for width in CAKE_DEFAULT_WIDTHS)
+CAKE_EXPONENTS: tuple[float, ...] = tuple(float(exponent) for exponent in CAKE_DEFAULT_EXPONENTS)
 
 
 def draw_truncated_gaussian(n_draws: int, n_par: int, cutoff: float, rng: np.random.Generator, T: float = 1.) -> NDArray[np.floating]:
@@ -59,7 +58,7 @@ def draw_truncated_gaussian(n_draws: int, n_par: int, cutoff: float, rng: np.ran
     return out
 
 
-def cake_moment_r2(n_par: int) -> float:
+def cake_moment_r2(n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> float:
     """Analytic E[r^2] of the (untruncated) cake density.
 
     Per tier, r^e/(2 w^e) ~ Gamma(n/e) gives
@@ -67,23 +66,42 @@ def cake_moment_r2(n_par: int) -> float:
     amps. Box truncation at the default cutoff is negligible (the tier-1
     tail beyond r=10 carries weight ~exp(-760)).
     """
+    amps_arr = np.asarray(amps, dtype=np.float64)
+    assert float(amps_arr.sum()) > 0.
+    # the engine accepts arbitrary amps; the posterior tier weights are
+    # always amp_i / sum(amps), so normalize rather than assume sum = 1
+    weights = amps_arr / amps_arr.sum()
     total = 0.
-    for amp, width, exponent in zip(CAKE_AMPS, CAKE_WIDTHS, CAKE_EXPONENTS, strict=True):
-        total += amp * width**2 * 2.**(2. / exponent) * gamma_func((n_par + 2.) / exponent) / gamma_func(n_par / exponent)
-    return total
+    for weight, width, exponent in zip(weights, widths, exponents, strict=True):
+        total += weight * width**2 * 2.**(2. / exponent) * gamma_func((n_par + 2.) / exponent) / gamma_func(n_par / exponent)
+    return float(total)
 
 
-def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float = 10.) -> NDArray[np.floating]:
-    """Exact draws from the cake posterior at T=1 in the [-cutoff, cutoff]^n box."""
+def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float = 10., amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> NDArray[np.floating]:
+    """Exact draws from the cake posterior at T=1 in the [-cutoff, cutoff]^n box.
+
+    Tier parameters default to the engine's cake; custom values sample
+    the tunable cake family exactly. The engine accepts arbitrary amps
+    (each tier integrates to exactly its amp, so the posterior tier
+    weights are amp_i / sum(amps)); normalizing here keeps every
+    engine-valid cake exactly sampleable.
+    """
+    amps_arr = np.asarray(amps, dtype=np.float64)
+    widths_arr = np.asarray(widths, dtype=np.float64)
+    exponents_arr = np.asarray(exponents, dtype=np.float64)
+    assert float(amps_arr.sum()) > 0.
+    tier_cdf = np.cumsum(amps_arr / amps_arr.sum())
+
     out = np.zeros((n_draws, n_par))
     n_got = 0
     while n_got < n_draws:
         n_want = max(n_draws - n_got, 64)
-        tier = (rng.random(n_want) >= CAKE_AMPS[0]).astype(np.int64)
-        widths = np.asarray(CAKE_WIDTHS)[tier]
-        exponents = np.asarray(CAKE_EXPONENTS)[tier]
-        s = rng.gamma(n_par / exponents)
-        r = (2. * s)**(1. / exponents) * widths
+        tier = np.searchsorted(tier_cdf, rng.random(n_want), side='right')
+        tier = np.minimum(tier, amps_arr.size - 1)
+        widths_pick = widths_arr[tier]
+        exponents_pick = exponents_arr[tier]
+        s = rng.gamma(n_par / exponents_pick)
+        r = (2. * s)**(1. / exponents_pick) * widths_pick
         directions = rng.standard_normal((n_want, n_par))
         directions /= np.linalg.norm(directions, axis=1)[:, np.newaxis]
         batch = directions * r[:, np.newaxis]

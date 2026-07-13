@@ -40,7 +40,7 @@ EXCHANGE_STRATEGY_CODES: dict[str, int] = {
 
 LIKELIHOOD_NAMES: frozenset[str] = frozenset({'gaussian', 'cake', 'eggbox', 'hawaii'})
 
-LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'explicit'})
+LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_file', 'acceptance_file', 'explicit'})
 
 # the ConfigParser sections the proposal mixture maps onto
 PROPOSAL_SECTIONS: frozenset[str] = frozenset({

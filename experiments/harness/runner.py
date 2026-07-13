@@ -31,9 +31,12 @@ from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
+    AcceptanceTemperatureLadder,
     GeometricTemperatureLadder,
+    LengthTemperatureLadder,
     TemperatureLadder,
     entropy_ladder_fromfile,
+    filter_ladder_inputs,
 )
 from experiments.metrics import de_buffer_difference_spectrum
 
@@ -181,6 +184,49 @@ def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
+def _load_ladder_inputs(spec: RunSpec, *stat_file_keys: str) -> tuple[np.ndarray, ...]:
+    """Load Ts plus stat arrays named by the spec, with the from-file filter.
+
+    The Ts array is always loaded from 'Ts_file' explicitly (no
+    positional first-key contract) and the shared engine helper
+    filter_ladder_inputs applies the Ts >= 1 from-file convention, so
+    every file-driven ladder arm filters identically.
+    """
+    Ts_in = np.load(resolve(str(spec.ladder['Ts_file'])))
+    stats = [np.load(resolve(str(spec.ladder[key]))) for key in stat_file_keys]
+    return filter_ladder_inputs(Ts_in, *stats)
+
+
+def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a thermodynamic-length ladder from reference data files."""
+    ladder = spec.ladder
+    Ts_in, vars_in = _load_ladder_inputs(spec, 'vars_file')
+    return LengthTemperatureLadder(
+        spec.n_chain,
+        Ts_in,
+        vars_in,
+        n_cold=spec.n_cold,
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+        correct_last=bool(ladder.get('correct_last', False)),
+    )
+
+
+def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
+    """Construct a predicted-acceptance ladder from reference data files."""
+    ladder = spec.ladder
+    Ts_in, means_in, vars_in = _load_ladder_inputs(spec, 'means_file', 'vars_file')
+    return AcceptanceTemperatureLadder(
+        spec.n_chain,
+        Ts_in,
+        means_in,
+        vars_in,
+        n_cold=spec.n_cold,
+        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
+    )
+
+
 def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
     """Construct a ladder directly from the spec's Ts list.
 
@@ -198,6 +244,8 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
 LADDER_BUILDERS: dict[str, Callable[[RunSpec], TemperatureLadder]] = {
     'geometric': _build_geometric_ladder,
     'entropy_file': _build_entropy_file_ladder,
+    'length_file': _build_length_file_ladder,
+    'acceptance_file': _build_acceptance_file_ladder,
     'explicit': _build_explicit_ladder,
 }
 
