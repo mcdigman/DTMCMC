@@ -547,7 +547,7 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
     """
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
-    monkeypatch.setattr(TrackerManager, 'get_n_cycles', lambda self: np.zeros(self.n_chain, dtype=np.int64))
+    monkeypatch.setattr(TrackerManager, 'n_cycles', lambda self: np.zeros(self.n_chain, dtype=np.int64))
 
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
     like_obj = CountingLikelihood(build_likelihood(spec))
@@ -568,14 +568,14 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
 def test_freeze_requires_trips_in_every_streak_window(monkeypatch) -> None:
     """A stale round-trip count must not satisfy every freeze window.
 
-    get_n_cycles is patched to a nonzero CONSTANT: the open-segment
+    n_cycles is patched to a nonzero CONSTANT: the open-segment
     witness (the plan's floor) is green throughout, but no NEW trips
     ever arrive between evaluations. The per-window witness therefore
     never assembles a freeze streak.
     """
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
-    monkeypatch.setattr(TrackerManager, 'get_n_cycles', lambda self: np.ones(self.n_chain, dtype=np.int64))
+    monkeypatch.setattr(TrackerManager, 'n_cycles', lambda self: np.ones(self.n_chain, dtype=np.int64))
 
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
     like_obj = CountingLikelihood(build_likelihood(spec))
@@ -704,7 +704,8 @@ class _StubTracker:
     def __init__(self, n_chain: int) -> None:
         self.n_chain = n_chain
 
-    def get_n_cycles(self) -> np.ndarray:
+    @property
+    def n_cycles(self) -> np.ndarray:
         return np.ones(self.n_chain, dtype=np.int64)
 
 

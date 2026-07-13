@@ -67,6 +67,11 @@ exclude = [
 module = ["numba", "numba.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# Needed to follow plotly imports
+module = ["_plotly_utils", "_plotly_utils.*"]
+follow_untyped_imports = true
+
 [tool.pytest.ini_options]
 # Only tests/ holds real unit tests. Without this, pytest's default collection
 # would also pick up scripts under explorations/ whose names match test_*.py /

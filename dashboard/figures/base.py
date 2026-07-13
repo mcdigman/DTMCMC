@@ -52,10 +52,10 @@ def ordinal_colors(theme: Theme, n_steps: int) -> list[str]:
     return [str(pcolors.sample_colorscale(ramp, float(pos), colortype='rgb')[0]) for pos in positions]
 
 
-def sequential_colorscale(theme: Theme) -> list[list[object]]:
+def sequential_colorscale(theme: Theme) -> list[tuple[float, str]]:
     """The theme's sequential ramp as a plotly colorscale (low recedes)."""
     ramp = list(theme.sequential_ramp)
-    return [[idx / (len(ramp) - 1), color] for idx, color in enumerate(ramp)]
+    return [(idx / (len(ramp) - 1), color) for idx, color in enumerate(ramp)]
 
 
 def curve_traces(curves: list[Curve], theme: Theme, *, hover_suffix: str = '') -> list[go.Scatter]:

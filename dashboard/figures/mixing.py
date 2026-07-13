@@ -51,7 +51,7 @@ def fig_flow_history(snapshot: RunSnapshot, opts: ViewOptions, theme: Theme) -> 
     if flow.f_per_block.shape[0] == 0:
         return annotate_empty(fig, theme, 'no completed blocks yet')
     fig.add_trace(go.Heatmap(
-        x=flow.blocks, y=np.arange(snapshot.n_chain), z=flow.f_per_block.T,
+        x=flow.blocks, y=np.arange(snapshot.n_chain).tolist(), z=flow.f_per_block.T,
         zmin=0., zmax=1., colorscale=sequential_colorscale(theme),
         colorbar={'title': {'text': 'f', 'font': {'color': theme.ink_secondary}}, 'tickfont': {'color': theme.ink_muted}},
         hovertemplate='block %{x}<br>slot %{y}<br>f=%{z:.3f}<extra></extra>',

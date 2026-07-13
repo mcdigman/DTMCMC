@@ -105,7 +105,7 @@ def fig_exchange_history(snapshot: RunSnapshot, opts: ViewOptions, theme: Theme)
     # updates), so index the x axis by window and carry the iteration in hover
     itrn_columns = np.broadcast_to(history.itrns[:, np.newaxis], history.nn_rates.shape).T
     fig.add_trace(go.Heatmap(
-        x=np.arange(history.itrns.size), y=np.arange(snapshot.n_chain), z=history.nn_rates.T,
+        x=np.arange(history.itrns.size).tolist(), y=np.arange(snapshot.n_chain).tolist(), z=history.nn_rates.T,
         zmin=0., zmax=1., colorscale=sequential_colorscale(theme),
         customdata=itrn_columns,
         colorbar={'title': {'text': 'nn rate', 'font': {'color': theme.ink_secondary}}, 'tickfont': {'color': theme.ink_muted}},
