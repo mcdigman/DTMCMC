@@ -2,6 +2,8 @@
 **/__pycache__/
 profiles/
 .idea/
+.claude/
+.skylos/
 **/.swp
 *.swp
 DTMCMC.egg-info/
