@@ -17,6 +17,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from warnings import warn
 
 import numpy as np
 
@@ -54,6 +55,7 @@ from DTMCMC.temperature_ladder_helpers import (
     entropy_ladder_fromfile,
     filter_ladder_inputs,
 )
+from experiments import adaptive
 from experiments.adaptive import AdaptiveLadderController
 from experiments.metrics import de_buffer_difference_spectrum
 
@@ -63,6 +65,12 @@ from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
 
 # random buffer-difference pairs per temperature in the checkpoint DE spectrum
 DE_SPECTRUM_PAIRS = 256
+
+# DE buffer-memory floors (in adaptation windows / blocks) below which the
+# harness warns: shorter spans cannot bridge ladder rebuilds (adaptive) or
+# a block's own decorrelation scale (fixed ladders)
+DE_MEMORY_MIN_WINDOWS = 2
+DE_MEMORY_MIN_BLOCKS_FIXED = 4
 
 
 class LikelihoodLike(Protocol):
@@ -353,6 +361,34 @@ class HarnessSampler(DTMCMCSampler):
             arg_record=spec.arg_record,
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+        # DE buffer-memory hygiene: the ring buffer's memory span is sized
+        # to the ADAPTATION timescale, not the run. Too short and the
+        # buffer cannot bridge ladder rebuilds; spanning the whole run and
+        # the proposal support never forgets burn-in — post-freeze samples
+        # stay conditioned on prior-fill and adaptation-era states, which
+        # is not a production configuration.
+        if self.de_manager is not None:
+            memory_span = self.de_manager.de_size * self.de_manager.de_thin
+            if spec.adaptive is not None:
+                window = int(_scalar(spec.adaptive.get('update_every_blocks', 8))) * spec.block_size
+                if memory_span < DE_MEMORY_MIN_WINDOWS * window:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_WINDOWS} adaptation '
+                        f'windows ({DE_MEMORY_MIN_WINDOWS * window}): too short to bridge ladder rebuilds',
+                        stacklevel=3,
+                    )
+                elif memory_span >= spec.n_steps:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} spans the whole run ({spec.n_steps}): '
+                        'proposal support never forgets burn-in (not a production configuration)',
+                        stacklevel=3,
+                    )
+            elif memory_span < DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size:
+                warn(
+                    f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_BLOCKS_FIXED} blocks '
+                    f'({DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size}): short DE buffers can change proposal behavior',
+                    stacklevel=3,
+                )
 
     def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
@@ -503,20 +539,43 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     `update_every_blocks` (rebuild cadence, default 8), `forgetting`
     (pool down-weighting per evaluation, default 0), `freeze_dlog` /
     `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
-    `T_min_factor` (must be 1 until a follow-up plan amendment),
+    `remap_rule` (DE-buffer remap applied on ladder updates, default
+    'no_remap': columns keep their slot and re-burn-in under the new
+    temperature; 'at_or_hotter'/'nearest' clone columns and are retained
+    for old-behavior tests and pilot A/Bs),
+    `T_min_factor` (cold-edge target in (0, 1] as a multiple of the T=1
+    readout; sub-unit values extend the ladder below the readout),
     `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
     recent segment estimates, the default; 0 = forgetting-weighted
-    mean), `n_prior_draws` (hot-anchor prior sample size, default 256).
+    mean), `n_prior_draws` (hot-anchor prior sample size, default 256),
+    `min_updates_at_target` (dwell evaluations before freeze counting,
+    default 6), plus optional controller-geometry fields:
+    `window_extension_factor`, `ds_link_cap`, `cold_cap_links`,
+    `cap_ratio_min` / `cap_ratio_max`, `var_history_length`,
+    `pool_dlog_tol`, and `discard_blocks_after_update` — defaults are
+    the module constants in experiments.adaptive.
     """
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),
         update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
         forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
         freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
+        remap_rule=str(adaptive_table.get('remap_rule', 'no_remap')),
         T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),
         n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
+        min_updates_at_target=int(_scalar(adaptive_table.get('min_updates_at_target', 6))),
+        window_extension_factor=_scalar(adaptive_table.get('window_extension_factor', adaptive.WINDOW_EXTENSION_FACTOR)),
+        ds_link_cap=_scalar(adaptive_table.get('ds_link_cap', adaptive.DS_LINK_CAP)),
+        cold_cap_links=int(_scalar(adaptive_table.get('cold_cap_links', adaptive.COLD_CAP_LINKS_AUTO))),
+        cap_ratio_bounds=(
+            _scalar(adaptive_table.get('cap_ratio_min', adaptive.CAP_RATIO_BOUNDS[0])),
+            _scalar(adaptive_table.get('cap_ratio_max', adaptive.CAP_RATIO_BOUNDS[1])),
+        ),
+        var_history_length=int(_scalar(adaptive_table.get('var_history_length', adaptive.VAR_HISTORY_LENGTH))),
+        pool_dlog_tol=_scalar(adaptive_table.get('pool_dlog_tol', adaptive.POOL_DLOG_TOL)),
+        discard_blocks_after_update=int(_scalar(adaptive_table.get('discard_blocks_after_update', adaptive.DISCARD_BLOCKS_AFTER_UPDATE))),
     )
 
 

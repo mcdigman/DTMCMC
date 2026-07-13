@@ -91,10 +91,20 @@ ADAPTIVE_KEYS: frozenset[str] = frozenset({
     'forgetting',
     'freeze_dlog',
     'freeze_consecutive',
+    'remap_rule',
     'T_min_factor',
     'budget_blocks',
     'var_estimator',
     'n_prior_draws',
+    'min_updates_at_target',
+    'window_extension_factor',
+    'ds_link_cap',
+    'cold_cap_links',
+    'cap_ratio_min',
+    'cap_ratio_max',
+    'var_history_length',
+    'pool_dlog_tol',
+    'discard_blocks_after_update',
 })
 
 _BARE_KEY_RE = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -393,9 +403,9 @@ class RunSpec:
                 msg = '[adaptive] requires budget_blocks (hard adaptation cap in blocks, plan Phase 5)'
                 raise SpecError(msg)
             t_min_factor = self.adaptive.get('T_min_factor', 1)
-            if isinstance(t_min_factor, bool) or not isinstance(t_min_factor, int | float) or float(t_min_factor) != 1.:
-                msg = ('adaptive.T_min_factor must be 1: sub-unit auxiliary rungs are rejected until a '
-                       'follow-up plan amendment fixes storage and cold-extreme semantics (plan Phase 5)')
+            if isinstance(t_min_factor, bool) or not isinstance(t_min_factor, int | float) or not 0. < float(t_min_factor) <= 1.:
+                msg = ('adaptive.T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the '
+                       'T=1 readout temperature (sub-unit rungs are supported now that storage is index-based)')
                 raise SpecError(msg)
             for key, value in self.adaptive.items():
                 _check_toml_value(value, f'adaptive.{key}')

@@ -1,4 +1,4 @@
-"""Tests for readout-chain recording via record indices (issue #19).
+"""Tests for readout-chain recording via record indices.
 
 The static n_record prefix convention could not express T_min < T_cold
 ladders, where the readout (T = T_cold) chains are interior rungs of the

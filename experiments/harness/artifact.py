@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from .spec import RunSpec
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # root attrs written at flush time rather than carried by RunProvenance
 _FLUSH_ATTRS: tuple[str, ...] = (
@@ -48,6 +48,7 @@ _FLUSH_ATTRS: tuple[str, ...] = (
     'n_iterations',
     'n_chain_steps',
     'n_likelihood_evals',
+    'block_size',
 )
 
 REQUIRED_DATASETS: tuple[str, ...] = (
@@ -217,6 +218,9 @@ def write_artifact(
         hf.attrs['n_iterations'] = sampler.itrn
         hf.attrs['n_chain_steps'] = sampler.itrn * n_chain
         hf.attrs['n_likelihood_evals'] = n_likelihood_evals
+        # readers convert freeze blocks to iterations without reparsing the
+        # embedded spec (schema v4)
+        hf.attrs['block_size'] = sampler.block_size
 
         ladder_grp = hf.create_group('ladder')
         ladder_grp.attrs['n_cold'] = sampler.n_cold
@@ -232,6 +236,13 @@ def write_artifact(
             history_grp = ladder_grp.create_group('history')
             history_grp.attrs['frozen'] = adaptive_state.frozen
             history_grp.attrs['frozen_by'] = adaptive_state.frozen_by
+            # the burn-in boundary, stored so every reader shares one
+            # convention instead of re-deriving it from the history rows:
+            # criterion freezes stamp their history row, budget freezes map
+            # to budget_blocks, -1 while still adapting (schema v4)
+            frozen_block = adaptive_state.frozen_block_index
+            history_grp.attrs['frozen_block'] = -1 if frozen_block is None else frozen_block
+            history_grp.attrs['budget_blocks'] = adaptive_state.budget_blocks
             history_grp.create_dataset('Ts', data=np.asarray([record.Ts for record in ladder_history]))
             history_grp.create_dataset('block_index', data=np.asarray([record.block_index for record in ladder_history], dtype=np.int64))
             history_grp.create_dataset('applied', data=np.asarray([record.applied for record in ladder_history], dtype=np.bool_))
