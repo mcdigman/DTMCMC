@@ -2,21 +2,16 @@
 
 One entry per harness likelihood name, so tests and analyses can ask a
 single interface for "the ground truth about this target" instead of
-special-casing likelihoods inline (issue #19: the acceptance battery
-must be a function of supplied reference data, not per-likelihood
-literals). An entry carries whatever ground truth the target actually
-has — exact reference draws, analytic per-coordinate moments, mode
-centers/weights — and omits what it does not (hawaii, the map-based
-production-like case, has none), so gates degrade explicitly rather
-than silently.
+special-casing likelihoods inline. An entry carries whatever ground
+truth the target actually has — exact reference draws, analytic
+per-coordinate moments, mode centers/weights — and omits what it does
+not (for example, hawaii has none).
 
 Reference-draw RNG conventions differ by construction and are flagged
-per entry: the experiments-side samplers (cake, eggbox, gaussian,
-banana, hyperpyramid) take an explicit numpy Generator and never touch
-the run streams (plan D5); the PR #18 in-module gen_draws samplers run
-under numba's global stream (uses_numba_stream=True), so they are
-reproducible only relative to a seed_run point and must not be called
-mid-run by anything that shares the stream with the sampler.
+per entry: the experiments-side samplers take an explicit numpy
+Generator and never touch the run streams; the in-module gen_draws
+samplers run under numba's global stream (uses_numba_stream=True), so
+they are reproducible only relative to a seed_run point.
 """
 
 from dataclasses import dataclass
@@ -74,7 +69,7 @@ class BenchmarkTarget:
         must supply its own ground truth)
     draw_reference: DrawReference | None
         Exact posterior sampler, or None when the target has no ground
-        truth (the production-like case)
+        truth
     uses_numba_stream: bool
         True for the in-module gen_draws samplers that consume numba's
         global stream rather than the passed Generator
@@ -196,7 +191,7 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         likelihood_name='hawaii',
         default_params={},
         draw_reference=None,
-        notes='map-based 2D target with no reference sampler: the production-like case',
+        notes='map-based 2D target with no reference sampler',
     ),
     'ar1': BenchmarkTarget(
         likelihood_name='ar1',

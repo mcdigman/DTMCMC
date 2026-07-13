@@ -1,12 +1,11 @@
-"""Benchmark registry and likelihood wiring tests (issue #19).
+"""Benchmark registry and likelihood wiring tests.
 
 Every harness likelihood must run end to end through the experiments
 architecture, and every benchmark entry's ground truth must be
 self-consistent: reference draws reproduce the analytic per-coordinate
 moments, respect the likelihood's own prior bounds, and split mass
 across modes at the registered weights. The symmetric NN divergence and
-the segmented round-trip loader are covered here too, as the metric
-surfaces those gates consume.
+the segmented round-trip loader are covered here too.
 """
 
 from typing import Any
@@ -141,12 +140,7 @@ def test_mode_weights_match_reference_draws() -> None:
 @pytest.mark.parametrize('name', sorted(LIKELIHOOD_NAMES))
 @pytest.mark.usefixtures('fresh_seed_guard')
 def test_every_likelihood_runs_end_to_end(name, tmp_path) -> None:
-    """Each likelihood runs through run_from_spec and yields a valid artifact.
-
-    This is the wiring gate: a likelihood that needs special-casing
-    anywhere in the harness fails here, which is exactly the
-    over-specialization signal issue #19 asks the suite to expose.
-    """
+    """Each likelihood runs through run_from_spec and yields a valid artifact."""
     spec = RunSpec.from_dict(_smoke_spec_data(name))
     artifact_path = run_from_spec(spec, tmp_path)
     assert validate(artifact_path, mode='complete') == []
@@ -155,11 +149,9 @@ def test_every_likelihood_runs_end_to_end(name, tmp_path) -> None:
 def test_symmetric_nn_divergence_catches_both_failure_signs() -> None:
     """Overconcentration and support-missing both drive the symmetric NN up.
 
-    Documents the issue #19 sign trap: the signed nn_kl goes NEGATIVE
-    for an overconcentrated (collapsed) test sample, so a one-sided
-    "below threshold" gate passes the collapse; the symmetric form is
-    large and positive for both failure directions and small for a
-    matched pair.
+    The signed nn_kl goes negative for an overconcentrated test sample
+    and positive for a support-missing sample; the symmetric form is
+    positive for both and small for a matched pair.
     """
     rng = get_rng(31415)
     reference = rng.standard_normal((3000, 3))
@@ -190,11 +182,8 @@ def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarra
 def test_load_run_metrics_respects_segment_boundaries(tmp_path) -> None:
     """The pilot loader must not pair round-trip arrivals across a ladder update.
 
-    Regression for the issue #19 finding: load_run_metrics read
-    events/rt_events without events/rt_segment_itrns, so an adaptive
-    artifact's post-burn arrivals straddling an update were paired into
-    phantom round trips. Walker 0's cold/hot arrivals straddle the
-    boundary (must not pair); walker 1's sit inside one segment (must).
+    Walker 0's cold/hot arrivals straddle the boundary (must not pair);
+    walker 1's sit inside one segment (must pair).
     """
     events = np.array([
         [0, 600, RT_ARRIVED_COLD],

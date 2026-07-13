@@ -20,8 +20,7 @@ if TYPE_CHECKING:
 
 PILOT_ROOT = repo_root() / 'artifacts' / 'pilots'
 
-# pilot-standard proposal overrides: production-plausible DE buffer that
-# still initializes quickly, quiet Fisher updates
+# pilot-standard proposal overrides: moderate DE buffer and quiet Fisher updates
 PILOT_PROPOSALS: dict[str, dict[str, object]] = {
     'FisherJumpManager': {'verbose_fisher': False},
     'DEJumpManager': {'de_size': 10000},
@@ -49,7 +48,7 @@ def make_spec(name: str, seed: int, likelihood: dict[str, Any], ladder: dict[str
 
 
 def cake5_likelihood() -> dict[str, Any]:
-    """The production cake 5D likelihood table."""
+    """The shared cake 5D likelihood table."""
     return {'name': 'cake', 'n_par': 5, 'cutoff': 10}
 
 
@@ -116,10 +115,9 @@ def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_bloc
     burn_itrn = int(n_iterations * burn_fraction)
     post_events = events[events[:, 1] > burn_itrn]
 
-    # ladder-segment boundaries must always ride along (issue #19): an
-    # adaptive artifact analyzed unsegmented pairs arrivals across ladder
-    # updates and overcounts round trips; fixed-ladder artifacts store an
-    # empty boundary array, for which segmentation is a no-op
+    # Ladder-segment boundaries must ride along so adaptive artifacts do
+    # not pair arrivals across ladder updates. Fixed-ladder artifacts
+    # store an empty boundary array, for which segmentation is a no-op.
     rt_rate = round_trip_rate(post_events, n_chain, n_iterations - burn_itrn, segment_itrns=segment_itrns)
     n_eff = scramble_block_n_eff_min(post_burn, n_eff_block, n_eff_blocks, get_rng(n_eff_seed))
     total_trips = float(round_trip_counts(post_events, n_chain, segment_itrns=segment_itrns).sum())

@@ -403,25 +403,19 @@ class DTMCMCSampler:
         self.block_advance_iterators()
 
     def apply_ladder_update(self, new_ladder: TemperatureLadder, remap_rule: str = 'at_or_hotter') -> None:
-        """Swap the temperature ladder at a block boundary (plan D6).
+        """Swap the temperature ladder at a block boundary.
 
         RNG-neutral: pure deterministic state remapping, no draws. The
-        hook rebinds the ladder AND the betas/Ts aliases (the __init__
-        aliases make external ladder swaps a stale-alias footgun) plus
-        every jump manager's ladder reference. Chain states remap by
-        temperature rank — for equal-size sorted ladders the identity, a
-        bijection, so no walker state is cloned or discarded and an
-        identical-ladder update is a strict no-op for states, logLs, and
-        DE buffers (D6, amended per PR #16 review). logLs carry over
-        (they are T-independent). DE-buffer columns remap per remap_rule
-        (default at-or-hotter per D6); any rung whose column was
-        resourced then gets its current state written at the buffer's
-        most recently written row, restoring the self-inclusion S4/C4
-        rely on. Fisher scales refresh from the existing diagonals
-        (matrices themselves may stay stale by up to fisher_downsample
-        blocks, per D6), and the trackers are segmented — including a
-        round-trip event-log boundary. Walker identities restart with
-        the new segment, matching the cycle-tracker reset.
+        hook rebinds the ladder, the betas/Ts aliases, and every jump
+        manager's ladder reference. Chain states remap by temperature
+        rank; for equal-size sorted ladders this is the identity, so no
+        walker state is cloned or discarded. logLs carry over because
+        they are T-independent. DE-buffer columns remap per remap_rule;
+        any rung whose column was resourced then gets its current state
+        written at the buffer's most recently written row. Fisher scales
+        refresh from the existing diagonals, and trackers are segmented
+        with a round-trip event-log boundary. Walker identities restart
+        with the new segment, matching the cycle-tracker reset.
         """
         assert new_ladder.n_chain == self.n_chain
         assert new_ladder.n_cold == self.n_cold
@@ -442,8 +436,7 @@ class DTMCMCSampler:
         for manager in self.proposal_manager.managers:
             if isinstance(manager, DEJumpManager):
                 manager.de_buffer[:, :, :] = manager.de_buffer[:, buffer_sources, :]
-                # self-inclusion restoration (D6): conditional, so an
-                # identical-ladder update stays bit-exact
+                # conditional, so an identical-ladder update stays bit-exact
                 row_newest = (manager.itrde_write - 1) % manager.de_size
                 for itrt in resourced:
                     manager.de_buffer[row_newest, itrt, :] = self.samples[0][itrt]

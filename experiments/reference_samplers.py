@@ -147,9 +147,7 @@ def cake_tempered_cumulants(
     logL cumulants — and hence heat capacity C = beta^2 Var and the
     entropy-ladder spacing integrals — follow from a 1D trapezoid over
     a dense radial grid, with no sampling anywhere. This is the
-    likelihood-parametric gold standard the adaptive batteries anchor
-    against (issue #19: thresholds must be computed from supplied
-    reference data, not shipped per-likelihood literals).
+    likelihood-parametric profile used by the adaptive batteries.
 
     The quadrature integrates over the inscribed sphere r <= r_max
     rather than the prior box; the difference is the corner mass, which

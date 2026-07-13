@@ -276,12 +276,10 @@ def test_eggbox_end_to_end(tmp_path) -> None:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
-    """Finite cold/hot Fisher weights run through the full stack (issue #19 note).
+    """Finite cold/hot Fisher weights run through the full stack.
 
-    Every shipped spec runs the Fisher weights at 0, so this smoke keeps
-    the finite-weight code path exercised in the fast suite; the
-    convergence-quality check with finite weights is the slow
-    gaussian_fisher battery arm in test_likelihood_convergence.
+    This smoke keeps the finite-weight code path exercised in the fast
+    suite.
     """
     data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
     data['name'] = 'tiny_fisher_weights'

@@ -1,8 +1,8 @@
 """Shared plumbing for the adaptive convergence batteries (not a test module).
 
-Builds current adaptive spec (whole-run DE buffer, T_min_factor 0.9,
-entropy mode) and loads the post-freeze readout column plus freeze
-metadata from an artifact, so every batterny reads runs the same way.
+Builds the shared adaptive test spec and loads the post-freeze readout
+column plus freeze metadata from an artifact, so every battery reads
+runs the same way.
 """
 
 from typing import Any
@@ -25,7 +25,7 @@ def adaptive_spec_data(
         remap_rule: str = 'no_remap',
         proposals_extra: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Current adaptive battery spec: whole-run DE buffer, sub-readout target."""
+    """Build the shared adaptive battery spec."""
     proposals: dict[str, dict[str, Any]] = {
         'FisherJumpManager': {'verbose_fisher': False},
         'DEJumpManager': {'de_size': block_size * n_blocks},

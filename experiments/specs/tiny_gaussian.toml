@@ -29,6 +29,5 @@ track_full_exchanges = false
 verbose_fisher = false
 
 [proposals.DEJumpManager]
-# the shipped default de_size (600000) exists for production runs; tiny
-# specs shrink it so buffer initialization is not the dominant cost
+# tiny specs shrink this so buffer initialization is not the dominant cost
 de_size = 512

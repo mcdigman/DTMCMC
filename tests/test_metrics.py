@@ -127,8 +127,7 @@ def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run)
     """A run on an acceptance ladder realizes ~equal NN exchange rates.
 
     The ladder family's own test checks equal PREDICTED acceptance; this
-    closes the loop on the realized statistic (issue #19: gates must
-    measure what the sampler actually did). Stage 1 reuses the module
+    closes the loop on the realized statistic. Stage 1 reuses the module
     fixture run to measure per-rung logL means/variances; stage 2 builds
     the acceptance ladder from those measurements, runs it, and requires
     the realized nearest-neighbor exchange rates over the finite spaced
@@ -315,11 +314,11 @@ def test_round_trip_statistics_synthetic() -> None:
 
 
 def test_round_trip_metrics_do_not_pair_across_segments() -> None:
-    """Arrivals in different ladder segments never pair (plan D6, amended per PR #16 review).
+    """Arrivals in different ladder segments never pair.
 
-    The PR #16 review's straddle example: a pre-update HOT arrival and a
-    post-update COLD arrival by the same (restarted) walker id counted
-    as one complete round trip without segmentation.
+    A pre-update HOT arrival and a post-update COLD arrival by the same
+    restarted walker id count as one complete round trip only when
+    segmentation is absent.
     """
     events = np.array([
         [0, 10, RT_ARRIVED_HOT],   # before the ladder update

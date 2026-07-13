@@ -6,10 +6,8 @@ name = 'cake'
 n_par = 5
 cutoff = 10
 
-# whole-run DE buffer (issue #19): a ring buffer spanning less than the
-# run is a self-interacting proposal that measurably biases the cold
-# posterior toward compact modes; the harness warns when
-# de_size * de_thin < run.n_steps
+# This spec gives the DE buffer enough rows for the configured run.
+# Shorter buffers are allowed but emit a harness warning.
 [proposals.DEJumpManager]
 de_size = 163840
 
@@ -48,29 +46,24 @@ forgetting = 0.15
 # coupling witness (a completed round trip in the open ladder segment)
 freeze_dlog = 0.05
 freeze_consecutive = 3
-# cold-edge target in (0, 1] as a multiple of the T=1 readout: sub-unit
-# values extend the ladder below the readout (plan S2; supported now
-# that storage is index-based). The readout chains stay pinned at
-# exactly T=1 and the sub-readout rungs share the common spacing rule —
-# no special casing at T_cold, which is what stabilizes a readout
-# sitting on a phase transition
+# cold-edge target in (0, 1] as a multiple of the T=1 readout; sub-unit
+# values extend the ladder below the readout while storage stays
+# index-based.
 T_min_factor = 0.9
 # rebuild-variance rule: 1 = pessimistic (max over recent segment
-# estimates — under-mixing only under-measures variance, so hidden
-# cold-end structure ratchets into the ladder), 0 = forgetting-weighted
-# mean; integer switch to leave room for future rules
+# estimates), 0 = forgetting-weighted mean; integer switch to leave room
+# for future rules
 var_estimator = 1
 # prior draws anchoring the initial hot end (charged to the run, plan C3)
 n_prior_draws = 256
 
-# formerly hard-coded controller geometry, now spec-owned (issue #19);
-# the values below are the defaults and may be omitted
+# optional controller geometry; the values below are the defaults and may be omitted
 # cold-window extension factor per rebuild
 window_extension_factor = 4.0
 # per-link dS budget throttling window extension (nats)
 ds_link_cap = 2.5
 # coldest links under the coupling cap: -1 scales with the ladder
-# (max(3, n_links / 4)); a fixed count cannot serve every chain count
+# (max(3, n_links / 4))
 cold_cap_links = -1
 # clip on the capped link temperature ratio
 cap_ratio_min = 1.05

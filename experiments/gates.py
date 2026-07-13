@@ -1,18 +1,9 @@
-"""Composable posterior-recovery and ladder-structure gates (issue #19).
+"""Composable posterior-recovery and ladder-structure gates.
 
-The acceptance batteries were previously self-referential: ladder shape,
-round trips, and self-measured moments could certify a run whose cold
-posterior was badly biased. These gates anchor against supplied
-reference data — exact reference draws, analytic moments, mode weights,
-and quadrature entropy profiles — and report every violation as prose
-instead of a bare boolean, so a failing battery says what failed and by
-how much. Nothing here is likelihood-specific: thresholds and reference
-data are the caller's, per the benchmark registry.
-
-Round-trip, exchange, and autocorrelation statistics are deliberately
-absent: they are throughput diagnostics, meaningful only after these
-target-recovery gates pass (they actively reward some failure modes —
-an unthermalized cold chain swaps happily).
+These gates compare run samples and ladder structure against supplied
+reference data: exact reference draws, analytic moments, mode weights,
+and quadrature entropy profiles. Nothing here is likelihood-specific;
+thresholds and reference data are provided by the caller.
 """
 
 from dataclasses import dataclass, field
@@ -95,8 +86,8 @@ def nn_gate(
     """Symmetric NN divergence below a calibrated threshold.
 
     Symmetric by construction (max of both orientations): the signed
-    statistic passes overconcentrated samples with a large NEGATIVE
-    value (issue #19). Samples must already be deduplicated.
+    statistic can be negative for overconcentrated samples. Samples
+    must already be deduplicated.
     """
     report = GateReport()
     value = float(nn_divergence_symmetric(reference, samples, n_use, rng))
@@ -174,9 +165,8 @@ def ladder_entropy_gates(
     The profile (descending beta, cumulative nats) comes from analytic
     quadrature or a trusted measured run; rungs outside its temperature
     span are not judged (extrapolating the profile would invent
-    entropy). Gates: the coldest link may hide at most tip_max_nats
-    (the starved fixed point hides several), and every other in-span
-    link at most link_max_nats.
+    entropy). Gates: the coldest link may carry at most tip_max_nats,
+    and every other in-span link at most link_max_nats.
     """
     report = GateReport()
     span = (finite_Ts >= 1. / betas_profile.max()) & (finite_Ts <= 1. / betas_profile.min())

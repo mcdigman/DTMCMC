@@ -1,24 +1,10 @@
-"""Per-likelihood adaptive convergence batteries (issue #19; slow suite).
+"""Per-likelihood adaptive convergence batteries (slow suite).
 
 Every wired likelihood with ground truth gets an end-to-end adaptive
 run gated in sample space against its benchmark registry entry:
 reference-draw NN divergence, analytic per-coordinate moments, and mode
 occupancy where the target is a mixture — plus the structural gates
-(freeze, T=1 readout pin, sub-readout rungs). Thresholds were
-calibrated against known-good runs at exactly these configurations
-(2x-3x the observed deviations, with reference-vs-reference noise
-floors well below every threshold); the calibration table lives in the
-PR that introduced this file.
-
-Honest-scope notes, per target class:
-- NN thresholds for the low-dimensional targets sit near the estimator
-  floor; for ar1/banana/rosenbrock the NN statistic inflates on
-  autocorrelated high-dimensional chains, so there it is a
-  collapse-only guard and the load-bearing gates are moments plus (for
-  ar1) the analytic adjacent-coordinate correlation.
-- rosenbrock runs at 8d with coarse bands: valley traversal at 20d does
-  not equilibrate second moments at any unit-test budget (the 20d
-  structural test lives in test_adaptive.py's battery module scope).
+(freeze, T=1 readout pin, sub-readout rungs).
 """
 
 from typing import Any
@@ -36,7 +22,7 @@ from tests.battery_common import adaptive_spec_data, assert_readout_structure, l
 
 pytestmark = pytest.mark.slow
 
-# per-target run configuration and calibrated gate thresholds
+# per-target run configuration and gate thresholds
 TARGETS: dict[str, dict[str, Any]] = {
     'gaussian': {
         'params': {'n_par': 4, 'cutoff': 5}, 'n_chain': 8, 'block': 256, 'blocks': 160, 'budget': 120,
@@ -46,8 +32,7 @@ TARGETS: dict[str, dict[str, Any]] = {
         'like_name': 'gaussian',
         'params': {'n_par': 4, 'cutoff': 5}, 'n_chain': 8, 'block': 256, 'blocks': 160, 'budget': 120,
         'nn': 0.8, 'mean_sigmas': 0.3, 'var_band': (0.85, 1.2),
-        # finite Fisher weights (all current specs run them at 0): the mixture
-        # change must not drastically affect convergence
+        # finite Fisher weights (all current specs run them at 0)
         'proposals_extra': {'FisherJumpManager': {'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333}},
     },
     'gaussian_shell': {
@@ -161,19 +146,7 @@ def test_adaptive_convergence_recovers_posterior(name, tmp_path) -> None:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 def test_rosenbrock_20d_structural(tmp_path) -> None:
-    """20d rosenbrock: adaptation completes its descent at production-like depth.
-
-    The 20d target carries ~70 nats from the prior box to the posterior
-    (~1.8 nats/link at 40 chains), so the annealing schedule must chain
-    dozens of throttled extensions without stalling — the capacity
-    regime none of the smaller batteries reach. Valley traversal does
-    NOT equilibrate 20d second moments at any unit-test budget
-    (calibration measured per-coordinate variance ratios spanning
-    [0.03, 3.5] after 448 blocks), so posterior moments are gated only
-    at the 8d configuration above; here the assertions are structural:
-    full descent to a T=1 readout with sub-readout rungs, applied
-    updates throughout, and a recorded freeze.
-    """
+    """20d rosenbrock: structural descent and freeze checks."""
     cfg: dict[str, Any] = {'params': {'n_par': 20}, 'n_chain': 40, 'block': 512, 'blocks': 448, 'budget': 352}
     data = adaptive_spec_data(
         'conv_rosenbrock20', BATTERY_SEED, {'name': 'rosenbrock', **cfg['params']},

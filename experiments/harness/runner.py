@@ -355,13 +355,12 @@ class HarnessSampler(DTMCMCSampler):
             arg_record=np.asarray(spec.arg_record, dtype=np.int64),
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
-        # buffer-memory hygiene (issue #19): a tiny DE ring buffer generates biased/meaningless proposals
-        # Deliberately capped buffers must treat this as a known bias source.
+        # Warn when the DE buffer is shorter than the configured run.
+        # Short buffers are allowed, but tests should choose them explicitly.
         if self.de_manager is not None and self.de_manager.de_size * self.de_manager.de_thin < spec.n_steps:
             warn(
                 f'DE buffer memory de_size*de_thin = {self.de_manager.de_size * self.de_manager.de_thin} '
-                f'< run length {spec.n_steps}: rolling-buffer self-interaction can bias the cold posterior '
-                '(issue #19); size the buffer to span the run unless the deficit is deliberate',
+                f'< run length {spec.n_steps}; short DE buffers can change proposal behavior',
                 stacklevel=3,
             )
 
@@ -522,12 +521,11 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     recent segment estimates, the default; 0 = forgetting-weighted
     mean), `n_prior_draws` (hot-anchor prior sample size, default 256),
     `min_updates_at_target` (dwell evaluations before freeze counting,
-    default 6), plus the formerly hard-coded controller geometry
-    (issue #19): `window_extension_factor`, `ds_link_cap`,
-    `cold_cap_links` (-1 = chain-scaled auto), `cap_ratio_min` /
-    `cap_ratio_max`, `var_history_length`, `pool_dlog_tol`, and
-    `discard_blocks_after_update` — defaults are the module constants
-    in experiments.adaptive.
+    default 6), plus optional controller-geometry fields:
+    `window_extension_factor`, `ds_link_cap`, `cold_cap_links`,
+    `cap_ratio_min` / `cap_ratio_max`, `var_history_length`,
+    `pool_dlog_tol`, and `discard_blocks_after_update` — defaults are
+    the module constants in experiments.adaptive.
     """
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),

@@ -429,9 +429,7 @@ def _plug_cold_and_inf(
     rung nearest T_cold; 1 the coolest rung at or above T_cold, falling
     back to nearest when none sits above. The two coincide whenever the
     spaced rungs all lie at or above T_cold; they differ only for
-    ladders extending below T_cold (T_min < T_cold), where mode 0 can
-    eat the sole sub-T_cold rung exactly in the starved regime those
-    rungs exist to stabilize.
+    ladders extending below T_cold (T_min < T_cold).
     """
     if n_inf_final > 0:
         Ts_got[n_chain_space - n_inf_final:] = np.inf
@@ -887,26 +885,19 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
 def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:
     """Old-ladder source column feeding each new-ladder slot on a ladder update.
 
-    The D6 DE-buffer remap semantics, engine-owned so the
-    apply_ladder_update hook and any pilot A/B share one definition.
-    Chain states do not use these rules: per D6 they remap by
-    temperature rank, which for equal-size sorted ladders is the
-    identity.
+    The apply_ladder_update hook and pilot code share this definition.
+    Chain states do not use these rules: they remap by temperature rank,
+    which for equal-size sorted ladders is the identity.
 
     - 'at_or_hotter': the coolest old temperature at-or-hotter than the
-      new one, falling back to the hottest old rung (the D6 default: DE
-      recovers much faster from overdispersion than underdispersion).
-      The Phase 4 remap A/B covered matched-support transplants only;
-      under cold support extension this rule is many-to-one and stands
-      subject to the Phase 5 mode-retention gate.
-    - 'nearest': nearest old temperature in log T (a pilot A/B arm).
+      new one, falling back to the hottest old rung. Under cold support
+      extension this rule can be many-to-one.
+    - 'nearest': nearest old temperature in log T.
     - 'no_remap': preserve DE-buffer columns by slot. This is bijective
-      for equal-size ladder updates and intentionally leaves each column's
-      history to burn in under its new temperature instead of cloning or
-      dropping buffer information.
+      for equal-size ladder updates.
 
     Exact-temperature ties resolve slot-preservingly, else to the lowest
-    tied slot (D6), so an identical-ladder update — including duplicate
+    tied slot, so an identical-ladder update — including duplicate
     temperatures — maps every slot to itself. Infinite temperatures are
     clipped to 1e300 for the log comparison.
     """
