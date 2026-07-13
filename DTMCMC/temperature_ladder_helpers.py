@@ -64,11 +64,13 @@ class TemperatureLadder:
         ValueError
             If the sort mode is not recognized
             If T_cold is nan
-            If n_cold not in [0, Ts_in.size)
+            If n_cold not in [0, Ts_in.size]
             If Ts_in.size is 0
             If less than n_cold values of T_cold were specified
             If any input Ts are nan
             If Ts is not 1 dimensional
+        TypeError
+            If n_cold is not an integer
         """
         if len(Ts_in.shape) != 1:
             msg = 'Ts_in must be 1D'
@@ -91,8 +93,12 @@ class TemperatureLadder:
             msg = 'Undefined behavior for T_cold of nan'
             raise ValueError(msg)
 
-        if not (0 <= n_cold < Ts_in.size):
-            msg = f'n_cold {n_cold} not in [0, {Ts_in.size})'
+        if not isinstance(n_cold, (int, np.integer)) or isinstance(n_cold, (bool, np.bool_)):
+            msg = 'n_cold must be an integer'
+            raise TypeError(msg)
+
+        if not (0 <= n_cold <= Ts_in.size):
+            msg = f'n_cold {n_cold} not in [0, {Ts_in.size}]'
             raise ValueError(msg)
 
         if sort_mode == 0:
