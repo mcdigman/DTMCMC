@@ -8,7 +8,7 @@ from numba import njit
 
 
 @njit()
-def reflect_into_range(x, x_low, x_high):
+def reflect_into_range(x: float, x_low: float, x_high: float) -> float:
     """Reflect an arbitrary parameter into a nominal range"""
     # ensure always returns something in range (i.e. do an arbitrary number of reflections) similar to reflect_cosines but does not need to track angles
     x_range = x_high - x_low
@@ -28,7 +28,7 @@ def reflect_into_range(x, x_low, x_high):
 
 
 @njit()
-def reflect_cosines(cos_in, angle_in, rotfac=np.pi, modfac=2 * np.pi):
+def reflect_cosines(cos_in: float, angle_in: float, rotfac: float=np.pi, modfac: float=2 * np.pi) -> tuple[float, float]:
     """Helper to reflect cosines of coordinates around poles  to get them between -1 and 1,
     which requires also rotating the signal by rotfac each time, then mod the angle by modfac
     """

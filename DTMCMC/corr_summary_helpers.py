@@ -6,13 +6,17 @@ from typing import TYPE_CHECKING
 import numpy as np
 import scipy.signal
 
-from DTMCMC.chain_analysis_helpers import get_autocorr_sum, get_blockwise_vars, get_blockwise_vars_scramble
+from DTMCMC.chain_analysis_helpers import StoreView, get_autocorr_sum, get_blockwise_vars, get_blockwise_vars_scramble
 
 if TYPE_CHECKING:
+
     from numpy.typing import NDArray
 
+    from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from DTMCMC.tracker_manager import TrackerManager
 
-def restrict_n_burnin(mcc, n_burnin: int) -> int:
+
+def restrict_n_burnin(mcc: DTMCMCSampler | StoreView, n_burnin: int) -> int:
     """Helper to restrict n_burnin to last block"""
     if mcc.store_size * mcc.store_thin < n_burnin:
         # handle burning more than 1 entire storage block
@@ -26,7 +30,7 @@ def restrict_n_burnin(mcc, n_burnin: int) -> int:
     return n_burnin
 
 
-def autocorr_helper(mcc, itrp: int, n_burnin_thin: int) -> tuple[NDArray[np.floating], int, float]:
+def autocorr_helper(mcc: DTMCMCSampler | StoreView, itrp: int, n_burnin_thin: int) -> tuple[NDArray[np.floating], int, float]:
     """Helper to get the autocorrleation functions for a particular parameter"""
     n_use: int = mcc.store_size - n_burnin_thin
     autocorr_sum: NDArray[np.floating] = np.zeros((n_use - 1) * 2 + 1)
@@ -37,7 +41,7 @@ def autocorr_helper(mcc, itrp: int, n_burnin_thin: int) -> tuple[NDArray[np.floa
     return autocorr_lim, autocorr_cut, est_var_auto
 
 
-def get_crosscorr_sum(mcc, n_burnin_thin: int, itrp: int, autocorr_lim: NDArray[np.floating], autocorr_cut: int, obs_var: NDArray[np.floating], n_eff_pred_auto: NDArray[np.floating]) -> tuple[NDArray[np.floating], int, float]:
+def get_crosscorr_sum(mcc: DTMCMCSampler | StoreView, n_burnin_thin: int, itrp: int, autocorr_lim: NDArray[np.floating], autocorr_cut: int, obs_var: NDArray[np.floating], n_eff_pred_auto: NDArray[np.floating]) -> tuple[NDArray[np.floating], int, float]:
     """Estimate the average cross correlations"""
     n_use: int = mcc.store_size - n_burnin_thin
     n_cold: int = mcc.n_cold
@@ -49,9 +53,9 @@ def get_crosscorr_sum(mcc, n_burnin_thin: int, itrp: int, autocorr_lim: NDArray[
     cov_cross_sum: NDArray[np.floating] = np.zeros((n_use - 1) * 2 + 1)
 
     for itrt1 in range(n_cross_eval):
-        params_adj1 = mcc.samples_store[n_burnin_thin:, itrt1, itrp] - np.mean(mcc.samples_store[n_burnin_thin:, itrt1, itrp])
+        params_adj1: NDArray[np.floating] = mcc.samples_store[n_burnin_thin:, itrt1, itrp] - np.mean(mcc.samples_store[n_burnin_thin:, itrt1, itrp])
         for itrt2 in range(itrt1 + 1, n_cross_eval):
-            params_adj2 = mcc.samples_store[n_burnin_thin:, itrt2, itrp] - np.mean(mcc.samples_store[n_burnin_thin:, itrt2, itrp])
+            params_adj2: NDArray[np.floating] = mcc.samples_store[n_burnin_thin:, itrt2, itrp] - np.mean(mcc.samples_store[n_burnin_thin:, itrt2, itrp])
             corr_loc: NDArray[np.floating] = scipy.signal.correlate(params_adj1, params_adj2, mode='full')
             cov_cross_sum += corr_loc
             cov_cross_sum += corr_loc[::-1]  # for the itrt2,itr1 correlation
@@ -156,7 +160,7 @@ def autocorr_summary_print(n_par: int, autocorr_lims: list[NDArray[np.floating]]
     print('best estimate of autocorrelation lengths:', autocorr_len_str)
 
 
-def summarize_logLs(mcc, N_blocks: int) -> tuple[NDArray[np.floating], int, int]:
+def summarize_logLs(mcc: DTMCMCSampler | StoreView, N_blocks: int) -> tuple[NDArray[np.floating], int, int]:
     """Get useful summary statistics about the likelihoods"""
     block_size: int = mcc.block_size // mcc.store_thin
     logL_block_mean: NDArray[np.floating] = np.zeros(N_blocks)
@@ -177,7 +181,7 @@ def summarize_logLs(mcc, N_blocks: int) -> tuple[NDArray[np.floating], int, int]
     return logL_block_mean, arg_logL_burn, arg_logL_deviant
 
 
-def summarize_vars(mcc, n_burnin_thin: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+def summarize_vars(mcc: DTMCMCSampler | StoreView, n_burnin_thin: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Get the means and variances for the samples"""
     n_par = mcc.n_par
     obs_means = np.mean(mcc.samples_store[n_burnin_thin:, :, :], axis=0).mean(axis=0)
@@ -214,13 +218,13 @@ class CorrelationSummary:
         self.arg_logL_burns: list[int] = []
         self.arg_logL_deviant: list[int] = []
 
-    def final_prints(self, mcc, n_burnin: int) -> None:
+    def final_prints(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
         """Printouts to do after all the runs have been done"""
         if self.do_corr_summary:
             self.n_eff_summary_print(mcc, n_burnin)
             self.autocorr_summary_print(mcc)
 
-    def summarize_blocks(self, mcc, n_burnin: int) -> None:
+    def summarize_blocks(self, mcc: DTMCMCSampler | StoreView, tracker_manager: TrackerManager, n_burnin: int) -> None:
         """Summary functions that can be printed after a run has been executed"""
         self.summarize_logLs(mcc)
         self.summarize_vars(mcc, n_burnin)
@@ -230,10 +234,10 @@ class CorrelationSummary:
 
         print('last two Ts', mcc.Ts[-2], mcc.Ts[-1])
         print('logL burns', np.array(self.arg_logL_burns))
-        n_complete_hc_cycles = mcc.tracker_manager.get_n_cycles()
+        n_complete_hc_cycles = tracker_manager.n_cycles
         print(n_complete_hc_cycles.sum())
 
-    def corr_summary(self, mcc, n_burnin: int) -> None:
+    def corr_summary(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
         """The summaries of correlations that need to be computed after every run"""
         n_par: int = mcc.n_par
         n_cold: int = mcc.n_cold
@@ -290,14 +294,14 @@ class CorrelationSummary:
         self.est_vars_auto.append(est_vars_auto)
         self.est_vars.append(est_vars)
 
-    def summarize_vars(self, mcc, n_burnin: int) -> None:
+    def summarize_vars(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
         """Get the means and vars for the whole run"""
         n_burnin_thin: int = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
         obs_mean, obs_var = summarize_vars(mcc, n_burnin_thin)
         self.obs_means.append(obs_mean)
         self.obs_vars.append(obs_var)
 
-    def n_eff_summary_print(self, mcc, n_burnin: int) -> None:
+    def n_eff_summary_print(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
         """Print salient information about the number of effective samples"""
         n_burnin_thin: int = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
         n_par: int = mcc.n_par
@@ -307,11 +311,11 @@ class CorrelationSummary:
         n_eff_summary_print(n_par, n_use, n_cold, n_chain, mcc.store_thin, np.array(self.n_eff_preds),
                                    np.array(self.n_eff_preds_empirical), np.array(self.obs_vars), np.array(self.obs_means))
 
-    def autocorr_summary_print(self, mcc) -> None:
+    def autocorr_summary_print(self, mcc: DTMCMCSampler | StoreView) -> None:
         """Print salient information about autocorrelation functions"""
         autocorr_summary_print(mcc.n_par, self.autocorr_lims, self.do_cross)
 
-    def summarize_logLs(self, mcc) -> None:
+    def summarize_logLs(self, mcc: DTMCMCSampler | StoreView) -> None:
         """Save some summary statistics related to the likelihoods"""
         N_blocks = mcc.store_size // (mcc.block_size // mcc.store_thin)
         logL_block_mean, arg_logL_burn, arg_logL_deviant = summarize_logLs(mcc, N_blocks)
@@ -319,6 +323,6 @@ class CorrelationSummary:
         self.arg_logL_burns.append(arg_logL_burn)
         self.arg_logL_deviant.append(arg_logL_deviant)
 
-    def restrict_n_burnin(self, mcc, n_burnin: int) -> int:
+    def restrict_n_burnin(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> int:
         """Restrict n_burnin based on storage size"""
         return restrict_n_burnin(mcc, n_burnin)

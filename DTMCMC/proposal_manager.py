@@ -11,6 +11,8 @@ import DTMCMC.prior_manager as ph
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
     from numpy.typing import NDArray
 
     from DTMCMC.exchange_manager import ExchangeManager
@@ -21,7 +23,7 @@ if TYPE_CHECKING:
 class ProposalManager(JumpManager):
     """Manage generation of proposals, handles all dispatching of jumps."""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, managers: tuple[JumpManager, ...], exchange_manager: ExchangeManager, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, managers: tuple[JumpManager, ...], exchange_manager: ExchangeManager, config: ConfigParser) -> None:
         """Create the core proposal manager object.
 
         Parameters
@@ -72,7 +74,7 @@ class ProposalManager(JumpManager):
 
         JumpManager.__init__(self, T_ladder, like_obj, self.jumps)
 
-    def get_jump_weights(self):
+    def get_jump_weights(self) -> NDArray[np.floating]:
         """Return the unnormalized jump weights for each jump type the manager knows."""
         return self.jump_weights
 
@@ -104,7 +106,7 @@ class ProposalManager(JumpManager):
         # but the overarching proposal manager must make proposals for all temps
         assert np.all(np.sum(self.jump_probs, axis=1) == 1.)
 
-    def post_step_update(self, samples) -> None:
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual step of all temperatures.
 
         Mainly intended to be used to write to e.g. differential evolution buffer.
@@ -112,7 +114,7 @@ class ProposalManager(JumpManager):
         for itrm in range(self.n_managers):
             self.managers[itrm].post_step_update(samples)
 
-    def post_block_update(self, itrn: int, block_size: int, samples, logLs) -> None:
+    def post_block_update(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual block of size block_size.
 
         E.g. fisher matrix updates.
@@ -120,9 +122,9 @@ class ProposalManager(JumpManager):
         for itrm in range(self.n_managers):
             self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in."""
         for itrm in range(self.n_managers):
             self.managers[itrm].record_config(config_in)
 
-        config_in['ProposalManager']['only_prior_hot'] = self.only_prior_hot
+        config_in['ProposalManager']['only_prior_hot'] = str(self.only_prior_hot)

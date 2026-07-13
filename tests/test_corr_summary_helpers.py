@@ -1,21 +1,8 @@
-from dataclasses import dataclass
-
 import numpy as np
 from numpy.testing import assert_allclose
 
+from DTMCMC.chain_analysis_helpers import StoreView
 from DTMCMC.corr_summary_helpers import CorrelationSummary, autocorr_helper, get_crosscorr_sum
-
-
-@dataclass
-class StoreView:
-    samples_store: np.ndarray
-    store_size: int
-    n_cold: int
-    n_chain: int
-    block_size: int
-    store_thin: int
-    n_par: int
-    itrn: int
 
 
 def make_store_view(samples_store: np.ndarray, block_size: int = 16) -> StoreView:

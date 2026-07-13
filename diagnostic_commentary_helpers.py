@@ -145,7 +145,7 @@ def print_diagnostic_commentary(mcc) -> None:
     # TODO add a commentary comparing the cycle lengths to the DE buffer
 
     print('===========Cycle Analysis=========')
-    n_cycles = mcc.tracker_manager.get_n_cycles()
+    n_cycles = mcc.tracker_manager.n_cycles
     n_cycles_tot = np.sum(n_cycles)
     if n_cycles_tot > 0:
         print('The sampler executed %8d total hot->cold->hot temperature cycles' % (n_cycles_tot))

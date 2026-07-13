@@ -484,7 +484,7 @@ class HarnessSampler(DTMCMCSampler):
                 # burn-in from the adaptive freeze; 0 for fixed-ladder runs
                 n_burnin = self.adaptive_burnin_iterations()
                 corr_sum = CorrelationSummary()
-                corr_sum.summarize_blocks(self, n_burnin)
+                corr_sum.summarize_blocks(self, self.tracker_manager, n_burnin)
                 corr_sum.final_prints(self, n_burnin)
 
 

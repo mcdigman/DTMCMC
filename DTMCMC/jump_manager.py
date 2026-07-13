@@ -11,6 +11,8 @@ from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
@@ -36,7 +38,7 @@ class AbstractJump(ABC):
         return self.print_name
 
     @abstractmethod
-    def __call__(self, sample_point, itrt: int) -> tuple[NDArray[np.floating], float, bool]:
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Perform and MCMC proposal
         inputs:
             sample_point: a numpy array with the current point
@@ -90,7 +92,7 @@ class JumpManager(ABC):
 
         self.set_jump_probs()
 
-    def dispatch_jump(self, sample_point, itrt: int, choose: int = -1):
+    def dispatch_jump(self, sample_point: NDArray[np.floating], itrt: int, choose: int = -1) -> tuple[NDArray[np.floating], float, bool, int]:
         """Dispatch the specified proposal
         inputs:
             sample_point: 1D float array, the parameters of the current point
@@ -127,7 +129,7 @@ class JumpManager(ABC):
         self.jump_weights = jump_weights
 
     @abstractmethod
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Do any necessary steps to record the current configuration of the manager
         to the input ConfigParser object config_in
         """
@@ -165,11 +167,11 @@ class JumpManager(ABC):
         """Get text labels for the different jump types"""
         return self.jump_labels_array.copy()
 
-    def get_jumps(self):
+    def get_jumps(self) -> list[AbstractJump]:
         """Return the list of available jumps"""
         return self.jumps
 
-    def post_step_update(self, samples) -> None:
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer
         inputs:
@@ -177,7 +179,7 @@ class JumpManager(ABC):
         """
         del samples
 
-    def post_block_update(self, itrn: int, block_size: int, samples, logLs) -> None:
+    def post_block_update(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         inputs:

@@ -9,6 +9,8 @@ import numpy as np
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
     from numpy.typing import NDArray
 
     from DTMCMC.likelihood import AbstractLikelihood
@@ -21,17 +23,17 @@ if TYPE_CHECKING:
 class HistoryStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
         self.config = config
         config_h = self.config['LadderHistoryJumpManager']
         self.history_jump_weight = config_h.getfloat('ladder_history_jump_weight', 0.)
 
-    def copy(self):
+    def copy(self) -> HistoryStrategyParameters:
         """Copy the object"""
         return HistoryStrategyParameters(self.config)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
             config_in: ConfigParser object
@@ -45,13 +47,13 @@ class LadderHistoryJumpManager(JumpManager):
     at different temperatures
     """
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config, T_ladder_old: TemperatureLadder, logLs_old, states_old) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser, T_ladder_old: TemperatureLadder, logLs_old: NDArray[np.floating], states_old: NDArray[np.floating]) -> None:
         """A blank"""
         self.T_ladder_old: TemperatureLadder = T_ladder_old
-        self.states_old = states_old
-        self.logLs_old = logLs_old
+        self.states_old: NDArray[np.floating] = states_old
+        self.logLs_old: NDArray[np.floating] = logLs_old
 
-        self.strategy_params = HistoryStrategyParameters(config)
+        self.strategy_params: HistoryStrategyParameters = HistoryStrategyParameters(config)
 
         jumps: list[AbstractJump] = [LadderHistoryJump(self)]
 
@@ -67,7 +69,7 @@ class LadderHistoryJumpManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
@@ -80,7 +82,7 @@ class LadderHistoryJump(AbstractJump):
         self.manager: LadderHistoryJumpManager = manager
         AbstractJump.__init__(self, 'Ladder History')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Draw a future point from the stored set of past points"""
         del itrt
         itrt_target = np.random.randint(0, self.manager.T_ladder_old.n_chain)

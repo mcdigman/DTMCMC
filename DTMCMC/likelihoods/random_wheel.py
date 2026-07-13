@@ -1,6 +1,7 @@
 """the random wheel likelihood"""
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
@@ -25,7 +26,7 @@ const = np.log(1. / np.sqrt(2. * np.pi * w**2))  # normalization constant
 
 
 @njit()
-def gaussian(v, c):
+def gaussian(v: NDArray[np.floating], c: NDArray[np.floating]) -> float:
     """Helper for log likelihood of a gaussian"""
     res = 0.
     for itrp in range(c.shape[0]):
@@ -34,7 +35,7 @@ def gaussian(v, c):
 
 
 @njit()
-def get_loglike(v):
+def get_loglike(v: NDArray[np.floating]) -> float:
     """Get the likelihood for our wheel potential"""
     res = gaussian(v, cs[0])
     for itrm in range(1, cs.shape[0]):
@@ -44,7 +45,7 @@ def get_loglike(v):
 
 class RandomWheelLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=2) -> None:
+    def __init__(self, n_par: int=2) -> None:
         """Create the class and store any object specific variables"""
         if n_par != 2:
             msg = 'RandomWheelLikelihood is 2D; n_par must be 2'
@@ -54,13 +55,13 @@ class RandomWheelLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self,params_in):
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
 
 @njit()
-def gen_draws(n_draws,n_par,attempt_lim=10000):
+def gen_draws(n_draws: int,n_par: int,attempt_lim: int=10000) -> NDArray[np.floating]:
     """Get posterior draws"""
     low_lims = np.full(n_par, low_lim)
     high_lims = np.full(n_par, high_lim)

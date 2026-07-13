@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import scipy.signal
 
+from DTMCMC.chain_analysis_helpers import StoreView
 from DTMCMC.corr_summary_helpers import autocorr_helper
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
 from entropy_process import NNEntropyK
@@ -152,16 +153,6 @@ def scramble_block_n_eff_min(samples: NDArray[np.floating], block_size: int, n_b
     return float(np.min(scramble_block_n_eff(samples, block_size, n_blocks, rng)))
 
 
-@dataclass
-class _StoreView:
-    """Adapter exposing the sampler attrs corr_summary_helpers expects."""
-
-    samples_store: NDArray[np.floating]
-    store_size: int
-    n_cold: int
-    n_chain: int
-    block_size: int
-    store_thin: int
 
 
 @dataclass(frozen=True)
@@ -204,13 +195,14 @@ def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_
     consistent-length cross term. Deterministic: no random draws.
     """
     n_rows, n_cold, n_par = samples_store.shape
-    view = _StoreView(
+    view = StoreView(
         samples_store=samples_store,
         store_size=n_rows,
         n_cold=n_cold,
         n_chain=n_cold,
         block_size=block_size,
         store_thin=store_thin,
+        n_par=n_par,
     )
     n_use = n_rows - n_burnin_thin
     n_tot = n_use * n_cold
@@ -251,7 +243,7 @@ def round_trip_counts(rt_events: NDArray[np.int64], n_chain: int, segment_itrns:
 
     A round trip needs one arrival in each direction; the count per
     walker is min(#cold arrivals, #hot arrivals), matching
-    TrackerManager.get_n_cycles. With segment boundaries (adaptive
+    TrackerManager.n_cycles. With segment boundaries (adaptive
     runs), arrivals are paired within each ladder segment and the
     per-segment trips summed — never across an update (plan D6).
     """

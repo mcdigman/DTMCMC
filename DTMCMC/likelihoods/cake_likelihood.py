@@ -1,11 +1,16 @@
 """an n dimensional normal distribution"""
+from typing import TYPE_CHECKING
+
 import numpy as np
 from scipy.special import gamma
 
 from DTMCMC.likelihood import RectangularLikelihood
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-def get_cake_tier_logL(v, amp, width, exponent):
+
+def get_cake_tier_logL(v: NDArray[np.floating], amp: float, width: float, exponent: int | float) -> float:
     n_par = v.shape[0]
 
     dim_part = gamma(1 + n_par / 2) / (np.pi**(n_par / 2))
@@ -31,7 +36,7 @@ CAKE_DEFAULT_EXPONENTS = (8, 2)
 
 
 # @njit()
-def get_loglike(params_in, amps=CAKE_DEFAULT_AMPS, widths=CAKE_DEFAULT_WIDTHS, exponents=CAKE_DEFAULT_EXPONENTS):
+def get_loglike(params_in: NDArray[np.floating], amps: tuple[float, ...]=CAKE_DEFAULT_AMPS, widths: tuple[float, ...]=CAKE_DEFAULT_WIDTHS, exponents: tuple[int, ...] | tuple[float, ...]=CAKE_DEFAULT_EXPONENTS) -> float:
     """Get a 'cake' likelihood: logaddexp over the mixture tiers"""
     res = get_cake_tier_logL(params_in, amps[0], widths[0], exponents[0])
     for itrm in range(1, len(amps)):
@@ -45,7 +50,7 @@ def get_loglike(params_in, amps=CAKE_DEFAULT_AMPS, widths=CAKE_DEFAULT_WIDTHS, e
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
 class CakeLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=2, cutoff=10, amps=CAKE_DEFAULT_AMPS, widths=CAKE_DEFAULT_WIDTHS, exponents=CAKE_DEFAULT_EXPONENTS) -> None:
+    def __init__(self, n_par: int=2, cutoff: int=10, amps: tuple[float, ...]=CAKE_DEFAULT_AMPS, widths: tuple[float, ...]=CAKE_DEFAULT_WIDTHS, exponents: tuple[int, ...] | tuple[float, ...]=CAKE_DEFAULT_EXPONENTS) -> None:
         """Create the class and store any object specific variables
 
         The tier parameters default to the historical hardcoded cake
@@ -75,7 +80,7 @@ class CakeLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, params_in):
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         r2_got = 0.
         for itrp in range(params_in.shape[0]):

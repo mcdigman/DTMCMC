@@ -9,6 +9,8 @@ import numpy as np
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
     from numpy.typing import NDArray
 
     from DTMCMC.likelihood import AbstractLikelihood
@@ -22,7 +24,7 @@ class BlankJump(AbstractJump):
         self.manager: JumpManager = manager
         AbstractJump.__init__(self, 'Blank Jump')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Call the jump"""
         del itrt
         return sample_point.copy(), 0., True
@@ -31,17 +33,17 @@ class BlankJump(AbstractJump):
 class AuxilliaryStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
+        self.config: ConfigParser = config
         config_a = self.config['AuxilliaryJumpManager']
         self.auxilliary_jump_weight = config_a.getfloat('auxilliary_jump_weight', 0.)
 
-    def copy(self):
+    def copy(self) -> AuxilliaryStrategyParameters:
         """Copy the object"""
         return AuxilliaryStrategyParameters(self.config)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
             config_in: ConfigParser object
@@ -55,7 +57,7 @@ class AuxilliaryJumpManager(JumpManager):
     subclass of DTMCMC.jump_manager.JumpManager
     """
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
         """A blank proposal as a template"""
         self.strategy_params = AuxilliaryStrategyParameters(config)
 
@@ -75,6 +77,6 @@ class AuxilliaryJumpManager(JumpManager):
 
         assert np.all(self.jump_weights >= 0.)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
