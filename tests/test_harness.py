@@ -298,6 +298,25 @@ def test_explicit_ladder_matching_length_builds() -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
+def test_schema_version_mismatch_reported_alone(tmp_path) -> None:
+    """PR #10 review: a schema mismatch yields one clear message, not a dataset flood."""
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    sampler, like_obj = build_sampler(spec)
+
+    artifact_path = tmp_path / 'old_schema.h5'
+    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=False, wall_seconds=0.0)
+
+    with h5py.File(str(artifact_path), 'a') as hf:
+        hf.attrs['schema_version'] = 1
+
+    problems = validate(artifact_path, mode='partial')
+    assert len(problems) == 1
+    assert 'schema version 1' in problems[0]
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
 def test_artifact_ladder_mismatch_detected(tmp_path) -> None:
     """PR #9 review: validate() flags a ladder that contradicts the embedded spec."""
     spec = make_tiny_spec()

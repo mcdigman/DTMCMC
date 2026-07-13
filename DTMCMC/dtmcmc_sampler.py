@@ -55,10 +55,18 @@ def store_sample_helper(
 
 
 @njit()
-def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, itrt: int, new_point, logL_new, density_fac, idx_jump: int) -> None:
+def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, esd_record, itrt: int, new_point, logL_new, density_fac, idx_jump: int) -> None:
     """Helper to decide whether mcmc point is accepted or not and process accordingly"""
     # draw to determine if we will accept
     test: float = np.log(np.random.uniform(0., 1.))
+
+    # squared displacement of the proposal, accumulated per (T, jump type)
+    # for the expected-squared-displacement tracker; pure observer, no draws
+    delta_sq: float = 0.
+    for itrp in range(new_point.size):
+        diff: float = new_point[itrp] - samples[itrb - 1, itrt, itrp]
+        delta_sq += diff * diff
+    esd_record[0, itrt, idx_jump] += delta_sq
 
     # process acceptance or rejection
     if betas[itrt] * (logL_new - logLs[itrb - 1, itrt]) + density_fac > test:
@@ -66,6 +74,7 @@ def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, itrt: 
         samples[itrb, itrt] = new_point
         logLs[itrb, itrt] = logL_new
         accept_record[0, itrt, idx_jump] += 1
+        esd_record[1, itrt, idx_jump] += delta_sq
     else:
         # the draw was rejected, assign the old parameters
         samples[itrb, itrt] = samples[itrb - 1, itrt]
@@ -73,7 +82,7 @@ def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, itrt: 
         accept_record[1, itrt, idx_jump] += 1
 
 
-def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder: TemperatureLadder, accept_record, proposal_manager: ProposalManager, like_obj: AbstractLikelihood) -> None:
+def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder: TemperatureLadder, accept_record, esd_record, proposal_manager: ProposalManager, like_obj: AbstractLikelihood) -> None:
     """Advance a single step step in the ptmcmc chain"""
     n_chain: int = T_ladder.n_chain
     betas: NDArray[np.floating] = T_ladder.betas
@@ -97,7 +106,7 @@ def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder: TemperatureLadder, 
             # Failed, ensure the point will not be accepted
             logL_new = -np.inf
 
-        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, itrt, new_point, logL_new, density_fac, idx_jump)
+        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, esd_record, itrt, new_point, logL_new, density_fac, idx_jump)
 
 
 def advance_block_ptmcmc(
@@ -115,6 +124,7 @@ def advance_block_ptmcmc(
                 logLs,
                 T_ladder,
                 tracker_manager.exchange_tracker,
+                tracker_manager.esd_exchange,
                 chain_track,
             )
         else:
@@ -125,6 +135,7 @@ def advance_block_ptmcmc(
                 logLs,
                 T_ladder,
                 tracker_manager.accept_record,
+                tracker_manager.esd_record,
                 proposal_manager,
                 like_obj,
             )

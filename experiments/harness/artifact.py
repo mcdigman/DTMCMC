@@ -19,6 +19,7 @@ import subprocess
 import time
 import tomllib
 from dataclasses import dataclass, fields
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from importlib.metadata import version as package_version
 from pathlib import Path
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
 
     from .spec import RunSpec
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # root attrs written at flush time rather than carried by RunProvenance
 _FLUSH_ATTRS: tuple[str, ...] = (
@@ -68,7 +69,14 @@ REQUIRED_DATASETS: tuple[str, ...] = (
     'trackers/accept_archive',
     'trackers/cycle_archive',
     'trackers/exchange_archive',
+    'trackers/esd_record',
+    'trackers/esd_archive',
+    'trackers/esd_exchange',
+    'trackers/esd_exchange_archive',
     'trackers/itrn_archive',
+    'events/rt_events',
+    'flow/up_counts',
+    'flow/labeled_counts',
     'store/samples',
     'store/logLs',
 )
@@ -160,6 +168,19 @@ def _stack_archive(arrays: list[np.ndarray], element_shape: tuple[int, ...]) -> 
     return np.asarray(arrays)
 
 
+@dataclass
+class CheckpointLog:
+    """In-process checkpoint metrics accumulated by the runner.
+
+    The DE buffer is transient (never persisted), so its difference
+    spectra can only be measured in-process; everything else in the
+    artifact supports post-hoc analysis (plan D7).
+    """
+
+    itrns: list[int] = dataclass_field(default_factory=list)
+    de_spectrum_eigvals: list[np.ndarray] = dataclass_field(default_factory=list)
+
+
 def write_artifact(
     path: Path,
     spec: RunSpec,
@@ -168,6 +189,7 @@ def write_artifact(
     provenance: RunProvenance,
     finalized: bool,
     wall_seconds: float,
+    checkpoints: CheckpointLog | None = None,
 ) -> None:
     """Write the full run artifact, atomically replacing any previous flush."""
     tracker = sampler.tracker_manager
@@ -216,7 +238,26 @@ def write_artifact(
         trackers_grp.create_dataset('accept_archive', data=_stack_archive(tracker.accept_archive, tracker.accept_record.shape))
         trackers_grp.create_dataset('cycle_archive', data=_stack_archive(tracker.cycle_archive, tracker.cycle_tracker.shape))
         trackers_grp.create_dataset('exchange_archive', data=_stack_archive(tracker.exchange_archive, tracker.exchange_tracker.shape))
+        trackers_grp.create_dataset('esd_record', data=tracker.esd_record)
+        trackers_grp.create_dataset('esd_archive', data=np.asarray(tracker.esd_archive) if tracker.esd_archive else np.zeros((0, *tracker.esd_record.shape)))
+        trackers_grp.create_dataset('esd_exchange', data=tracker.esd_exchange)
+        trackers_grp.create_dataset('esd_exchange_archive', data=np.asarray(tracker.esd_exchange_archive) if tracker.esd_exchange_archive else np.zeros((0, tracker.esd_exchange.shape[0])))
         trackers_grp.create_dataset('itrn_archive', data=np.asarray(tracker.itrn_archive, dtype=np.int64))
+
+        # round-trip event log: rows of (walker id, iteration, direction)
+        # with direction 0 = arrived cold from hot, 1 = arrived hot from cold
+        events_grp = hf.create_group('events')
+        events_grp.create_dataset('rt_events', data=tracker.get_rt_events())
+
+        flow_up, flow_labeled = tracker.get_flow_counts()
+        flow_grp = hf.create_group('flow')
+        flow_grp.create_dataset('up_counts', data=flow_up)
+        flow_grp.create_dataset('labeled_counts', data=flow_labeled)
+
+        if checkpoints is not None and checkpoints.itrns:
+            ckpt_grp = hf.create_group('checkpoints')
+            ckpt_grp.create_dataset('itrn', data=np.asarray(checkpoints.itrns, dtype=np.int64))
+            ckpt_grp.create_dataset('de_spectrum_eigvals', data=np.asarray(checkpoints.de_spectrum_eigvals))
 
         store_grp = hf.create_group('store')
         store_grp.attrs['store_thin'] = sampler.store_thin
@@ -259,6 +300,14 @@ def validate(path: str | Path, mode: str = 'complete') -> list[str]:
 
     problems: list[str] = []
     with h5py.File(str(artifact_path), 'r') as hf:
+        # a schema mismatch explains every downstream difference at once, so
+        # report it alone instead of a pile of missing-dataset messages
+        if 'schema_version' not in hf.attrs:
+            return ["missing root attr 'schema_version'"]
+        found_schema = _attr_int(hf, 'schema_version')
+        if found_schema != SCHEMA_VERSION:
+            return [f'artifact schema version {found_schema} != supported {SCHEMA_VERSION}']
+
         problems.extend(f'missing root attr {attr!r}' for attr in REQUIRED_ATTRS if attr not in hf.attrs)
         problems.extend(f'missing dataset {dataset!r}' for dataset in REQUIRED_DATASETS if dataset not in hf)
 

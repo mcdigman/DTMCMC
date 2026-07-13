@@ -138,6 +138,7 @@ def do_ptmcmc_exchange(
     n_chain,
     betas,
     exchange_tracker,
+    esd_exchange,
     chain_track,
     target_select,
     track_full_exchanges,
@@ -201,6 +202,18 @@ def do_ptmcmc_exchange(
         samples[itrb + 1, itrt] = samples[itrb, itrs_fin[itrt]]
         chain_track[itrb + 1, itrt] = chain_track[itrb, itrs_fin[itrt]]
 
+        # accumulate the squared state displacement accepted swaps produce
+        # at each temperature slot; near phase transitions exchange flow can
+        # dominate state motion where local acceptance craters, so per-slot
+        # displacement accounting needs this term alongside the per-jump-type
+        # esd_record. Pure observer: no draws (D5)
+        if itrs_fin[itrt] != itrt:
+            delta_sq = 0.
+            for itrp in range(samples.shape[2]):
+                diff = samples[itrb, itrs_fin[itrt], itrp] - samples[itrb, itrt, itrp]
+                delta_sq += diff * diff
+            esd_exchange[itrt] += delta_sq
+
 
 class ExchangeManager:
     """class to take a temperature ladder and state of a chain
@@ -213,7 +226,7 @@ class ExchangeManager:
         self.track_full_exchanges = track_full_exchanges
 
     def do_ptmcmc_exchange(
-            self, itrb, samples, logLs, T_ladder, exchange_tracker, chain_track
+            self, itrb, samples, logLs, T_ladder, exchange_tracker, esd_exchange, chain_track
     ):
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)
@@ -224,6 +237,7 @@ class ExchangeManager:
             T_ladder.n_chain,
             T_ladder.betas,
             exchange_tracker,
+            esd_exchange,
             chain_track,
             self.strategy,
             self.track_full_exchanges,

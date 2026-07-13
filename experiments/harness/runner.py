@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.likelihood import AbstractLikelihood
@@ -28,16 +29,20 @@ from DTMCMC.likelihoods.eggbox import Likelihood as EggboxLikelihood
 from DTMCMC.likelihoods.hawaii_likelihood import HawaiiLikelihood
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
-from DTMCMC.rng_helpers import seed_run
+from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
     GeometricTemperatureLadder,
     TemperatureLadder,
     entropy_ladder_fromfile,
 )
+from experiments.metrics import de_buffer_difference_spectrum
 
-from .artifact import RunProvenance, collect_provenance, write_artifact
+from .artifact import CheckpointLog, RunProvenance, collect_provenance, write_artifact
 from .paths import chdir_repo_root, resolve
 from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
+
+# random buffer-difference pairs per temperature in the checkpoint DE spectrum
+DE_SPECTRUM_PAIRS = 256
 
 
 class LikelihoodLike(Protocol):
@@ -277,17 +282,31 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
     out_path.mkdir(parents=True, exist_ok=True)
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
+    # checkpoint metrics draw from a dedicated Generator seeded by the run
+    # seed: reproducible, recorded, and independent of both run RNG
+    # streams (plan D5) — the golden digest is unaffected
+    metrics_rng = get_rng(spec.seed)
+    checkpoints = CheckpointLog()
+    de_manager = next((manager for manager in sampler.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+
+    def record_checkpoint_metrics() -> None:
+        if de_manager is not None:
+            checkpoints.itrns.append(sampler.itrn)
+            checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(de_manager.de_buffer, DE_SPECTRUM_PAIRS, metrics_rng))
+
     for itr_block in range(spec.n_blocks):
         sampler.advance_block()
         blocks_done = itr_block + 1
         if blocks_done % spec.checkpoint_every_blocks == 0 and blocks_done < spec.n_blocks:
+            record_checkpoint_metrics()
             write_artifact(
                 artifact_path, spec, sampler, like_obj.n_evals, provenance,
-                finalized=False, wall_seconds=time.monotonic() - start_monotonic,
+                finalized=False, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
             )
 
+    record_checkpoint_metrics()
     write_artifact(
         artifact_path, spec, sampler, like_obj.n_evals, provenance,
-        finalized=True, wall_seconds=time.monotonic() - start_monotonic,
+        finalized=True, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
     )
     return artifact_path
