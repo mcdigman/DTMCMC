@@ -27,6 +27,17 @@ project-excludes = [
     "notebooks/**",
     "explorations/**",
 ]
+# plotly/dash (dashboard/ front-end) ship no usable type info and are not
+# installed in the pyrefly hook's isolated environment; mypy/pyright cover
+# these modules in the typecheck CI instead. setuptools is likewise absent
+# from the hook env (used only by the packaging regression test).
+ignore-missing-imports = [
+    "plotly",
+    "plotly.*",
+    "dash",
+    "dash.*",
+    "setuptools",
+]
 
 [tool.pyright]
 # Settings for the pyright job in .github/workflows/typecheck.yml. pyright
@@ -84,15 +95,20 @@ dev = [
 # Plotting / diagnostic scripts (diagnostic_commentary_helpers.py, run_*_search.py).
 # matplotlib 3.11.0 is the first release with cp314 wheels; 3.8 also caps numpy<2.
 plots = ["matplotlib>=3.11", "corner"]
+# Telemetry dashboard (dashboard/): plotly draws the figures, dash serves the
+# front-end. dashboard.core and dashboard.themes run without either installed.
+dashboard = ["plotly>=6", "dash>=4"]
 
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# Only the DTMCMC library is an installable package; data/, notebooks/,
-# explorations/, experiments/, scripts/, and tests/ each carry an __init__.py
-# but are not part of the distribution. Pin discovery so setuptools' flat-layout
-# auto-discovery doesn't error on multiple top-level packages.
+# The DTMCMC library and the dashboard viewer are the installable packages
+# (`python -m dashboard` must work from a wheel installed with the [dashboard]
+# extra); data/, notebooks/, explorations/, experiments/, scripts/, and tests/
+# each carry an __init__.py but are not part of the distribution. Pin discovery
+# so setuptools' flat-layout auto-discovery doesn't error on multiple top-level
+# packages.
 [tool.setuptools.packages.find]
-include = ["DTMCMC*"]
+include = ["DTMCMC*", "dashboard*"]

@@ -226,6 +226,9 @@ def write_artifact(
         ladder_grp.attrs['n_cold'] = sampler.n_cold
         ladder_grp.create_dataset('Ts', data=sampler.Ts)
         ladder_grp.create_dataset('betas', data=sampler.betas)
+        # run-start ladder: with ladder/history this maps every moment block
+        # to the ladder active during it without re-running controller code
+        ladder_grp.create_dataset('initial_Ts', data=getattr(sampler, 'initial_Ts', sampler.Ts))
 
         if adaptive_state is not None:
             # adaptive runs: one row per rebuild evaluation, applied or
@@ -264,6 +267,9 @@ def write_artifact(
         moments_grp.create_dataset('block_end_itrn', data=np.arange(1, n_blocks_done + 1, dtype=np.int64) * sampler.block_size)
 
         trackers_grp = hf.create_group('trackers')
+        # jump-type names aligned with the accept/esd records' last axis, so
+        # per-proposal figures can be labeled without engine objects
+        trackers_grp.attrs['jump_labels'] = list(sampler.proposal_manager.get_jump_labels())
         trackers_grp.create_dataset('accept_record', data=tracker.accept_record)
         trackers_grp.create_dataset('cycle_tracker', data=tracker.cycle_tracker)
         trackers_grp.create_dataset('exchange_tracker', data=tracker.exchange_tracker)
