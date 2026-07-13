@@ -143,7 +143,7 @@ def test_apply_ladder_update_identical_ladder_strict_noop() -> None:
     de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
     old_buffer = de_manager.de_buffer.copy()
 
-    same_ladder = TemperatureLadder(spec.n_cold, np.asarray(sampler.Ts).copy())
+    same_ladder = TemperatureLadder(np.asarray(sampler.Ts).copy(), n_cold=spec.n_cold)
     sampler.apply_ladder_update(same_ladder, 'at_or_hotter')
 
     assert_array_equal(sampler.samples[0], old_states)
@@ -308,7 +308,7 @@ def test_adaptive_entropy_converges_to_gold(tmp_path, seed: int) -> None:
     data['seed'] = seed
     data['likelihood'] = {'name': 'cake', 'n_par': 5, 'cutoff': 10}
     data['ladder'] = {'kind': 'geometric', 'n_chain': 12, 'n_cold': 1}
-    data['run'] = {'n_steps': 512 * 320, 'block_size': 512, 'store_thin': 16, 'n_record': -1, 'checkpoint_every_blocks': 160}
+    data['run'] = {'n_steps': 512 * 320, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 160}
     data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 8, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': 288}
     spec = RunSpec.from_dict(data)
 
@@ -432,7 +432,7 @@ def test_eggbox_mode_retention_gate() -> None:
     data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
     data['name'] = 'eggbox_gate'
     data['likelihood'] = {'name': 'eggbox', 'n_par': n_par}
-    data['run'] = {'n_steps': 64 * 8, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 4}
+    data['run'] = {'n_steps': 64 * 8, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4}
     spec = RunSpec.from_dict(data)
     seed_run(spec.seed)
 

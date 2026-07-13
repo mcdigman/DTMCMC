@@ -245,7 +245,7 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
     if not isinstance(Ts_raw, list):
         msg = 'explicit ladder requires a Ts list'
         raise TypeError(msg)
-    return TemperatureLadder(spec.n_cold, np.asarray(Ts_raw, dtype=np.float64))
+    return TemperatureLadder(np.asarray(Ts_raw, dtype=np.float64), n_cold=spec.n_cold)
 
 
 # one builder per spec ladder kind; a test asserts the keys stay in sync with
@@ -334,7 +334,7 @@ class HarnessSampler(DTMCMCSampler):
             spec.block_size,
             spec.store_size,
             store_thin=spec.store_thin,
-            n_record=spec.n_record,
+            arg_record=spec.arg_record,
         )
         self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
 

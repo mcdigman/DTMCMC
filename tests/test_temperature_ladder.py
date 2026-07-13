@@ -7,6 +7,7 @@ from numpy.testing import assert_array_equal
 import DTMCMC.temperature_ladder_helpers as th
 
 TEST_DATA_DIR = 'tests/test_data/'
+INVALID_N_COLD_PATTERN = r'(n cold cannot be more than total number of chain|n_cold \d+ not in \[0,)'
 
 # set of parameters to use for several tests
 test_set1 = [
@@ -44,7 +45,7 @@ def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final) -> None:
 def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
     """Test the entropy based spacing produces results that makes sense"""
     if n_cold > n_chain:
-        with pytest.raises(ValueError, match='n cold cannot be more than total number of chain'):
+        with pytest.raises(ValueError, match=INVALID_N_COLD_PATTERN):
             T_ladder = th.entropy_ladder_fromfile(n_chain, n_cold, TEST_DATA_DIR + 'gal1_Ts_resample.npy', TEST_DATA_DIR + 'gal1_logL_var_resample.npy', n_inf_final=n_inf_final, T_cold=T_cold)
 
         return
@@ -90,7 +91,7 @@ def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
     T_max = 1000.
 
     if n_cold > n_chain:
-        with pytest.raises(ValueError, match='n cold cannot be more than total number of chain'):
+        with pytest.raises(ValueError, match=INVALID_N_COLD_PATTERN):
             betas_in, Ts_in = th.geometric_spaced_betas(n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final)
 
         return

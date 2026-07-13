@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
@@ -14,7 +15,6 @@ from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
@@ -22,17 +22,19 @@ if TYPE_CHECKING:
 
 @njit()
 def store_sample_helper(
-    samples_store,
-    logLs_store,
-    samples_block,
-    logLs_block,
-    store_idx_in: int,
-    store_counter_in: int,
-    n_record: int,
-    block_size: int,
-    store_thin: int,
-    read_offset: int) -> tuple[int, int]:
-    """Write the samples from n_record chains to be stored using store_thin thinning,
+        samples_store: NDArray[np.floating],
+        logLs_store: NDArray[np.floating],
+        samples_block: NDArray[np.floating],
+        logLs_block: NDArray[np.floating],
+        store_idx_in: int,
+        store_counter_in: int,
+        record_indices: NDArray[np.int64],
+        block_size: int,
+        store_thin: int,
+        read_offset: int,
+    ) -> tuple[int, int]:
+    """Write the samples of the record_indices chains to be stored using store_thin
+    thinning: store column j holds chain record_indices[j] (duplicates permitted).
     store_idx and store_counter are counters for the index to write into and
     the thinning respectively read offset needs to be zero for first write
     and 1 otherwise to prevent duplicate writes due to wrapping
@@ -42,8 +44,9 @@ def store_sample_helper(
     for itrk in range(read_offset, block_size + read_offset):
         if store_counter == 0:
             # write the sample if the thinning counter is 0
-            samples_store[store_idx, :n_record, :] = samples_block[itrk, :n_record, :]
-            logLs_store[store_idx, :n_record] = logLs_block[itrk, :n_record]
+            for itrr, itrt in enumerate(record_indices):
+                samples_store[store_idx, itrr, :] = samples_block[itrk, itrt, :]
+                logLs_store[store_idx, itrr] = logLs_block[itrk, itrt]
             store_idx += 1
         store_counter += 1
 
@@ -58,7 +61,7 @@ def store_sample_helper(
 
 
 @njit()
-def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, esd_record, itrt: int, new_point, logL_new, density_fac, idx_jump: int) -> None:
+def mcmc_decision_helper(itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], betas: NDArray[np.floating], accept_record: NDArray[np.int64], esd_record: NDArray[np.floating], itrt: int, new_point: NDArray[np.floating], logL_new: float, density_fac: float, idx_jump: int) -> None:
     """Helper to decide whether mcmc point is accepted or not and process accordingly"""
     # draw to determine if we will accept
     test: float = np.log(np.random.uniform(0., 1.))
@@ -85,7 +88,7 @@ def mcmc_decision_helper(itrb: int, samples, logLs, betas, accept_record, esd_re
         accept_record[1, itrt, idx_jump] += 1
 
 
-def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder: TemperatureLadder, accept_record, esd_record, proposal_manager: ProposalManager, like_obj: AbstractLikelihood) -> None:
+def advance_step_ptmcmc(itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], T_ladder: TemperatureLadder, accept_record: NDArray[np.int64], esd_record: NDArray[np.floating], proposal_manager: ProposalManager, like_obj: AbstractLikelihood) -> None:
     """Advance a single step step in the ptmcmc chain"""
     n_chain: int = T_ladder.n_chain
     betas: NDArray[np.floating] = T_ladder.betas
@@ -113,8 +116,8 @@ def advance_step_ptmcmc(itrb: int, samples, logLs, T_ladder: TemperatureLadder, 
 
 
 def advance_block_ptmcmc(
-        T_ladder: TemperatureLadder, logLs, samples, chain_track, proposal_manager: ProposalManager, like_obj: AbstractLikelihood, tracker_manager: TrackerManager
-):
+        T_ladder: TemperatureLadder, logLs: NDArray[np.floating], samples: NDArray[np.floating], chain_track: NDArray[np.int64], proposal_manager: ProposalManager, like_obj: AbstractLikelihood, tracker_manager: TrackerManager
+) -> NDArray[np.floating]:
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
     block_size: int = samples.shape[0] - 1
 
@@ -157,9 +160,9 @@ def advance_block_ptmcmc(
 class DTMCMCSampler:
     """object to manage the overall chain evolution"""
 
-    def __init__(self, T_ladder_in: TemperatureLadder, like_obj: AbstractLikelihood, block_size, store_size,
-                 tracker_manager: TrackerManager | None = None, proposal_manager: ProposalManager | None = None, starting_samples=None,
-                 store_thin: int = 1, n_record: int = -1) -> None:
+    def __init__(self, T_ladder_in: TemperatureLadder, like_obj: AbstractLikelihood, block_size: int, store_size: int,
+                 tracker_manager: TrackerManager | None = None, proposal_manager: ProposalManager | None = None, starting_samples: NDArray[np.floating] | None=None,
+                 store_thin: int = 1, arg_record: list[int] | None=None) -> None:
         """Create the chain object
 
         Parameters
@@ -175,7 +178,12 @@ class DTMCMCSampler:
         proposal_manager: ProposalManager
         starting_samples: a (n_chain, n_par) float array of starting samples
         store_thin: scalar integer, how much to thin the stored samples by (default 1)
-        n_record: scalar integer, how many chains to store the results of (default n_cold)
+        arg_record: optional sequence of chain indices to record in storage in
+            addition to the ladder's n_cold readout chains (default none).
+            The readout chains always occupy the first n_cold store columns
+            and their indices are recomputed at every ladder update; the
+            arg_record columns follow in the given order, and an index that
+            duplicates a readout chain is simply stored twice
         """
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
@@ -196,11 +204,15 @@ class DTMCMCSampler:
         self.n_chain: int = self.T_ladder.n_chain
         self.n_cold: int = self.T_ladder.n_cold
 
-        # how many chains to save in the stored block, default is n_cold
-        if n_record == -1:
-            self.n_record = self.n_cold
+        # recorded chains: the ladder's readout (cold) chains first — their
+        # indices are recomputed at every ladder update — then the extras
+        if arg_record is None:
+            self.arg_record: list[int] = []
         else:
-            self.n_record = n_record
+            self.arg_record = list(arg_record)
+        assert np.all(np.asarray(self.arg_record) >= 0)
+        assert np.all(np.asarray(self.arg_record) < self.n_chain)
+        self.record_indices: list[int] = list(self.T_ladder.get_arg_cold()) + self.arg_record
 
         self.instantiate_state()
 
@@ -224,6 +236,8 @@ class DTMCMCSampler:
             )
         else:
             self.tracker_manager = tracker_manager_in
+
+        self.record_history: list[list[int]] = []
         self.logL_means: list[NDArray[np.floating]] = []
         self.logL2_means: list[NDArray[np.floating]] = []
         self.logL3_means: list[NDArray[np.floating]] = []
@@ -246,8 +260,8 @@ class DTMCMCSampler:
         self.chain_track = np.zeros((self.block_size + 1, self.n_chain), dtype=np.int64)
         self.chain_track[0] = np.arange(0, self.n_chain)
         # TODO fix non-required plus one
-        self.samples_store = np.zeros((self.store_size, self.n_record, self.n_par))
-        self.logLs_store = np.zeros((self.store_size, self.n_record))
+        self.samples_store = np.zeros((self.store_size, len(self.record_indices), self.n_par))
+        self.logLs_store = np.zeros((self.store_size, len(self.record_indices)))
 
     def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
         """Anything that needs to be done to initialize the various jumps"""
@@ -282,16 +296,20 @@ class DTMCMCSampler:
         #    self.logLs,
         #    self.store_idx,
         #    self.store_counter,
-        #    self.n_record,
+        #    self.record_indices,
         #    1,
         #    self.store_thin,
         #    0,
         # )
 
-    def get_stored_flattened(self, n_burnin, n_chain_out=-1, thin=1):
-        """Get the stored samples flattened, with additional thinning if desired and only the first n_chain_out chains"""
+    def get_stored_flattened(self, n_burnin: int, n_chain_out: int=-1, thin: int=1) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Get the stored samples flattened, with additional thinning if desired and only the first n_chain_out store columns.
+
+        The first n_cold columns are always the ladder's readout chains, so
+        n_chain_out=n_cold selects exactly the readout posterior samples.
+        """
         if n_chain_out == -1:
-            n_chain_out = self.n_record
+            n_chain_out = len(self.record_indices)
 
         n_burnin_thin = n_burnin // self.store_thin
 
@@ -310,7 +328,7 @@ class DTMCMCSampler:
             self.logLs,
             self.store_idx,
             self.store_counter,
-            self.n_record,
+            np.asarray(self.record_indices),
             self.block_size,
             self.store_thin,
             1,
@@ -351,6 +369,8 @@ class DTMCMCSampler:
         like clean up recalculating fisher matrices, and storing results
         as well as perhaps non-legal burn in steps
         """
+        self.record_history.append(self.record_indices.copy())
+
         self.store_samples()
         self.proposal_manager.post_block_update(self.itrn, self.block_size, self.samples, self.logLs)
         self.tracker_manager.post_block_update(self.itrn, self.chain_track)
@@ -436,6 +456,13 @@ class DTMCMCSampler:
             manager.T_ladder = new_ladder
             if isinstance(manager, FisherJumpManager):
                 manager.sigma_scales, manager.gamma_mults = set_scales(self.n_par, new_ladder, manager.sigma_diags)
+
+        # the readout chains may sit at different indices in the new ladder
+        # (e.g. rungs added below T_cold): recompute the recorded set and log
+        # the change so stored columns stay interpretable per iteration
+        record_indices_new = list(new_ladder.get_arg_cold()) + self.arg_record
+        assert len(record_indices_new) == len(self.record_indices)
+        self.record_indices = record_indices_new
 
     def preblock_operations(self) -> None:
         """Any operations to be done before each block even starts, like resetting acceptance rate trackers at the end of burn in"""

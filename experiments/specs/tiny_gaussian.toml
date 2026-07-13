@@ -19,7 +19,6 @@ n_inf_final = 1
 n_steps = 512
 block_size = 128
 store_thin = 1
-n_record = -1
 checkpoint_every_blocks = 2
 
 [exchange]
