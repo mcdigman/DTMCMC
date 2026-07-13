@@ -9,6 +9,10 @@ import numpy as np
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
+    from numpy.typing import NDArray
+
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
@@ -19,7 +23,7 @@ class PriorFullJump(AbstractJump):
         self.manager: JumpManager = manager
         AbstractJump.__init__(self, 'Prior All-D')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         del itrt
         new_point = self.manager.like_obj.prior_draw()
         density_fac = self.manager.like_obj.prior_factor(sample_point) - self.manager.like_obj.prior_factor(new_point)
@@ -29,20 +33,20 @@ class PriorFullJump(AbstractJump):
 class PriorStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
+        self.config: ConfigParser = config
         config_p = config['PriorManager']
         # how often to do prior draws in the cold chains
         self.cold_prior_weight = config_p.getfloat('cold_prior_weight', 0.333)
         # how often to do prior draws in the hottest finite temperature chain
         self.hot_prior_target_weight = config_p.getfloat('hot_prior_target_weight', 0.333)
 
-    def copy(self):
+    def copy(self) -> PriorStrategyParameters:
         """Copy the object"""
         return PriorStrategyParameters(self.config)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
             config_in: ConfigParser object
@@ -55,7 +59,7 @@ class PriorStrategyParameters:
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
         self.strategy_params = PriorStrategyParameters(config)
 
@@ -89,6 +93,6 @@ class PriorManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

@@ -12,58 +12,71 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.14"
-  # mypy runs only here (it is not a pre-commit hook; pyrefly handles type
-  # checking in lint.yml). Keep in sync with the mypy version in the [dev] extra.
+  # mypy runs only here (it is not a prek hook; pyrefly handles type checking in
+  # lint.yml). Keep in sync with the mypy version in the [dev] extra.
   MYPY_VERSION: "2.1.0"
   PYRIGHT_VERSION: "1.1.411"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
 
 jobs:
   mypy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # This job runs mypy without installing the project, so third-party imports
-      # are resolved with the blanket --ignore-missing-imports flag. numba's
-      # missing types are additionally ignored via [[tool.mypy.overrides]] in
-      # pyproject.toml (numba ships no py.typed), which mypy reads from the repo
-      # root -- so numba stays ignored even if this job later installs its deps.
+      # Install the project with its typed extras into a venv so mypy resolves
+      # the real numpy/scipy/h5py/plotly types (the runner's system Python is
+      # externally managed, so --system installs are rejected). No
+      # --ignore-missing-imports: imports resolve for real.
+      - name: Install project with typed extras
+        run: |
+          uv venv
+          uv pip install ".[dev,dashboard,plots]"
+
+      # Point mypy at the venv interpreter so it sees the installed deps. The
+      # [tool.mypy] exclude skips .venv/build so mypy does not crawl the
+      # installed dependencies or the wheel-build copy of the source.
       - name: Run mypy
         run: >
           uvx --from "mypy==${{ env.MYPY_VERSION }}" mypy
-          --ignore-missing-imports
+          --python-executable .venv/bin/python
           --explicit-package-bases
           .
 
   pyright:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
         with:
           enable-cache: true
           python-version: ${{ env.PYTHON_VERSION }}
           cache-dependency-glob: "**/pyproject.toml"
 
-      # Unlike the mypy job (which uses --ignore-missing-imports), pyright
-      # resolves types from the installed environment, so install the project
-      # with its typed extras into a venv (the runner's system Python is
-      # externally managed, so --system installs are rejected). numba ships no
-      # py.typed, so its missing-import reports are silenced via
-      # reportMissingImports = "none" in [tool.pyright] (see pyproject.toml).
+      # pyright resolves types from the installed environment, so install the
+      # project with its typed extras into a venv (the runner's system Python is
+      # externally managed, so --system installs are rejected).
       - name: Install project with typed extras
         run: |
           uv venv
-          uv pip install ".[dev,plots]"
+          uv pip install ".[dev,dashboard,plots]"
 
       - name: Run pyright
         run: >

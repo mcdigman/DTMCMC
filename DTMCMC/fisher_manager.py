@@ -1,15 +1,24 @@
 """C 2023 Matthew C. Digman
 module to store objects related to fisher matrix jumps
 """
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
 
+if TYPE_CHECKING:
+    from configparser import ConfigParser
+
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
 
 @njit()
-def sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, sigma_scales, do_full):
+def sigma_subspace_jump_helper(sample_point: NDArray[np.floating], itrt: int, n_par: int, fisher_subspace_frac: float, sigma_scales: NDArray[np.floating], do_full: int) -> tuple[NDArray[np.floating], float, bool]:
     """Helper to compute a standard deviation jump in random subspaces"""
     mult = np.random.normal(0., 1., n_par)
     count = n_par
@@ -33,12 +42,12 @@ def sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, 
 class SigmaFullJump(AbstractJump):
     """Standard Deviation Jump in Full Dimensions"""
 
-    def __init__(self, manager) -> None:
+    def __init__(self, manager: FisherJumpManager) -> None:
         """Create the jump"""
-        self.manager = manager
+        self.manager: FisherJumpManager = manager
         AbstractJump.__init__(self, 'Std All-D')
 
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump"""
         return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, True)
         # n_par = self.manager.n_par
@@ -50,16 +59,70 @@ class SigmaFullJump(AbstractJump):
 class SigmaRandomSubspaceJump(AbstractJump):
     """Standard deviation jump in random subspaces"""
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: FisherJumpManager) -> None:
+        self.manager: FisherJumpManager = manager
         AbstractJump.__init__(self, 'Std Random-D')
 
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump in random subspaces"""
         return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, False)
 
 
-def set_fishers(sample_set, strategy_params, n_chain, like_obj):
+class FisherStrategyParameters:
+    """container to store some parameters related to the strategy of
+    fisher matrix proposal generation
+    """
+
+    def __init__(self, config: ConfigParser) -> None:
+        """Initialize the object with the prescribed parameters"""
+        self.config = config
+
+        config_f = self.config['FisherJumpManager']
+
+        # whether to do fisher jumps using the cholesky decomposition
+        self.use_chol_fishers = config_f.getboolean('use_chol_fishers', False)
+        # how often to do fisher draws in the cold chains
+        self.cold_fisher_weight = config_f.getfloat('cold_fisher_weight', 0.333)
+        # how often to do fisher draws in the hottest finite temperature chain
+        self.hot_fisher_weight = config_f.getfloat('hot_fisher_weight', 0.333)
+        # what fraction of dimensions to include in fisher subspace jumps
+        self.fisher_subspace_frac = config_f.getfloat('fisher_subspace_frac', 1.)
+        # how often to not do subspace jumps when doing a fisher jump
+        self.fisher_full_d_frac = config_f.getfloat('fisher_full_d_frac', 1.)
+        # how many blocks to skip between fisher matrix updates
+        self.fisher_downsample = config_f.getint('fisher_downsample', 1)
+        # default sigma for fisher matrix jumps
+        self.sigma_default = config_f.getfloat('sigma_default', 100.)
+        # maximum element of fisher matrix
+        self.max_fisher_el = config_f.getfloat('max_fisher_el', np.inf)
+        # default epsilon of fisher matrix
+        self.eps_default = config_f.getfloat('eps_default', 1.e-4)
+        # whether to print a notification every time the fisher matrix is update
+        self.verbose_fisher = config_f.getboolean('verbose_fisher', True)
+
+    def copy(self) -> FisherStrategyParameters:
+        """Copy the object"""
+        return FisherStrategyParameters(self.config)
+
+    def record_config(self, config_in: ConfigParser) -> None:
+        """Record the current configuration to the requested configuration object
+        inputs:
+            config_in: ConfigParser object
+        """
+        config_f = config_in['FisherJumpManager']
+        config_f['use_chol_fishers'] = str(self.use_chol_fishers)
+        config_f['cold_fisher_weight'] = str(self.cold_fisher_weight)
+        config_f['hot_fisher_weight'] = str(self.hot_fisher_weight)
+        config_f['fisher_subspace_frac'] = str(self.fisher_subspace_frac)
+        config_f['fisher_full_d_frac'] = str(self.fisher_full_d_frac)
+        config_f['fisher_downsample'] = str(self.fisher_downsample)
+        config_f['sigma_default'] = str(self.sigma_default)
+        config_f['max_fisher_el'] = str(self.max_fisher_el)
+        config_f['eps_default'] = str(self.eps_default)
+        config_f['verbose_Fisher'] = str(self.verbose_fisher)
+
+
+def set_fishers(sample_set: NDArray[np.floating], strategy_params: FisherStrategyParameters, n_chain: int, like_obj: AbstractLikelihood) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Set up the fisher matrices"""
     use_chol_fishers = strategy_params.use_chol_fishers
     sigma_default = strategy_params.sigma_default
@@ -158,7 +221,7 @@ def set_fishers(sample_set, strategy_params, n_chain, like_obj):
     return sigma_diags, fishers, chol_fishers
 
 
-def set_scales(n_par, T_ladder, sigma_diags):
+def set_scales(n_par: int, T_ladder: TemperatureLadder, sigma_diags: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Helper to get several scaling parameters for fisher matrix jumps"""
     n_chain = T_ladder.n_chain
     betas = T_ladder.betas
@@ -185,64 +248,10 @@ def set_scales(n_par, T_ladder, sigma_diags):
     return sigma_scales, gamma_mults
 
 
-class FisherStrategyParameters:
-    """container to store some parameters related to the strategy of
-    fisher matrix proposal generation
-    """
-
-    def __init__(self, config) -> None:
-        """Initialize the object with the prescribed parameters"""
-        self.config = config
-
-        config_f = self.config['FisherJumpManager']
-
-        # whether to do fisher jumps using the cholesky decomposition
-        self.use_chol_fishers = config_f.getboolean('use_chol_fishers', False)
-        # how often to do fisher draws in the cold chains
-        self.cold_fisher_weight = config_f.getfloat('cold_fisher_weight', 0.333)
-        # how often to do fisher draws in the hottest finite temperature chain
-        self.hot_fisher_weight = config_f.getfloat('hot_fisher_weight', 0.333)
-        # what fraction of dimensions to include in fisher subspace jumps
-        self.fisher_subspace_frac = config_f.getfloat('fisher_subspace_frac', 1.)
-        # how often to not do subspace jumps when doing a fisher jump
-        self.fisher_full_d_frac = config_f.getfloat('fisher_full_d_frac', 1.)
-        # how many blocks to skip between fisher matrix updates
-        self.fisher_downsample = config_f.getint('fisher_downsample', 1)
-        # default sigma for fisher matrix jumps
-        self.sigma_default = config_f.getfloat('sigma_default', 100.)
-        # maximum element of fisher matrix
-        self.max_fisher_el = config_f.getfloat('max_fisher_el', np.inf)
-        # default epsilon of fisher matrix
-        self.eps_default = config_f.getfloat('eps_default', 1.e-4)
-        # whether to print a notification every time the fisher matrix is update
-        self.verbose_fisher = config_f.getboolean('verbose_fisher', True)
-
-    def copy(self):
-        """Copy the object"""
-        return FisherStrategyParameters(self.config)
-
-    def record_config(self, config_in) -> None:
-        """Record the current configuration to the requested configuration object
-        inputs:
-            config_in: ConfigParser object
-        """
-        config_f = config_in['FisherJumpManager']
-        config_f['use_chol_fishers'] = str(self.use_chol_fishers)
-        config_f['cold_fisher_weight'] = str(self.cold_fisher_weight)
-        config_f['hot_fisher_weight'] = str(self.hot_fisher_weight)
-        config_f['fisher_subspace_frac'] = str(self.fisher_subspace_frac)
-        config_f['fisher_full_d_frac'] = str(self.fisher_full_d_frac)
-        config_f['fisher_downsample'] = str(self.fisher_downsample)
-        config_f['sigma_default'] = str(self.sigma_default)
-        config_f['max_fisher_el'] = str(self.max_fisher_el)
-        config_f['eps_default'] = str(self.eps_default)
-        config_f['verbose_Fisher'] = str(self.verbose_fisher)
-
-
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder, like_obj, sample_set, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, sample_set: NDArray[np.floating], config: ConfigParser) -> None:
         """Create the object"""
         self.strategy_params = FisherStrategyParameters(config)
 
@@ -304,20 +313,20 @@ class FisherJumpManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def post_block_update(self, itrn, block_size, samples, logLs):
+    def post_block_update(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         """
         return self.reset_fishers(itrn, block_size, samples, logLs)
 
-    def reset_fishers_from_point(self, sample_set) -> None:
+    def reset_fishers_from_point(self, sample_set: NDArray[np.floating]) -> None:
         """Set the fisher matrix object at the specified point"""
         self.sigma_diags, self.fishers, self.chol_fishers = set_fishers(
             sample_set, self.strategy_params, self.n_chain, self.like_obj
         )
         self.sigma_scales, self.gamma_mults = set_scales(self.n_par, self.T_ladder, self.sigma_diags)
 
-    def reset_fishers(self, itrn, block_size, samples, logLs) -> None:
+    def reset_fishers(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
         """Reset the fisher matrices from input samples"""
         if itrn // block_size < 4 or itrn % (block_size * self.strategy_params.fisher_downsample) == 0:
             samples_fisher = np.zeros((self.n_chain, self.n_par))
@@ -331,7 +340,7 @@ class FisherJumpManager(JumpManager):
                 samples_fisher[itrt] = samples[index_select]
             self.reset_fishers_from_point(samples_fisher)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
@@ -341,7 +350,7 @@ class FisherFullJump(AbstractJump):
         self.manager: FisherJumpManager = manager
         AbstractJump.__init__(self, 'Fisher All-D')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a fisher matrix jump"""
         n_par: int = sample_point.size
         new_point = sample_point + solve_triangular(

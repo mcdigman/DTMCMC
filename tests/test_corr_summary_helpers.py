@@ -1,27 +1,16 @@
-from dataclasses import dataclass
-
 import numpy as np
 from numpy.testing import assert_allclose
 
+from DTMCMC.chain_analysis_helpers import StoreView
 from DTMCMC.corr_summary_helpers import CorrelationSummary, autocorr_helper, get_crosscorr_sum
 
 
-@dataclass
-class StoreView:
-    samples_store: np.ndarray
-    store_size: int
-    n_cold: int
-    n_chain: int
-    block_size: int
-    store_thin: int
-    n_par: int
-    itrn: int
-
-
-def make_store_view(samples_store: np.ndarray, block_size: int = 16) -> StoreView:
+def make_store_view(samples_store: np.ndarray, logLs_store: np.ndarray, Ts: np.ndarray, block_size: int = 16) -> StoreView:
     n_rows, n_cold, n_par = samples_store.shape
     return StoreView(
         samples_store=samples_store,
+        logLs_store=logLs_store,
+        Ts=Ts,
         store_size=n_rows,
         n_cold=n_cold,
         n_chain=n_cold,
@@ -35,7 +24,9 @@ def make_store_view(samples_store: np.ndarray, block_size: int = 16) -> StoreVie
 def test_crosscorr_sum_uses_stored_sample_count() -> None:
     rng = np.random.default_rng(0)
     samples_store = rng.standard_normal((128, 2, 1))
-    view = make_store_view(samples_store)
+    logLs_store = np.zeros((128, 2))
+    Ts = np.ones(2)
+    view = make_store_view(samples_store, logLs_store, Ts)
     obs_vars = np.array([np.var(samples_store[:, :, 0])])
 
     for n_burnin_thin in (0, 7):
@@ -59,7 +50,9 @@ def test_crosscorr_sum_uses_stored_sample_count() -> None:
 def test_corr_summary_uses_stored_sample_count_for_n_eff() -> None:
     rng = np.random.default_rng(1)
     samples_store = rng.standard_normal((128, 2, 1))
-    view = make_store_view(samples_store)
+    logLs_store = np.zeros((128, 2))
+    Ts = np.ones(2)
+    view = make_store_view(samples_store, logLs_store, Ts)
 
     summary = CorrelationSummary(do_corr_summary=True, do_autocorr=True, do_cross=False)
     summary.obs_vars.append(np.array([np.var(samples_store[:, :, 0])]))

@@ -1,8 +1,16 @@
 """C 2023 Matthew C. Digman
 helpers to perform the parallel tempering exchanges
 """
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
+
+if TYPE_CHECKING:
+
+
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 # TODO implement option to not do exchanges at all
 
@@ -16,18 +24,18 @@ ALTERNATE_SEQUENTIAL_TARGETS = 5        # target sequentially from front to back
 
 @njit()
 def exchange_step_helper(
-    logLs_loc,
-    betas,
-    exchange_tracker,
-    exchange_order,
-    targets,
-    no_repeat,
-    track_full_exchanges
-):
+        logLs_loc: NDArray[np.floating],
+        betas: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        exchange_order: NDArray[np.int64],
+        targets: NDArray[np.int64],
+        no_repeat: bool,
+        track_full_exchanges: bool
+) -> NDArray[np.int64]:
     """Actually execute the swaps for an exchange step"""
     n_chain = betas.shape[0]
 
-    itrs_fin = np.arange(0, n_chain)
+    itrs_fin = np.arange(0, n_chain, dtype=np.int64)
     for idxt in range(n_chain):
         itrt = exchange_order[idxt]
         itrt_target = targets[itrt]
@@ -85,7 +93,7 @@ def exchange_step_helper(
 
 
 @njit()
-def random_pair_generate(n_chain):
+def random_pair_generate(n_chain: int) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
     """Pairs are generated uniformally at random"""
     target_shuffle = np.random.permutation(np.arange(0, n_chain))
     target_shuffle = np.concatenate((target_shuffle[::2], target_shuffle[1::2]))
@@ -98,7 +106,7 @@ def random_pair_generate(n_chain):
 
 
 @njit()
-def offset_pair_generate(n_chain, offset):
+def offset_pair_generate(n_chain: int, offset: int) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
     """Pairs are generated as
     [(0,offset+1),(2,offset+3),...(n_chain-2,offset+n_chain-1)]%n_chain,
     e.g.,
@@ -132,16 +140,16 @@ def offset_pair_generate(n_chain, offset):
 
 @njit()
 def do_ptmcmc_exchange(
-    itrb,
-    samples,
-    logLs,
-    n_chain,
-    betas,
-    exchange_tracker,
-    esd_exchange,
-    chain_track,
-    target_select,
-    track_full_exchanges,
+        itrb: int,
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        n_chain: int,
+        betas: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
+        target_select: int,
+        track_full_exchanges: bool,
 ) -> None:
     """Chose and exchange strategy and do the exchange step"""
     no_repeat = True
@@ -220,14 +228,14 @@ class ExchangeManager:
     and define the strategy by which to propose exchanges
     """
 
-    def __init__(self, strategy=RANDOM_TARGETS, track_full_exchanges=True) -> None:
+    def __init__(self, strategy: int=RANDOM_TARGETS, track_full_exchanges: bool=True) -> None:
         """Select the exchange targeting strategy"""
-        self.strategy = strategy
-        self.track_full_exchanges = track_full_exchanges
+        self.strategy: int = strategy
+        self.track_full_exchanges: bool = track_full_exchanges
 
     def do_ptmcmc_exchange(
-            self, itrb, samples, logLs, T_ladder, exchange_tracker, esd_exchange, chain_track
-    ):
+            self, itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], T_ladder: TemperatureLadder, exchange_tracker: NDArray[np.int64], esd_exchange: NDArray[np.floating], chain_track: NDArray[np.int64]
+    ) -> None:
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)
         return do_ptmcmc_exchange(
@@ -243,7 +251,7 @@ class ExchangeManager:
             self.track_full_exchanges,
         )
 
-    def is_exchange_step(self, itrb):
+    def is_exchange_step(self, itrb: int) -> bool:
         """Check whether the step with the given index should be an exchange,
         currently based on alternating even and odd
         """

@@ -79,7 +79,7 @@ if __name__ == '__main__':
 
     # generate some summary information
     corr_sum = CorrelationSummary()
-    corr_sum.summarize_blocks(mcc, n_burnin)
+    corr_sum.summarize_blocks(mcc, mcc.tracker_manager, n_burnin)
     corr_sum.final_prints(mcc, n_burnin)
 
     # get flattened samples for plotting

@@ -1,0 +1,28 @@
+[MAIN]
+load-plugins =
+    pylint_per_file_ignores
+
+# Base-name directories skipped when recursing (e.g. a local `pylint .`), mirroring
+# the ruff exclude list so a whole-tree run does not descend into the virtualenv,
+# build outputs, or tool caches (build/ also holds a second copy of the package).
+# docs/ is skipped too: CI targets `pylint pyakima tests` (docs is not pylint-checked),
+# and Sphinx's conf.py legitimately uses lowercase config names that trip C0103/W0622.
+# This only affects local runs.
+ignore = .git,.venv,venv,build,dist,.eggs,.mypy_cache,.pytest_cache,.ruff_cache,.tox,__pycache__,docs
+
+[TYPECHECK]
+# pygsl_lite is an optional demo backend (C extension requiring system GSL); it
+# is not installed in CI, so tell pylint not to try resolving it. scipy and
+# matplotlib are installed in the lint job, so they are checked normally.
+ignored-modules =
+    pygsl_lite
+
+[FORMAT]
+max-module-lines=2000
+
+[MESSAGES CONTROL]
+per-file-ignores =
+  tests/*:missing-function-docstring
+
+# line length etc better handled by ruff
+disable = line-too-long, too-many-locals, too-many-branches, too-many-statements, too-many-arguments, too-few-public-methods, too-many-positional-arguments, wrong-import-position, invalid-name

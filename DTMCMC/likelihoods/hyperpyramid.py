@@ -1,6 +1,7 @@
 """the 2D hyper-pyramid lkelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/"""
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
 
@@ -12,14 +13,14 @@ center = 0.
 
 
 @njit()
-def get_loglike(x):
+def get_loglike(x: NDArray[np.floating]) -> float:
     """Get the likelihood"""
     return -max(np.abs((x - center) / sigma))**(1. / s)
 
 
 class HyperpyramidLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par=2) -> None:
+    def __init__(self, n_par: int=2) -> None:
         """Create the class and store any object specific variables"""
         if n_par != 2:
             msg = 'HyperpyramidLikelihood is 2D; n_par must be 2'
@@ -29,6 +30,6 @@ class HyperpyramidLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self,params_in):
+    def get_loglike(self,params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)

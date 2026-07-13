@@ -1,14 +1,19 @@
 """an n dimensional normal distribution"""
+from typing import TYPE_CHECKING
+
 import h5py
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from DTMCMC.likelihood import RectangularLikelihood
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
 
 class HawaiiLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, rescale_like=1., default_like=5.e-1, normalize_like=True) -> None:
+    def __init__(self, rescale_like: float=1., default_like: float=5.e-1, normalize_like: bool=True) -> None:
         """Create the class and store any object specific variables"""
         self.rescale_like = rescale_like
         self.default_like = default_like
@@ -49,6 +54,6 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, params_in):
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return self.hawaii_interp(params_in)[0]

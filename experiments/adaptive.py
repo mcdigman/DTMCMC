@@ -567,7 +567,7 @@ class AdaptiveLadderController:
         # Coupling witness: read segment-reset cycle counters before any
         # ladder update resets them. The freeze streak requires new
         # completed trips in every cadence window it spans.
-        n_trips_open = int(np.sum(sampler.tracker_manager.get_n_cycles()))
+        n_trips_open = int(np.sum(sampler.tracker_manager.n_cycles))
         window_trips = n_trips_open - self._trips_at_prev_eval
 
         dlog_thresh, n_consecutive = self.freeze_criterion

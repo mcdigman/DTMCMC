@@ -106,7 +106,7 @@ if __name__ == '__main__':
 
     # generate some summary information
     corr_sum = CorrelationSummary()
-    corr_sum.summarize_blocks(mcc, n_burnin)
+    corr_sum.summarize_blocks(mcc, mcc.tracker_manager, n_burnin)
     corr_sum.final_prints(mcc, n_burnin)
 
     # get flattened samples for plotting
@@ -356,7 +356,7 @@ if __name__ == '__main__':
     accept_record = mcc.tracker_manager.accept_record - mcc.tracker_manager.accept_archive[cycle_burn_index]
     accept = accept_record[0] / (accept_record[0] + accept_record[1])
 
-    n_cycles = mcc.tracker_manager.get_n_cycles()
+    n_cycles = mcc.tracker_manager.n_cycles
 
     cycle_min_log = np.zeros(len(mcc.tracker_manager.cycle_archive))
     cycle_zero_log = np.zeros(len(mcc.tracker_manager.cycle_archive))

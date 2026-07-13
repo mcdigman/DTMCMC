@@ -4,6 +4,7 @@ import numba as nb
 import numpy as np
 from numba import njit
 from numba.experimental import jitclass  # pyright: ignore[reportPrivateImportUsage]
+from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
 
@@ -19,7 +20,7 @@ n_pi_range = np.int64((high_lim - low_lim) / np.pi)
 
 
 @njit()
-def get_loglike(x, n_par):
+def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
     """Get the eggbox likelihood in n dimensions"""
     prod = 1.
     for itrp in range(n_par):
@@ -28,13 +29,13 @@ def get_loglike(x, n_par):
 
 
 @njit()
-def prior_draw(n_par):
+def prior_draw(n_par: int) -> NDArray[np.floating]:
     """Get a prior draw"""
     return np.random.uniform(low_lim, high_lim, n_par)
 
 
 @njit()
-def prior_factor(_v, _n_par) -> float:
+def prior_factor(_v: NDArray[np.floating], _n_par: int) -> float:
     """Get the denstiy factor for prior draws
 
     numba cannot type `del` of function arguments, so the unused inputs
@@ -46,7 +47,7 @@ def prior_factor(_v, _n_par) -> float:
 
 
 @njit()
-def correct_bounds(v, n_par):
+def correct_bounds(v: NDArray[np.floating], n_par: int) -> NDArray[np.floating]:
     """Correct parameters to be in boundaries"""
     for itrp in range(n_par):
         v[itrp] = reflect_into_range(v[itrp], low_lim, high_lim)
@@ -54,7 +55,7 @@ def correct_bounds(v, n_par):
 
 
 @njit()
-def check_bounds(v) -> bool:
+def check_bounds(v: NDArray[np.floating]) -> bool:
     """Check if a sample is within the prior range"""
     for itrp in range(v.size):
         if not low_lim < v[itrp] < high_lim:
@@ -66,49 +67,49 @@ def check_bounds(v) -> bool:
 class Likelihood():
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    def __init__(self, n_par=5, eps_default=1.e-3) -> None:
+    def __init__(self, n_par: int=5, eps_default: float=1.e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default
 
-    def get_loglike(self, v):
+    def get_loglike(self, v: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(v, self.n_par)
 
-    def prior_draw(self):
+    def prior_draw(self) -> NDArray[np.floating]:
         """Get a draw from the prior"""
         return prior_draw(self.n_par)
 
-    def prior_proposal(self, v_in):
+    def prior_proposal(self, v_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], float, bool]:
         """Get a proposal from the prior"""
         v_out = prior_draw(self.n_par)
         return v_out, prior_factor(v_in, self.n_par) - prior_factor(v_out, self.n_par), True
 
-    def prior_factor(self, v):
+    def prior_factor(self, v: NDArray[np.floating]) -> float:
         """Get the density factor for prior draws, if the prior draws are not uniform"""
         return prior_factor(v, self.n_par)
 
-    def correct_bounds(self, v):
+    def correct_bounds(self, v: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct the bounds of a draw to be in range, if allowed for this likelihood"""
         return correct_bounds(v, self.n_par)
 
-    def check_bounds(self, v):
+    def check_bounds(self, v: NDArray[np.floating]) -> bool:
         """Check if the bounds of a draw are in the prior range but do not change them"""
         return check_bounds(v)
 
 
-def get_labels(n_par):
+def get_labels(n_par: int) -> list[str]:
     """Get useful labels for corner plots"""
     return [r'$v_' + str(itrp) + '$' for itrp in range(n_par)]
 
 
-def format_samples_output(samples, params_fid):
+def format_samples_output(samples: NDArray[np.floating], params_fid: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], list[str]]:
     labels_loc = get_labels(params_fid.size)
     return samples.copy(), params_fid.copy(), labels_loc
 
 
 @njit()
-def mode_matcher(n_cold, samples_store, itrn, mode_first_idx, mode_last_idx, n_par, modes_canonical):
+def mode_matcher(n_cold: int, samples_store: NDArray[np.floating], itrn: int, mode_first_idx: NDArray[np.int64], mode_last_idx: NDArray[np.int64], n_par: int, modes_canonical: NDArray[np.int64]) -> NDArray[np.bool_]:
     """Guess which mode each sample is in"""
     mode_all = np.full(samples_store.shape[0], True, dtype=np.bool_)
     for itrl in range(samples_store.shape[0]):
@@ -145,15 +146,15 @@ def mode_matcher(n_cold, samples_store, itrn, mode_first_idx, mode_last_idx, n_p
     return mode_all
 
 
-def gen_nd_modelist(n_par=5):
+def gen_nd_modelist(n_par: int=5) -> tuple[NDArray[np.floating], NDArray[np.int64], NDArray[np.int64]]:
     """Get the full list of modes for nd eggbox"""
-    mode_loc = []
-    mode_int_loc = []
-    idx_max = (high_lim - low_lim) / (np.pi / 2)
-    if idx_max % 1 > 0.999:
-        idx_max = np.int64(idx_max) + 2
+    mode_loc: list[NDArray[np.floating]] = []
+    mode_int_loc: list[NDArray[np.int64]] = []
+    idx_max_float: float = (high_lim - low_lim) / (np.pi / 2)
+    if idx_max_float % 1 > 0.999:
+        idx_max: np.int64 = np.int64(idx_max_float) + 2
     else:
-        idx_max = np.int64(idx_max) + 1
+        idx_max = np.int64(idx_max_float) + 1
     targ_like = get_loglike(np.zeros(n_par), n_par)
     modes_canonical_got = np.zeros(n_pi_range**n_par, dtype=np.int64) - 1
     mode_idxs = np.zeros(n_par, dtype=np.int64)

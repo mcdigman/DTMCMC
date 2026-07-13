@@ -10,12 +10,14 @@ from numpy.typing import NDArray
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 @njit()
-def apply_de_helper(de_buffer, de_subspace_frac: float, itrt: int, sample_point, do_subspace: bool, do_big: bool) -> tuple[NDArray[np.floating], float, bool]:
+def apply_de_helper(de_buffer: NDArray[np.floating], de_subspace_frac: float, itrt: int, sample_point: NDArray[np.floating], do_subspace: bool, do_big: bool) -> tuple[NDArray[np.floating], float, bool]:
     """Apply the differential evolution jump"""
     de_size: int = de_buffer.shape[0]
     n_par: int = de_buffer.shape[2]
@@ -53,11 +55,11 @@ class DEStandardFullJump(AbstractJump):
     null proposals are marked as failures
     """
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: DEJumpManager) -> None:
+        self.manager: DEJumpManager = manager
         AbstractJump.__init__(self, 'DE Std All-D')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
 
 
@@ -66,11 +68,11 @@ class DEStandardRandomSubspaceJump(AbstractJump):
     null proposals are marked as failures
     """
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: DEJumpManager) -> None:
+        self.manager: DEJumpManager = manager
         AbstractJump.__init__(self, 'DE Std Random-D')
 
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
 
 
@@ -79,11 +81,11 @@ class DEBigFullJump(AbstractJump):
     null proposals are marked as failures
     """
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: DEJumpManager) -> None:
+        self.manager: DEJumpManager = manager
         AbstractJump.__init__(self, 'DE Big All-D')
 
-    def __call__(self, sample_point, itrt):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
 
 
@@ -92,15 +94,15 @@ class DEBigRandomSubspaceJump(AbstractJump):
     null proposals are marked as failures
     """
 
-    def __init__(self, manager) -> None:
-        self.manager = manager
+    def __init__(self, manager: DEJumpManager) -> None:
+        self.manager: DEJumpManager = manager
         AbstractJump.__init__(self, 'DE Big Random-D')
 
-    def __call__(self, sample_point, itrt: int):
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
 
 
-def initialize_de_helper(de_buffer, de_size: int, n_chain: int, like_obj: AbstractLikelihood) -> None:
+def initialize_de_helper(de_buffer: NDArray[np.floating], de_size: int, n_chain: int, like_obj: AbstractLikelihood) -> None:
     """Helper to initialize the differential evolution buffer with prior draws"""
     for itrd in range(de_size):
         for itrt in range(n_chain):
@@ -108,7 +110,7 @@ def initialize_de_helper(de_buffer, de_size: int, n_chain: int, like_obj: Abstra
 
 
 @njit()
-def write_de_helper(itrde_count: int, itrde_write: int, de_buffer, samples) -> None:
+def write_de_helper(itrde_count: int, itrde_write: int, de_buffer: NDArray[np.floating], samples: NDArray[np.floating]) -> None:
     """Helper to write to the differential evolution buffer"""
     if itrde_count == 0:
         de_buffer[itrde_write, :] = samples
@@ -117,9 +119,9 @@ def write_de_helper(itrde_count: int, itrde_write: int, de_buffer, samples) -> N
 class DEStrategyParameters:
     """container to store some parameters related to the strategy of differential evolution proposal generation"""
 
-    def __init__(self, config) -> None:
+    def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
+        self.config: ConfigParser = config
         config_de = self.config['DEJumpManager']
 
         # how often to do de draws in the cold chains
@@ -137,11 +139,11 @@ class DEStrategyParameters:
         # how much to thin the differential evolution buffer by
         self.de_thin = config_de.getint('de_thin', 1)
 
-    def copy(self):
+    def copy(self) -> DEStrategyParameters:
         """Copy the object"""
         return DEStrategyParameters(self.config)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
             config_in: ConfigParser object
@@ -162,7 +164,7 @@ class DEStrategyParameters:
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
         """Create the manager object"""
         self.strategy_params = DEStrategyParameters(config)
 
@@ -180,7 +182,7 @@ class DEJumpManager(JumpManager):
         self.itrde_write: int = 1
         self.itrde_count: int = 1
 
-    def write_de(self, samples) -> None:
+    def write_de(self, samples: NDArray[np.floating]) -> None:
         """Write to the differential evolution buffer"""
         if self.itrde_count == 0:
             write_de_helper(self.itrde_count, self.itrde_write, self.de_buffer, samples)
@@ -251,12 +253,12 @@ class DEJumpManager(JumpManager):
         self.jump_weights = jump_weights
         assert np.all(self.jump_weights >= 0.)
 
-    def post_step_update(self, samples) -> None:
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer
         """
         self.write_de(samples)
 
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

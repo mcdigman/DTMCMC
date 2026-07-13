@@ -1,12 +1,13 @@
 """an n dimensional normal distribution"""
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 
 # @njit()
-def get_loglike(v):
+def get_loglike(v: NDArray[np.floating]) -> float:
     """Get an n dimensional gaussian likelihood"""
     const = np.log(1. / np.sqrt(2. * np.pi))  # normalization constant
     res = v.shape[0] * const
@@ -22,20 +23,20 @@ def get_loglike(v):
 class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    def __init__(self, n_par=100, cutoff=5) -> None:
+    def __init__(self, n_par: int=100, cutoff: int=5) -> None:
         """Create the class and store any object specific variables"""
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, params_in):
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
 
 @njit()
-def gen_draws(n_draws, n_par, low_lims, high_lims, attempt_lim=10000):
+def gen_draws(n_draws: int, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating], attempt_lim: int=10000) -> NDArray[np.floating]:
     """Get posterior draws"""
     draws = np.zeros((n_draws, n_par))
     for itrk in range(n_draws):
@@ -52,7 +53,7 @@ def gen_draws(n_draws, n_par, low_lims, high_lims, attempt_lim=10000):
 
 
 @njit()
-def drawposterior(n, Ts, n_par, low_lims, high_lims):
+def drawposterior(n: int, Ts: NDArray[np.floating], n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> NDArray[np.floating]:
     """For truncated normal we can draw from the posterior for testing purposes"""
     samples = np.zeros((n, Ts.size, n_par))
     for itrt in range(Ts.size):

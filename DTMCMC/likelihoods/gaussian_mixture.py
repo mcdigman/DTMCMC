@@ -1,6 +1,7 @@
 """a gaussian mixture likelihood in n dimensions with 2 unequal modes at +/-5"""
 import numpy as np
 from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
@@ -10,7 +11,7 @@ high_lim = 10.
 
 
 @njit()
-def get_loglike(v,n_par):
+def get_loglike(v: NDArray[np.floating],n_par: int) -> float:
     """Get likelihood for gaussian mixture"""
     res1 = np.log(1. /(3*(2. * np.pi)**(n_par/2)))
     res2 = np.log(2. /(3*(2. * np.pi)**(n_par/2)))
@@ -25,20 +26,20 @@ def get_loglike(v,n_par):
 
 class GaussianMixtureLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self,n_par=50) -> None:
+    def __init__(self,n_par: int=50) -> None:
         """Create the class and store any object specific variables"""
         low_lims = np.full(n_par, low_lim)
         high_lims = np.full(n_par, high_lim)
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self,params_in):
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in,self.n_par)
 
 
 @njit()
-def gen_draws(n_draws,n_par,attempt_lim=10000):
+def gen_draws(n_draws: int,n_par: int,attempt_lim: int=10000) -> NDArray[np.floating]:
     """Get posterior draws"""
     low_lims = np.full(n_par, low_lim)
     high_lims = np.full(n_par, high_lim)

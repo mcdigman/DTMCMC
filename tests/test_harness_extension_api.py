@@ -186,7 +186,7 @@ class _StubCorrelationSummary:
         _StubCorrelationSummary.instances.append(self)
         self.n_burnins: list[int] = []
 
-    def summarize_blocks(self, _sampler, n_burnin: int) -> None:
+    def summarize_blocks(self, _sampler, _tracker_manager, n_burnin: int) -> None:
         """Record the burn-in passed to the block summary."""
         self.n_burnins.append(n_burnin)
 

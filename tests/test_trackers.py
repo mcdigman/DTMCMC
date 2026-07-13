@@ -53,7 +53,7 @@ def test_single_cold_round_trips() -> None:
 
     assert_array_equal(tracker.cycle_tracker[2], [3, 0, 0, 2])  # hot->cold arrivals
     assert_array_equal(tracker.cycle_tracker[3], [2, 0, 0, 3])  # cold->hot arrivals
-    assert_array_equal(tracker.get_n_cycles(), [2, 0, 0, 2])
+    assert_array_equal(tracker.n_cycles, [2, 0, 0, 2])
 
     expected_events = np.array([
         [0, 3, RT_ARRIVED_COLD], [3, 3, RT_ARRIVED_HOT],

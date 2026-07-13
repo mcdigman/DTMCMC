@@ -17,6 +17,10 @@ from DTMCMC.prior_manager import PriorManager
 from DTMCMC.proposal_manager import ProposalManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
+    from numpy.typing import NDArray
+
     from DTMCMC.jump_manager import JumpManager
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
@@ -25,8 +29,8 @@ if TYPE_CHECKING:
 def get_default_proposal_manager(
     T_ladder: TemperatureLadder,
     like_obj: AbstractLikelihood,
-    starting_samples=None,
-    config=None,
+    starting_samples: NDArray[np.floating] | None = None,
+    config: ConfigParser | None = None,
     fisher_manager_loc: FisherJumpManager | None = None,
     de_manager_loc: DEJumpManager | None = None,
     auxilliary_manager_loc: AuxilliaryJumpManager | None = None,
