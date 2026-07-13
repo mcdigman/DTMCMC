@@ -97,7 +97,15 @@ def _smoke_spec_data(name: str) -> dict[str, Any]:
         'name': f'smoke_{name}',
         'seed': 4242,
         'likelihood': {'name': name, **SMOKE_PARAMS[name]},
-        'ladder': {'kind': 'geometric', 'n_chain': 5, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 64.0, 'n_inf_final': 1},
+        'ladder': {
+            'kind': 'geometric',
+            'n_chain': 5,
+            'n_cold': 1,
+            'T_cold': 1.0,
+            'T_min': 1.0,
+            'T_max': 64.0,
+            'n_inf_final': 1,
+        },
         'run': {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
         'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
         'proposals': {
@@ -164,7 +172,7 @@ def test_symmetric_nn_divergence_catches_both_failure_signs() -> None:
     assert nn_divergence_symmetric(reference, collapsed, 2000, get_rng(2)) > 1.5
     assert nn_divergence_symmetric(reference, overdispersed, 2000, get_rng(3)) > 0.8
     # the trap itself: signed divergence of the collapsed sample is negative
-    assert nn_kl(reference, collapsed, 2000, get_rng(4)) < 0.
+    assert nn_kl(reference, collapsed, 2000, get_rng(4)) < 0.0
 
 
 def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarray, n_iterations: int) -> None:
@@ -174,7 +182,7 @@ def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarra
         hf.attrs['n_iterations'] = n_iterations
         hf.attrs['n_likelihood_evals'] = 1000
         hf.attrs['wall_seconds'] = 1.0
-        hf.create_dataset('ladder/Ts', data=np.array([1., 2., 4.]))
+        hf.create_dataset('ladder/Ts', data=np.array([1.0, 2.0, 4.0]))
         hf.create_dataset('events/rt_events', data=events.astype(np.int64))
         hf.create_dataset('events/rt_segment_itrns', data=segment_itrns.astype(np.int64))
         hf.create_dataset('store/samples', data=rng.standard_normal((n_iterations // 2, 1, 2)))
@@ -190,14 +198,22 @@ def test_family_compare_summarize_ranks_pass_rate_before_efficiency() -> None:
     is a metric for the wrong distribution until posterior recovery
     passes).
     """
+
     def run_result(passed: bool, n_eff_per_eval: float, violations: list[str] | None = None) -> dict:
-        return {'passed': passed, 'n_eff_per_eval': n_eff_per_eval, 'frozen_by': 'criterion',
-                'violations': violations or []}
+        return {
+            'passed': passed,
+            'n_eff_per_eval': n_eff_per_eval,
+            'frozen_by': 'criterion',
+            'violations': violations or [],
+        }
 
     results = {
         'entropy': [run_result(True, 1.0e-3), run_result(True, 2.0e-3)],
         'length': [run_result(True, 4.0e-3), run_result(False, 5.0e-3, ['nn: too far'])],
-        'acceptance': [run_result(False, 9.0e-3, ['tiers: collapsed']), run_result(False, 8.0e-3, ['tiers: collapsed'])],
+        'acceptance': [
+            run_result(False, 9.0e-3, ['tiers: collapsed']),
+            run_result(False, 8.0e-3, ['tiers: collapsed']),
+        ],
     }
     summary = summarize_arms(results)
 
@@ -214,10 +230,12 @@ def test_family_compare_summarize_ranks_pass_rate_before_efficiency() -> None:
     assert summary['arms']['acceptance']['violations'] == ['tiers: collapsed']
 
     # efficiency still breaks ties among equal pass rates
-    tie = summarize_arms({
-        'entropy': [run_result(True, 1.0e-3)],
-        'length': [run_result(True, 4.0e-3)],
-    })
+    tie = summarize_arms(
+        {
+            'entropy': [run_result(True, 1.0e-3)],
+            'length': [run_result(True, 4.0e-3)],
+        }
+    )
     assert tie['ranking_by_pass_rate_then_efficiency'] == ['length', 'entropy']
 
 
@@ -227,12 +245,14 @@ def test_load_run_metrics_respects_segment_boundaries(tmp_path) -> None:
     Walker 0's cold/hot arrivals straddle the boundary (must not pair);
     walker 1's sit inside one segment (must pair).
     """
-    events = np.array([
-        [0, 600, RT_ARRIVED_COLD],
-        [0, 700, RT_ARRIVED_HOT],
-        [1, 800, RT_ARRIVED_COLD],
-        [1, 900, RT_ARRIVED_HOT],
-    ])
+    events = np.array(
+        [
+            [0, 600, RT_ARRIVED_COLD],
+            [0, 700, RT_ARRIVED_HOT],
+            [1, 800, RT_ARRIVED_COLD],
+            [1, 900, RT_ARRIVED_HOT],
+        ]
+    )
     boundary_after_walker0_cold = np.array([650])
     artifact_path = tmp_path / 'synthetic.h5'
     _write_synthetic_artifact(artifact_path, events, boundary_after_walker0_cold, n_iterations=1000)

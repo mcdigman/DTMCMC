@@ -26,7 +26,15 @@ TINY_SPEC: dict[str, Any] = {
     'name': 'ext_api_test',
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
-    'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
+    'ladder': {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 1,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    },
     'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {

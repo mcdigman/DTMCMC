@@ -28,7 +28,7 @@ exclude = [
     "venv",
 ]
 
-line-length = 500
+line-length = 120
 indent-width = 4
 
 # Assume Python 3.14
@@ -40,7 +40,7 @@ target-version = "py314"
 # McCabe complexity (`C901`) by default.
 select = ["E", "F", "W", "PERF", "FLY", "TC", "C4", "DTZ", "T10", "DJ", "EM", "FA", "INT", "ISC", "ICN", "LOG", "G", "INP", "PIE", "RSE", "SLOT", "TID", "ARG", "PTH", "I", "W", "D210", "D403", "D202", "D209", "PGH", "PLC", "PLE", "PLW", "FURB", "RUF", "TRY", "A", "B", "BLE", "ASYNC", "YTT", "FAST", "AIR", "S", "PT", "SIM", "PD", "Q", "SLF", "RET", "COM"]
 # FBT NPY
-ignore = ["S101", "SIM108", "DOC202", "COM812", "RET504", "SIM110", "PT030", "N802", "N803", "N806", "T201", "PLR2004"]
+ignore = ["S101", "SIM108", "DOC202", "COM812", "RET504", "SIM110", "PT030", "N802", "N803", "N806", "T201", "PLR2004", "E501"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -85,7 +85,7 @@ min-file-size = 1024
 # legitimately reseed (golden/determinism/freeze tests).
 "DTMCMC/rng_helpers.py" = ["TID251"]
 "entropy_process.py" = ["TID251"]
-"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251", "SLF001", "ANN"]
+"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251", "SLF001", "ANN", "PERF401"]
 "speed_tests/*" = ["C90", "FBT", "ANN", "PLR"]
 "notebooks/*" = ["ARG001", "PERF401", "B007", "ANN"]
 "explorations/*" = ["B007", "F821", "E402"]

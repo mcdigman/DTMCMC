@@ -27,7 +27,7 @@ class BlankJump(AbstractJump):
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Call the jump"""
         del itrt
-        return sample_point.copy(), 0., True
+        return sample_point.copy(), 0.0, True
 
 
 class AuxilliaryStrategyParameters:
@@ -37,7 +37,7 @@ class AuxilliaryStrategyParameters:
         """Initialize the object with the prescribed parameters"""
         self.config: ConfigParser = config
         config_a = self.config['AuxilliaryJumpManager']
-        self.auxilliary_jump_weight = config_a.getfloat('auxilliary_jump_weight', 0.)
+        self.auxilliary_jump_weight = config_a.getfloat('auxilliary_jump_weight', 0.0)
 
     def copy(self) -> AuxilliaryStrategyParameters:
         """Copy the object"""
@@ -75,7 +75,7 @@ class AuxilliaryJumpManager(JumpManager):
 
         self.jump_weights = jump_weights
 
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""

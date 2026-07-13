@@ -49,13 +49,13 @@ class AbstractJump(ABC):
                 if no proposal density factor is needed can just be set to 0.
             success: a boolean, whether generating the proposal succeeded
         """
-        return np.zeros(sample_point.size), 0., True
+        return np.zeros(sample_point.size), 0.0, True
 
 
 @njit()
 def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     """Helper that picks a random integer with the given input probabilities"""
-    choose_val: float = np.random.uniform(0., 1)
+    choose_val: float = np.random.uniform(0.0, 1)
     choose_sum: float = jump_probs[0]
     choose: int = jump_probs.size - 1
     for itrp in range(1, jump_probs.size):
@@ -92,7 +92,9 @@ class JumpManager(ABC):
 
         self.set_jump_probs()
 
-    def dispatch_jump(self, sample_point: NDArray[np.floating], itrt: int, choose: int = -1) -> tuple[NDArray[np.floating], float, bool, int]:
+    def dispatch_jump(
+        self, sample_point: NDArray[np.floating], itrt: int, choose: int = -1
+    ) -> tuple[NDArray[np.floating], float, bool, int]:
         """Dispatch the specified proposal
         inputs:
             sample_point: 1D float array, the parameters of the current point
@@ -143,16 +145,16 @@ class JumpManager(ABC):
         # unnormalized jump weights must be provided for in a subclass
         self.set_jump_weights()
 
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
-        if np.any(self.jump_weights != 0.):
+        if np.any(self.jump_weights != 0.0):
             # get the normalized conditional jump probabilities
             self.jump_probs = (self.jump_weights.T / self.jump_weights.sum(axis=1)).T
-            self.jump_probs[~np.isfinite(self.jump_probs)] = 0.
+            self.jump_probs[~np.isfinite(self.jump_probs)] = 0.0
         else:
             self.jump_probs = np.zeros((self.n_chain, self.n_jump_types))
 
-        assert np.all(self.jump_probs >= 0.)
+        assert np.all(self.jump_probs >= 0.0)
 
         for itrt in range(self.jump_probs.shape[0]):
             # sanity check that all rows are either normalized  to 1 or sum to 0
@@ -179,7 +181,9 @@ class JumpManager(ABC):
         """
         del samples
 
-    def post_block_update(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
+    def post_block_update(
+        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
+    ) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         inputs:

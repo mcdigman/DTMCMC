@@ -24,13 +24,13 @@ def main() -> int:
     """Measure self-KL noise and timing across snapshot sizes."""
     rng = get_rng(RNG_SEED)
     references = {
-        'gaussian5d': lambda n: draw_truncated_gaussian(n, 5, 10., rng),
+        'gaussian5d': lambda n: draw_truncated_gaussian(n, 5, 10.0, rng),
         'cake5d': lambda n: draw_cake(n, 5, rng),
         'eggbox5d': lambda n: draw_eggbox(n, 5, rng),
     }
 
     # pay nn_kl's one-time numba compilation before any timed call
-    nn_kl(draw_truncated_gaussian(256, 5, 10., rng), draw_truncated_gaussian(256, 5, 10., rng), 256, rng)
+    nn_kl(draw_truncated_gaussian(256, 5, 10.0, rng), draw_truncated_gaussian(256, 5, 10.0, rng), 256, rng)
 
     results: dict[str, object] = {'snapshot_sizes': SNAPSHOT_SIZES, 'n_repeats': N_REPEATS, 'rng_seed': RNG_SEED}
     for ref_name, draw in references.items():
@@ -38,7 +38,7 @@ def main() -> int:
         cost_by_size = {}
         for size in SNAPSHOT_SIZES:
             values = np.zeros(N_REPEATS)
-            elapsed = 0.
+            elapsed = 0.0
             for itrr in range(N_REPEATS):
                 # draw outside the timed section: the cost column is the
                 # per-checkpoint nn_kl evaluation alone
@@ -47,9 +47,15 @@ def main() -> int:
                 values[itrr] = nn_kl(ref_draw, test_draw, size, rng)
                 elapsed += time.perf_counter() - start
             elapsed /= N_REPEATS
-            noise_by_size[str(size)] = {'mean': float(values.mean()), 'sd': float(values.std()), 'max_abs': float(np.abs(values).max())}
+            noise_by_size[str(size)] = {
+                'mean': float(values.mean()),
+                'sd': float(values.std()),
+                'max_abs': float(np.abs(values).max()),
+            }
             cost_by_size[str(size)] = elapsed
-            print(f'{ref_name:>10} n={size:>6}: self-KL {values.mean():+.3f} +- {values.std():.3f} (max |.| {np.abs(values).max():.3f}), {elapsed:.2f} s/eval')
+            print(
+                f'{ref_name:>10} n={size:>6}: self-KL {values.mean():+.3f} +- {values.std():.3f} (max |.| {np.abs(values).max():.3f}), {elapsed:.2f} s/eval'
+            )
         results[ref_name] = {'noise': noise_by_size, 'seconds_per_eval': cost_by_size}
 
     save_summary('nnkl_calibration', results)

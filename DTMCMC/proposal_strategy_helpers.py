@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 hold some helpers to help determine the proposal strategy
 """
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:

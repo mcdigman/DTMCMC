@@ -125,11 +125,19 @@ def _git_state() -> tuple[str, bool]:
         # static arg list, repo-root cwd; provenance only, no untrusted input
         commit_res = subprocess.run(
             ['git', 'rev-parse', 'HEAD'],  # noqa: S607
-            cwd=repo_root(), capture_output=True, text=True, check=False, timeout=10,
+            cwd=repo_root(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
         status_res = subprocess.run(
             ['git', 'status', '--porcelain'],  # noqa: S607
-            cwd=repo_root(), capture_output=True, text=True, check=False, timeout=10,
+            cwd=repo_root(),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
         )
     except OSError:
         return 'unknown', True
@@ -138,7 +146,9 @@ def _git_state() -> tuple[str, bool]:
     return commit_res.stdout.strip(), status_res.stdout.strip() != ''
 
 
-def collect_provenance(run_seed: int, child_seed_python: int, child_seed_numba: int, spec_toml: str, proposal_config_ini: str) -> RunProvenance:
+def collect_provenance(
+    run_seed: int, child_seed_python: int, child_seed_numba: int, spec_toml: str, proposal_config_ini: str
+) -> RunProvenance:
     """Collect run-start provenance (git state, host, versions, resolved config texts)."""
     git_commit, git_dirty = _git_state()
     return RunProvenance(
@@ -247,11 +257,19 @@ def write_artifact(
             history_grp.attrs['frozen_block'] = -1 if frozen_block is None else frozen_block
             history_grp.attrs['budget_blocks'] = adaptive_state.budget_blocks
             history_grp.create_dataset('Ts', data=np.asarray([record.Ts for record in ladder_history]))
-            history_grp.create_dataset('block_index', data=np.asarray([record.block_index for record in ladder_history], dtype=np.int64))
-            history_grp.create_dataset('applied', data=np.asarray([record.applied for record in ladder_history], dtype=np.bool_))
-            history_grp.create_dataset('t_cold_window', data=np.asarray([record.t_cold_window for record in ladder_history]))
+            history_grp.create_dataset(
+                'block_index', data=np.asarray([record.block_index for record in ladder_history], dtype=np.int64)
+            )
+            history_grp.create_dataset(
+                'applied', data=np.asarray([record.applied for record in ladder_history], dtype=np.bool_)
+            )
+            history_grp.create_dataset(
+                't_cold_window', data=np.asarray([record.t_cold_window for record in ladder_history])
+            )
             history_grp.create_dataset('max_dlog_t', data=np.asarray([record.max_dlog_t for record in ladder_history]))
-            history_grp.create_dataset('n_pool_points', data=np.asarray([record.n_pool_points for record in ladder_history], dtype=np.int64))
+            history_grp.create_dataset(
+                'n_pool_points', data=np.asarray([record.n_pool_points for record in ladder_history], dtype=np.int64)
+            )
 
         moments_grp = hf.create_group('moments')
         moments_grp.create_dataset('logL_means', data=_stack_blocks(sampler.logL_means, n_chain))
@@ -264,7 +282,9 @@ def write_artifact(
         moments_grp.create_dataset('logL_prod21_means', data=_stack_blocks(sampler.logL_prod21_means, n_chain - 1))
         moments_grp.create_dataset('logL_prod12_means', data=_stack_blocks(sampler.logL_prod12_means, n_chain - 1))
         moments_grp.create_dataset('logL_vars', data=_stack_blocks(sampler.logL_vars, n_chain))
-        moments_grp.create_dataset('block_end_itrn', data=np.arange(1, n_blocks_done + 1, dtype=np.int64) * sampler.block_size)
+        moments_grp.create_dataset(
+            'block_end_itrn', data=np.arange(1, n_blocks_done + 1, dtype=np.int64) * sampler.block_size
+        )
 
         trackers_grp = hf.create_group('trackers')
         # jump-type names aligned with the accept/esd records' last axis, so
@@ -273,13 +293,27 @@ def write_artifact(
         trackers_grp.create_dataset('accept_record', data=tracker.accept_record)
         trackers_grp.create_dataset('cycle_tracker', data=tracker.cycle_tracker)
         trackers_grp.create_dataset('exchange_tracker', data=tracker.exchange_tracker)
-        trackers_grp.create_dataset('accept_archive', data=_stack_archive(tracker.accept_archive, tracker.accept_record.shape))
-        trackers_grp.create_dataset('cycle_archive', data=_stack_archive(tracker.cycle_archive, tracker.cycle_tracker.shape))
-        trackers_grp.create_dataset('exchange_archive', data=_stack_archive(tracker.exchange_archive, tracker.exchange_tracker.shape))
+        trackers_grp.create_dataset(
+            'accept_archive', data=_stack_archive(tracker.accept_archive, tracker.accept_record.shape)
+        )
+        trackers_grp.create_dataset(
+            'cycle_archive', data=_stack_archive(tracker.cycle_archive, tracker.cycle_tracker.shape)
+        )
+        trackers_grp.create_dataset(
+            'exchange_archive', data=_stack_archive(tracker.exchange_archive, tracker.exchange_tracker.shape)
+        )
         trackers_grp.create_dataset('esd_record', data=tracker.esd_record)
-        trackers_grp.create_dataset('esd_archive', data=np.asarray(tracker.esd_archive) if tracker.esd_archive else np.zeros((0, *tracker.esd_record.shape)))
+        trackers_grp.create_dataset(
+            'esd_archive',
+            data=np.asarray(tracker.esd_archive) if tracker.esd_archive else np.zeros((0, *tracker.esd_record.shape)),
+        )
         trackers_grp.create_dataset('esd_exchange', data=tracker.esd_exchange)
-        trackers_grp.create_dataset('esd_exchange_archive', data=np.asarray(tracker.esd_exchange_archive) if tracker.esd_exchange_archive else np.zeros((0, tracker.esd_exchange.shape[0])))
+        trackers_grp.create_dataset(
+            'esd_exchange_archive',
+            data=np.asarray(tracker.esd_exchange_archive)
+            if tracker.esd_exchange_archive
+            else np.zeros((0, tracker.esd_exchange.shape[0])),
+        )
         trackers_grp.create_dataset('itrn_archive', data=np.asarray(tracker.itrn_archive, dtype=np.int64))
 
         # round-trip event log: rows of (walker id, iteration, direction)

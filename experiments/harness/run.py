@@ -16,7 +16,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--seed', type=int, default=None, help='override the run seed in the spec')
     parser.add_argument('--out', default='artifacts', help='output directory for the artifact (default: artifacts/)')
     parser.add_argument(
-        '--sampler-verbosity', type=int, default=0, choices=(0, 1, 2),
+        '--sampler-verbosity',
+        type=int,
+        default=0,
+        choices=(0, 1, 2),
         help='tracker-summary printing: 0 = silent (default), 1 = at each major-report boundary only, 2 = every checkpoint',
     )
     args = parser.parse_args(argv)

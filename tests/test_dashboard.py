@@ -37,7 +37,15 @@ TINY_FIXED_SPEC: dict[str, Any] = {
     'name': 'dash_tiny_fixed',
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
-    'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
+    'ladder': {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 1,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    },
     'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'arg_record': [3], 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 256}},
@@ -48,7 +56,15 @@ TINY_ADAPTIVE_SPEC: dict[str, Any] = {
     'name': 'dash_tiny_adaptive',
     'seed': 43,
     'run': {'n_steps': 512, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4},
-    'adaptive': {'mode': 'entropy', 'update_every_blocks': 2, 'budget_blocks': 4, 'forgetting': 0.15, 'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'n_prior_draws': 64},
+    'adaptive': {
+        'mode': 'entropy',
+        'update_every_blocks': 2,
+        'budget_blocks': 4,
+        'forgetting': 0.15,
+        'freeze_dlog': 0.05,
+        'freeze_consecutive': 3,
+        'n_prior_draws': 64,
+    },
 }
 
 
@@ -90,7 +106,9 @@ def midrun_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
     try:
         seeds = seed_run(spec.seed)
         config = spec.build_proposal_config()
-        provenance = collect_provenance(spec.seed, *seeds, spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config))
+        provenance = collect_provenance(
+            spec.seed, *seeds, spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config)
+        )
         sampler, _like_obj = build_sampler(spec, config=config, artifact_path=out_path, provenance=provenance)
         sampler.advance_N_blocks(2)
     finally:
@@ -196,13 +214,13 @@ def test_rate_tables_are_rates(fixed_artifact: Path) -> None:
     for window in ('total', 'latest'):
         table = diag.acceptance_by_temperature(snapshot, window)
         finite = np.isfinite(table.values)
-        assert np.all(table.values[finite] >= 0.)
-        assert np.all(table.values[finite] <= 1.)
+        assert np.all(table.values[finite] >= 0.0)
+        assert np.all(table.values[finite] <= 1.0)
         assert set(table.labels) <= set(snapshot.jump_labels)
         rates = diag.exchange_rates(snapshot, window)
         finite_nn = np.isfinite(rates.nn_rate)
-        assert np.all(rates.nn_rate[finite_nn] >= 0.)
-        assert np.all(rates.nn_rate[finite_nn] <= 1.)
+        assert np.all(rates.nn_rate[finite_nn] >= 0.0)
+        assert np.all(rates.nn_rate[finite_nn] <= 1.0)
     history = diag.exchange_history(snapshot)
     assert history.itrns.size == history.nn_rates.shape[0]
     assert int(history.itrns[-1]) == snapshot.n_iterations
@@ -219,7 +237,7 @@ def test_esd_normalizations(fixed_artifact: Path) -> None:
     per_accepted = diag.esd_by_temperature(snapshot, accepted_only=True)
     assert per_proposal.labels == per_accepted.labels
     both = np.isfinite(per_proposal.values) & np.isfinite(per_accepted.values)
-    assert np.all(per_accepted.values[both] >= 0.)
+    assert np.all(per_accepted.values[both] >= 0.0)
     sums_accepted = per_accepted.values[both] * per_accepted.trials[both]
     sums_all = per_proposal.values[both] * per_proposal.trials[both]
     assert np.all(sums_accepted <= sums_all + 1e-9)
@@ -237,8 +255,8 @@ def test_flow_and_round_trips(fixed_artifact: Path) -> None:
     snapshot = load_snapshot(fixed_artifact)
     flow = diag.flow_fraction(snapshot)
     finite = np.isfinite(flow.f_latest)
-    assert np.all(flow.f_latest[finite] >= 0.)
-    assert np.all(flow.f_latest[finite] <= 1.)
+    assert np.all(flow.f_latest[finite] >= 0.0)
+    assert np.all(flow.f_latest[finite] <= 1.0)
     trips = diag.round_trip_summary(snapshot)
     assert np.all(np.diff(trips.itrns_cold) >= 0)
     assert np.all(np.diff(trips.cumulative_cold) == 1)
@@ -250,10 +268,10 @@ def test_acf_basics(fixed_artifact: Path) -> None:
     snapshot = load_snapshot(fixed_artifact)
     results = diag.logl_acf(snapshot, [0], max_lag=64)
     assert len(results) == 1
-    assert results[0].rho[0] == pytest.approx(1.)
+    assert results[0].rho[0] == pytest.approx(1.0)
     noise = get_rng(7).standard_normal(4096)
     rho = diag.normalized_acf(noise, 128)
-    assert diag.integrated_autocorr_time(rho) < 3.
+    assert diag.integrated_autocorr_time(rho) < 3.0
     # out-of-range chains are skipped rather than raising
     assert diag.logl_acf(snapshot, [99], max_lag=64) == []
 
@@ -294,7 +312,9 @@ def test_rate_tables_use_segment_ladders(adaptive_artifact: Path) -> None:
     assert snapshot.history is not None
     applied_Ts = snapshot.history.Ts[snapshot.history.applied]
     assert applied_Ts.shape[0] > 0, 'fixture must apply at least one ladder update'
-    assert not np.array_equal(np.unique(snapshot.initial_Ts), np.unique(snapshot.Ts)), 'fixture ladder must actually move'
+    assert not np.array_equal(np.unique(snapshot.initial_Ts), np.unique(snapshot.Ts)), (
+        'fixture ladder must actually move'
+    )
 
     first_window = diag.acceptance_by_temperature(snapshot, 0)
     assert np.array_equal(first_window.Ts, np.unique(snapshot.initial_Ts))
@@ -388,7 +408,7 @@ def test_checks_flag_synthetic_pathologies(adaptive_artifact: Path) -> None:
 
     # DE rank collapse: only one nonzero eigenvalue at the latest checkpoint
     eigvals = snapshot.de_spectrum_eigvals.copy()
-    eigvals[-1, :, 1:] = 0.
+    eigvals[-1, :, 1:] = 0.0
     collapsed = dataclasses.replace(snapshot, de_spectrum_eigvals=eigvals)
     assert _single_check('de_rank', collapsed).status == checks.STATUS_ALERT
 
@@ -466,4 +486,13 @@ def test_dash_app_builds(fixed_artifact: Path) -> None:
     app = create_app(DashboardConfig(artifact=fixed_artifact))
     assert isinstance(app, dash.Dash)
     layout_ids = {component.id for component in app.layout._traverse() if getattr(component, 'id', None)}
-    assert {'poll', 'snapshot-token', 'header', 'tab-select', 'tab-content', 'artifact-select', 'theme-select', 'status-checks'} <= layout_ids
+    assert {
+        'poll',
+        'snapshot-token',
+        'header',
+        'tab-select',
+        'tab-content',
+        'artifact-select',
+        'theme-select',
+        'status-checks',
+    } <= layout_ids

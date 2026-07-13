@@ -92,12 +92,14 @@ def check_de_rank(snapshot: RunSnapshot, warn_ratio: float = 0.7, alert_ratio: f
     return _grade(ratio, warn_ratio, alert_ratio, larger_is_worse=False), message
 
 
-def check_acceptance_roughness(snapshot: RunSnapshot, warn_jump: float = 0.25, alert_jump: float = 0.5, min_trials: int = 30) -> tuple[str, str]:
+def check_acceptance_roughness(
+    snapshot: RunSnapshot, warn_jump: float = 0.25, alert_jump: float = 0.5, min_trials: int = 30
+) -> tuple[str, str]:
     """Largest acceptance-rate jump between adjacent temperatures per proposal."""
     table = diag.acceptance_by_temperature(snapshot, 'segment')
     if not table.labels:
         return STATUS_NA, 'no proposals recorded yet'
-    worst = 0.
+    worst = 0.0
     worst_desc = ''
     found_pair = False
     finite_T = np.isfinite(table.Ts)
@@ -121,7 +123,9 @@ def check_acceptance_roughness(snapshot: RunSnapshot, warn_jump: float = 0.25, a
     return _grade(worst, warn_jump, alert_jump), worst_desc
 
 
-def check_exchange_share(snapshot: RunSnapshot, warn_share: float = 0.95, alert_share: float = 0.995) -> tuple[str, str]:
+def check_exchange_share(
+    snapshot: RunSnapshot, warn_share: float = 0.95, alert_share: float = 0.995
+) -> tuple[str, str]:
     """Fraction of accepted squared displacement carried by exchanges.
 
     Exchanges legitimately move a lot in parallel tempering; a share of
@@ -132,14 +136,16 @@ def check_exchange_share(snapshot: RunSnapshot, warn_share: float = 0.95, alert_
     proposal_sums = diag.window_counts(snapshot.esd_record, snapshot.esd_archive, 'total')[1]
     exchange_total = float(np.asarray(exchange_sums).sum())
     proposal_total = float(np.asarray(proposal_sums).sum())
-    if exchange_total + proposal_total <= 0.:
+    if exchange_total + proposal_total <= 0.0:
         return STATUS_NA, 'no accepted displacement recorded yet'
     share = exchange_total / (exchange_total + proposal_total)
-    message = f'exchanges carry {100. * share:.1f}% of accepted |Δx|² (proposals {100. * (1. - share):.1f}%)'
+    message = f'exchanges carry {100.0 * share:.1f}% of accepted |Δx|² (proposals {100.0 * (1.0 - share):.1f}%)'
     return _grade(share, warn_share, alert_share), message
 
 
-def check_exchange_uniformity(snapshot: RunSnapshot, warn_spread: float = 0.4, alert_spread: float = 0.7, min_trials: int = 50) -> tuple[str, str]:
+def check_exchange_uniformity(
+    snapshot: RunSnapshot, warn_spread: float = 0.4, alert_spread: float = 0.7, min_trials: int = 50
+) -> tuple[str, str]:
     """Spread of nearest-neighbor exchange acceptance across temperatures.
 
     A constant-acceptance ladder working as designed keeps this flat;
@@ -150,11 +156,15 @@ def check_exchange_uniformity(snapshot: RunSnapshot, warn_spread: float = 0.4, a
     if int(usable.sum()) < 2:
         return STATUS_NA, f'fewer than two temperature bins with ≥{min_trials} exchange trials'
     spread = float(rates.nn_rate[usable].max() - rates.nn_rate[usable].min())
-    message = f'nn acceptance spans {rates.nn_rate[usable].min():.2f}-{rates.nn_rate[usable].max():.2f} (spread {spread:.2f})'
+    message = (
+        f'nn acceptance spans {rates.nn_rate[usable].min():.2f}-{rates.nn_rate[usable].max():.2f} (spread {spread:.2f})'
+    )
     return _grade(spread, warn_spread, alert_spread), message
 
 
-def check_exchange_bottleneck(snapshot: RunSnapshot, warn_rate: float = 0.05, alert_rate: float = 0.01, min_trials: int = 100) -> tuple[str, str]:
+def check_exchange_bottleneck(
+    snapshot: RunSnapshot, warn_rate: float = 0.05, alert_rate: float = 0.01, min_trials: int = 100
+) -> tuple[str, str]:
     """Near-zero exchange link: the ladder splits into disconnected islands."""
     rates = diag.exchange_rates(snapshot, 'segment')
     usable = np.isfinite(rates.nn_rate) & (rates.nn_trials >= min_trials)
@@ -164,7 +174,7 @@ def check_exchange_bottleneck(snapshot: RunSnapshot, warn_rate: float = 0.05, al
     Ts_use = rates.Ts[usable]
     arg_min = int(np.argmin(rates_use))
     T_tag = f'T={Ts_use[arg_min]:.4g}' if np.isfinite(Ts_use[arg_min]) else 'T=inf'
-    message = f'weakest nn link accepts {100. * rates_use[arg_min]:.2f}% at {T_tag}'
+    message = f'weakest nn link accepts {100.0 * rates_use[arg_min]:.2f}% at {T_tag}'
     return _grade(float(rates_use[arg_min]), warn_rate, alert_rate, larger_is_worse=False), message
 
 
@@ -178,7 +188,9 @@ def _half_block_means(snapshot: RunSnapshot, min_blocks_per_half: int) -> tuple[
     return snapshot.logL_means[start:mid], snapshot.logL_means[mid:stop]
 
 
-def check_thermo_stability(snapshot: RunSnapshot, warn_log2: float = 1.5, alert_log2: float = 2.5, min_blocks_per_half: int = 6) -> tuple[str, str]:
+def check_thermo_stability(
+    snapshot: RunSnapshot, warn_log2: float = 1.5, alert_log2: float = 2.5, min_blocks_per_half: int = 6
+) -> tuple[str, str]:
     """Var(logL) stability between the two halves of the current segment.
 
     The heat capacity C(T) = Var(logL)/T² is the thermodynamic profile the
@@ -191,16 +203,16 @@ def check_thermo_stability(snapshot: RunSnapshot, warn_log2: float = 1.5, alert_
         return STATUS_NA, f'needs ≥{2 * min_blocks_per_half} blocks on the current ladder ({n_blocks} so far)'
     mid = start + n_blocks // 2
     finite_T = np.isfinite(np.asarray(snapshot.Ts))
-    worst = 0.
+    worst = 0.0
     worst_slot = -1
     for slot in np.flatnonzero(finite_T):
         e1_a = snapshot.logL_means[start:mid, slot]
         e2_a = snapshot.logL2_means[start:mid, slot]
         e1_b = snapshot.logL_means[mid:stop, slot]
         e2_b = snapshot.logL2_means[mid:stop, slot]
-        var_a = max(float(e2_a.mean() - e1_a.mean()**2), 0.)
-        var_b = max(float(e2_b.mean() - e1_b.mean()**2), 0.)
-        if var_a <= 0. or var_b <= 0.:
+        var_a = max(float(e2_a.mean() - e1_a.mean() ** 2), 0.0)
+        var_b = max(float(e2_b.mean() - e1_b.mean() ** 2), 0.0)
+        if var_a <= 0.0 or var_b <= 0.0:
             continue
         log2_ratio = abs(float(np.log2(var_b / var_a)))
         if log2_ratio > worst:
@@ -208,11 +220,13 @@ def check_thermo_stability(snapshot: RunSnapshot, warn_log2: float = 1.5, alert_
             worst_slot = int(slot)
     if worst_slot < 0:
         return STATUS_NA, 'no slot with positive Var(logL) in both halves'
-    message = f'largest half-to-half Var(logL) change x{2.**worst:.2f} at slot {worst_slot} ({_temperature_tag(snapshot.Ts, worst_slot)})'
+    message = f'largest half-to-half Var(logL) change x{2.0**worst:.2f} at slot {worst_slot} ({_temperature_tag(snapshot.Ts, worst_slot)})'
     return _grade(worst, warn_log2, alert_log2), message
 
 
-def check_logl_drift(snapshot: RunSnapshot, warn_z: float = 5., alert_z: float = 10., min_blocks_per_half: int = 4) -> tuple[str, str]:
+def check_logl_drift(
+    snapshot: RunSnapshot, warn_z: float = 5.0, alert_z: float = 10.0, min_blocks_per_half: int = 4
+) -> tuple[str, str]:
     """Drift of blockwise mean logL between halves of the current segment.
 
     A large drift z-score means the chain distribution is still moving
@@ -227,16 +241,16 @@ def check_logl_drift(snapshot: RunSnapshot, warn_z: float = 5., alert_z: float =
     with np.errstate(invalid='ignore', divide='ignore'):
         scale = np.sqrt(first.var(axis=0) / first.shape[0] + second.var(axis=0) / second.shape[0])
         z_scores = np.abs(second.mean(axis=0) - first.mean(axis=0)) / scale
-    z_scores = np.where(finite_T & np.isfinite(z_scores), z_scores, 0.)
+    z_scores = np.where(finite_T & np.isfinite(z_scores), z_scores, 0.0)
     worst_slot = int(np.argmax(z_scores))
     worst = float(z_scores[worst_slot])
-    if worst <= 0.:
+    if worst <= 0.0:
         return STATUS_NA, 'no slot with a finite drift estimate'
     message = f'largest block-mean logL drift z≈{worst:.1f} at slot {worst_slot} ({_temperature_tag(snapshot.Ts, worst_slot)})'
     return _grade(worst, warn_z, alert_z), message
 
 
-def check_round_trips(snapshot: RunSnapshot, warn_per_walker: float = 1., min_blocks: int = 8) -> tuple[str, str]:
+def check_round_trips(snapshot: RunSnapshot, warn_per_walker: float = 1.0, min_blocks: int = 8) -> tuple[str, str]:
     """Round-trip traffic: walkers should complete hot-cold-hot cycles."""
     if snapshot.n_blocks < min_blocks:
         return STATUS_NA, f'needs ≥{min_blocks} blocks ({snapshot.n_blocks} so far)'
@@ -249,7 +263,9 @@ def check_round_trips(snapshot: RunSnapshot, warn_per_walker: float = 1., min_bl
     return (STATUS_WARN if per_walker < warn_per_walker else STATUS_OK), message
 
 
-def check_cold_tau(snapshot: RunSnapshot, warn_taus: float = 50., alert_taus: float = 10., min_rows: int = 64) -> tuple[str, str]:
+def check_cold_tau(
+    snapshot: RunSnapshot, warn_taus: float = 50.0, alert_taus: float = 10.0, min_rows: int = 64
+) -> tuple[str, str]:
     """Cold-chain logL autocorrelation time against the stored history length.
 
     Fewer than ~50 integrated times of data makes posterior summaries
@@ -262,13 +278,15 @@ def check_cold_tau(snapshot: RunSnapshot, warn_taus: float = 50., alert_taus: fl
     results = diag.logl_acf(snapshot, [0], max_lag=max((n_rows - burnin_rows) // 4, 8), burnin_rows=burnin_rows)
     if not results:
         return STATUS_NA, 'no stored logL for the cold chain'
-    tau_rows = max(results[0].tau_int, 1.)
+    tau_rows = max(results[0].tau_int, 1.0)
     n_taus = (n_rows - burnin_rows) / tau_rows
     message = f'store holds {n_taus:.0f} integrated times (τ≈{tau_rows * snapshot.store_thin:.0f} iterations)'
     return _grade(n_taus, warn_taus, alert_taus, larger_is_worse=False), message
 
 
-def check_flow_linearity(snapshot: RunSnapshot, warn_dev: float = 0.3, alert_dev: float = 0.5, min_blocks: int = 8) -> tuple[str, str]:
+def check_flow_linearity(
+    snapshot: RunSnapshot, warn_dev: float = 0.3, alert_dev: float = 0.5, min_blocks: int = 8
+) -> tuple[str, str]:
     """Deviation of the walker up-flow fraction from the linear ideal.
 
     The constant-round-trip-flow profile is linear in rung index; a large
@@ -287,7 +305,9 @@ def check_flow_linearity(snapshot: RunSnapshot, warn_dev: float = 0.3, alert_dev
     return _grade(worst, warn_dev, alert_dev), message
 
 
-def check_cold_acceptance(snapshot: RunSnapshot, warn_rate: float = 0.02, alert_rate: float = 0.005, min_trials: int = 200) -> tuple[str, str]:
+def check_cold_acceptance(
+    snapshot: RunSnapshot, warn_rate: float = 0.02, alert_rate: float = 0.005, min_trials: int = 200
+) -> tuple[str, str]:
     """Overall acceptance at the coldest slot: is the cold chain frozen?
 
     Summed across every proposal type, so a legitimately cold-hostile
@@ -303,7 +323,7 @@ def check_cold_acceptance(snapshot: RunSnapshot, warn_rate: float = 0.02, alert_
     with np.errstate(invalid='ignore'):
         accepted = float(np.nansum(table.values[cold_bin] * table.trials[cold_bin]))
     rate = accepted / trials
-    message = f'coldest bin (T={table.Ts[cold_bin]:.4g}) accepted {100. * rate:.2f}% of {trials:.0f} proposals'
+    message = f'coldest bin (T={table.Ts[cold_bin]:.4g}) accepted {100.0 * rate:.2f}% of {trials:.0f} proposals'
     return _grade(rate, warn_rate, alert_rate, larger_is_worse=False), message
 
 
@@ -315,7 +335,10 @@ def check_finite_moments(snapshot: RunSnapshot, recent_blocks: int = 4) -> tuple
     bad_means = int((~np.isfinite(snapshot.logL_means[recent])).sum())
     bad_vars = int((~np.isfinite(snapshot.logL_vars[recent])).sum())
     if bad_means or bad_vars:
-        return STATUS_ALERT, f'{bad_means + bad_vars} non-finite entries in the last {recent_blocks} blocks of logL moments'
+        return (
+            STATUS_ALERT,
+            f'{bad_means + bad_vars} non-finite entries in the last {recent_blocks} blocks of logL moments',
+        )
     return STATUS_OK, f'all logL moments finite over the last {recent_blocks} blocks'
 
 
@@ -334,19 +357,72 @@ def check_ladder_freeze(snapshot: RunSnapshot) -> tuple[str, str]:
 
 
 _SPECS: tuple[CheckSpec, ...] = (
-    CheckSpec('finite_moments', 'Finite moments', 'Recent block logL moments contain no NaN/inf.', check_finite_moments),
-    CheckSpec('ladder_freeze', 'Ladder freeze', 'Adaptive ladder has frozen, and by criterion rather than budget.', check_ladder_freeze),
-    CheckSpec('logl_drift', 'Mean logL drift', 'Blockwise mean logL is not drifting between recent halves of the current segment.', check_logl_drift),
-    CheckSpec('thermo_stability', 'Thermodynamic stability', 'Var(logL) (the heat-capacity profile) is stable over recent iterations.', check_thermo_stability),
-    CheckSpec('round_trips', 'Round trips', 'Walkers complete hot-cold round trips at a healthy rate.', check_round_trips),
-    CheckSpec('flow_linearity', 'Walker flow', 'The up-flow fraction stays near the linear constant-flow ideal.', check_flow_linearity),
-    CheckSpec('exchange_uniformity', 'Exchange uniformity', 'Nearest-neighbor exchange acceptance is even across temperatures.', check_exchange_uniformity),
-    CheckSpec('exchange_bottleneck', 'Exchange bottleneck', 'No temperature link has near-zero exchange acceptance.', check_exchange_bottleneck),
-    CheckSpec('exchange_share', 'Exchange flow share', 'Within-temperature proposals still contribute meaningful movement.', check_exchange_share),
-    CheckSpec('acceptance_roughness', 'Acceptance smoothness', 'Proposal acceptance does not jump sharply between adjacent temperatures.', check_acceptance_roughness),
-    CheckSpec('cold_acceptance', 'Cold-chain acceptance', 'The coldest chain is still accepting moves.', check_cold_acceptance),
-    CheckSpec('cold_tau', 'Cold-chain correlation', 'The stored cold-chain history spans many autocorrelation times.', check_cold_tau),
-    CheckSpec('de_rank', 'DE buffer rank', 'The DE difference spectrum keeps (near) full effective rank.', check_de_rank),
+    CheckSpec(
+        'finite_moments', 'Finite moments', 'Recent block logL moments contain no NaN/inf.', check_finite_moments
+    ),
+    CheckSpec(
+        'ladder_freeze',
+        'Ladder freeze',
+        'Adaptive ladder has frozen, and by criterion rather than budget.',
+        check_ladder_freeze,
+    ),
+    CheckSpec(
+        'logl_drift',
+        'Mean logL drift',
+        'Blockwise mean logL is not drifting between recent halves of the current segment.',
+        check_logl_drift,
+    ),
+    CheckSpec(
+        'thermo_stability',
+        'Thermodynamic stability',
+        'Var(logL) (the heat-capacity profile) is stable over recent iterations.',
+        check_thermo_stability,
+    ),
+    CheckSpec(
+        'round_trips', 'Round trips', 'Walkers complete hot-cold round trips at a healthy rate.', check_round_trips
+    ),
+    CheckSpec(
+        'flow_linearity',
+        'Walker flow',
+        'The up-flow fraction stays near the linear constant-flow ideal.',
+        check_flow_linearity,
+    ),
+    CheckSpec(
+        'exchange_uniformity',
+        'Exchange uniformity',
+        'Nearest-neighbor exchange acceptance is even across temperatures.',
+        check_exchange_uniformity,
+    ),
+    CheckSpec(
+        'exchange_bottleneck',
+        'Exchange bottleneck',
+        'No temperature link has near-zero exchange acceptance.',
+        check_exchange_bottleneck,
+    ),
+    CheckSpec(
+        'exchange_share',
+        'Exchange flow share',
+        'Within-temperature proposals still contribute meaningful movement.',
+        check_exchange_share,
+    ),
+    CheckSpec(
+        'acceptance_roughness',
+        'Acceptance smoothness',
+        'Proposal acceptance does not jump sharply between adjacent temperatures.',
+        check_acceptance_roughness,
+    ),
+    CheckSpec(
+        'cold_acceptance', 'Cold-chain acceptance', 'The coldest chain is still accepting moves.', check_cold_acceptance
+    ),
+    CheckSpec(
+        'cold_tau',
+        'Cold-chain correlation',
+        'The stored cold-chain history spans many autocorrelation times.',
+        check_cold_tau,
+    ),
+    CheckSpec(
+        'de_rank', 'DE buffer rank', 'The DE difference spectrum keeps (near) full effective rank.', check_de_rank
+    ),
 )
 
 CHECKS: dict[str, CheckSpec] = {spec.check_id: spec for spec in _SPECS}

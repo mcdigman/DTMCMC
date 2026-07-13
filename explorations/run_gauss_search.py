@@ -31,23 +31,23 @@ if __name__ == '__main__':
     t0 = perf_counter()
 
     # starting variables
-    n_chain = 8                       # number of total chains for parallel tempering
-    n_cold = 1                         # number of T=1 chains for parallel tempering
-    n_burnin = 5000                    # number of iterations to discard as burn in
-    block_size = 1000                  # number of iterations per block when advancing the chain state
-    store_size = 100000                # number of samples to store total
+    n_chain = 8  # number of total chains for parallel tempering
+    n_cold = 1  # number of T=1 chains for parallel tempering
+    n_burnin = 5000  # number of iterations to discard as burn in
+    block_size = 1000  # number of iterations per block when advancing the chain state
+    store_size = 100000  # number of samples to store total
     N_blocks = store_size // block_size  # number of blocks the sampler must iterate through
     n_par = 5
 
-    T_max = 100.                       # maximum temperature for geometric part of temperature ladder
+    T_max = 100.0  # maximum temperature for geometric part of temperature ladder
 
-    params_true = np.zeros(n_par)      # true parameters for search
+    params_true = np.zeros(n_par)  # true parameters for search
 
     # create needed objects
     T_ladder = GeometricTemperatureLadder(n_chain, n_cold=n_cold, T_max=T_max)  # get the temperature ladder object
 
     like_obj = trial_likelihood.GaussianLikelihood(n_par)
-    params_true = like_obj.correct_bounds(params_true)                 # make sure the conventions on the parameters match
+    params_true = like_obj.correct_bounds(params_true)  # make sure the conventions on the parameters match
 
     # create the starting samples
     starting_samples = np.zeros((T_ladder.n_chain, like_obj.n_par))
@@ -57,14 +57,24 @@ if __name__ == '__main__':
 
     # create the overarching proposal manager object
     exchange_manager = eh.ExchangeManager(strategy=eh.RANDOM_TARGETS, track_full_exchanges=True)
-    proposal_manager = get_default_proposal_manager(T_ladder, like_obj, starting_samples, exchange_manager_loc=exchange_manager)
+    proposal_manager = get_default_proposal_manager(
+        T_ladder, like_obj, starting_samples, exchange_manager_loc=exchange_manager
+    )
 
     print('Chain parameters', n_cold, n_chain, n_burnin, block_size, store_size, T_max)
 
     # create the chain object, recording every chain: the n_cold readout
     # chains occupy the first store columns and arg_record appends the
     # rest in order, so store column j is chain j
-    mcc = DTMCMCSampler(T_ladder, like_obj, block_size, store_size, starting_samples=starting_samples, arg_record=np.arange(n_cold, n_chain), proposal_manager=proposal_manager)
+    mcc = DTMCMCSampler(
+        T_ladder,
+        like_obj,
+        block_size,
+        store_size,
+        starting_samples=starting_samples,
+        arg_record=np.arange(n_cold, n_chain),
+        proposal_manager=proposal_manager,
+    )
 
     t_init_end = perf_counter()
     print('all objects initialized in ', t_init_end - t0, 's')
@@ -83,7 +93,9 @@ if __name__ == '__main__':
     corr_sum.final_prints(mcc, n_burnin)
 
     # get flattened samples for plotting
-    samples_flattened, logLs_flattened = mcc.get_stored_flattened(corr_sum.restrict_n_burnin(mcc, n_burnin), n_chain_out=n_cold)
+    samples_flattened, logLs_flattened = mcc.get_stored_flattened(
+        corr_sum.restrict_n_burnin(mcc, n_burnin), n_chain_out=n_cold
+    )
 
     tf = perf_counter()
 
@@ -117,20 +129,34 @@ if __name__ == '__main__':
 
         # reformat the samples to make the plots look nicer
         labels = like_obj.get_labels()
-        samples_format, params_true_format = like_obj.format_samples_output(mcc.samples_store[:, 0, :].copy(), params_true)
+        samples_format, params_true_format = like_obj.format_samples_output(
+            mcc.samples_store[:, 0, :].copy(), params_true
+        )
 
         # create the corner plot figure
         fig = plt.figure(figsize=(10, 7.5))
-        figure = corner.corner(samples_format, fig=fig, bins=25, hist_kwargs={'density': True}, show_titles=True, title_fmt=None,
-                               title_kwargs={'fontsize': 12}, labels=labels, max_n_ticks=3, label_kwargs={'fontsize': 12}, labelpad=0.15,
-                               smooth=0.25, levels=[0.682, 0.954])
+        figure = corner.corner(
+            samples_format,
+            fig=fig,
+            bins=25,
+            hist_kwargs={'density': True},
+            show_titles=True,
+            title_fmt=None,
+            title_kwargs={'fontsize': 12},
+            labels=labels,
+            max_n_ticks=3,
+            label_kwargs={'fontsize': 12},
+            labelpad=0.15,
+            smooth=0.25,
+            levels=[0.682, 0.954],
+        )
 
         # overplot the true parameters
         corner.overplot_points(figure, params_true_format[None], marker='s', color='tab:blue', markersize=4)
         corner.overplot_lines(figure, params_true_format, color='tab:blue')
 
         # adjust the figure to fit the box better
-        fig.subplots_adjust(wspace=0., hspace=0., left=0.05, top=0.95, right=0.99, bottom=0.05)
+        fig.subplots_adjust(wspace=0.0, hspace=0.0, left=0.05, top=0.95, right=0.99, bottom=0.05)
         for ax in figure.get_axes():
             ax.tick_params(which='both', direction='in', bottom=True, top=True, left=True, right=True, labelsize=6)
         plt.show()

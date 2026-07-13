@@ -35,7 +35,7 @@ def gold_total_entropy() -> float:
     """Total entropy span of the gold cake inputs (the equal-dS budget)."""
     Ts_in = np.load(resolve('data/Ts_cake_gold.npy'))
     vars_in = np.load(resolve('data/vars_cake_gold.npy'))
-    keep = Ts_in >= 1.
+    keep = Ts_in >= 1.0
     betas_use, vars_use = standardize_input_vars(Ts_to_betas(Ts_in[keep]), vars_in[keep])
     return float(get_spacing_integrated(vars_use, betas_use, False)[-1])
 
@@ -54,7 +54,8 @@ def main() -> int:
     """Run the knee scan and freeze-candidate analysis."""
     specs = [
         make_spec(f'knee_nc{n_chain}', seed, cake5_likelihood(), entropy_gold_ladder(n_chain), N_STEPS)
-        for n_chain in N_CHAIN_GRID for seed in SEEDS
+        for n_chain in N_CHAIN_GRID
+        for seed in SEEDS
     ]
     spec_paths = write_specs(specs, PILOT_ROOT / 'knee' / 'specs')
     artifact_paths = run_spec_files(spec_paths, PILOT_ROOT / 'knee')
@@ -64,7 +65,9 @@ def main() -> int:
         for itrs, seed in enumerate(SEEDS):
             path = next(p for p in artifact_paths if p.name == f'knee_nc{n_chain}_seed{seed}.h5')
             rates[itrc, itrs] = load_run_metrics(path)['rt_rate']
-        print(f'n_chain={n_chain:>3}: rt_rate = {rates[itrc].mean():.3f} +- {rates[itrc].std():.3f} per walker per 1e6 chain-steps')
+        print(
+            f'n_chain={n_chain:>3}: rt_rate = {rates[itrc].mean():.3f} +- {rates[itrc].std():.3f} per walker per 1e6 chain-steps'
+        )
 
     s_total = gold_total_entropy()
     # dS/link convention (matches entropy_spacing + _plug_cold_and_inf): the
@@ -73,7 +76,7 @@ def main() -> int:
     # by exactly s_total/(n_chain-1) and the final finite->inf link carries the
     # remaining slice of the gold span. The denominator is the link count
     # n_chain-1, not the finite-rung count.
-    ds_per_link = s_total / (np.asarray(N_CHAIN_GRID, dtype=np.float64) - 1.)
+    ds_per_link = s_total / (np.asarray(N_CHAIN_GRID, dtype=np.float64) - 1.0)
     mean_rates = rates.mean(axis=1)
     n_chain_arr = np.asarray(N_CHAIN_GRID, dtype=np.float64)
 
@@ -102,8 +105,10 @@ def main() -> int:
             'knee_ds_per_link': knee_ds,
             'bootstrap_sd_ds_per_link': sd_ds,
         }
-        print(f'{fit_name}: n_chain-axis knee = {knee_nc:.1f} (bootstrap sd {sd_nc:.2f}); '
-              f'dS/link-axis knee = {knee_ds:.3f} (bootstrap sd {sd_ds:.3f})')
+        print(
+            f'{fit_name}: n_chain-axis knee = {knee_nc:.1f} (bootstrap sd {sd_nc:.2f}); '
+            f'dS/link-axis knee = {knee_ds:.3f} (bootstrap sd {sd_ds:.3f})'
+        )
 
     save_summary('knee_scan', results)
     return 0

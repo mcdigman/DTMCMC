@@ -46,13 +46,13 @@ POST_BLOCKS = 64
 def remap_source_columns(Ts_old: np.ndarray, Ts_new: np.ndarray, rule: str) -> np.ndarray:
     """Old-ladder column index feeding each new temperature slot."""
     sources = np.zeros(Ts_new.size, dtype=np.int64)
-    log_old = np.log(np.minimum(Ts_old, 1.e300))
+    log_old = np.log(np.minimum(Ts_old, 1.0e300))
     for itrt, T_new in enumerate(Ts_new):
         if rule == 'at_or_hotter':
             hotter = np.flatnonzero(Ts_old >= T_new)
             sources[itrt] = int(hotter[np.argmin(Ts_old[hotter])]) if hotter.size else int(np.argmax(Ts_old))
         else:
-            sources[itrt] = int(np.argmin(np.abs(log_old - np.log(min(T_new, 1.e300)))))
+            sources[itrt] = int(np.argmin(np.abs(log_old - np.log(min(T_new, 1.0e300)))))
     return sources
 
 
@@ -66,10 +66,18 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     config = spec.build_proposal_config()
 
     # phase A: settle on a deliberately coarse geometric ladder
-    ladder_a = GeometricTemperatureLadder(N_CHAIN, n_cold=1, T_cold=1., T_min=1., T_max=1000., n_inf_final=1)
+    ladder_a = GeometricTemperatureLadder(N_CHAIN, n_cold=1, T_cold=1.0, T_min=1.0, T_max=1000.0, n_inf_final=1)
     starting = np.array([like_obj.prior_draw() for _ in range(N_CHAIN)])
     pm_a = get_default_proposal_manager(ladder_a, like_obj, starting_samples=starting, config=config)
-    sampler_a = DTMCMCSampler(ladder_a, like_obj, BLOCK_SIZE, PRE_BLOCKS * BLOCK_SIZE, proposal_manager=pm_a, starting_samples=starting, store_thin=64)
+    sampler_a = DTMCMCSampler(
+        ladder_a,
+        like_obj,
+        BLOCK_SIZE,
+        PRE_BLOCKS * BLOCK_SIZE,
+        proposal_manager=pm_a,
+        starting_samples=starting,
+        store_thin=64,
+    )
     for _ in range(PRE_BLOCKS):
         sampler_a.advance_block()
 
@@ -94,7 +102,15 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
         for itrt, src in enumerate(buffer_sources):
             de_b.de_buffer[:, itrt, :] = de_a.de_buffer[:, src, :]
 
-    sampler_b = DTMCMCSampler(ladder_b, like_obj, BLOCK_SIZE, POST_BLOCKS * BLOCK_SIZE, proposal_manager=pm_b, starting_samples=carried_states, store_thin=64)
+    sampler_b = DTMCMCSampler(
+        ladder_b,
+        like_obj,
+        BLOCK_SIZE,
+        POST_BLOCKS * BLOCK_SIZE,
+        proposal_manager=pm_b,
+        starting_samples=carried_states,
+        store_thin=64,
+    )
 
     accepted_swaps = np.zeros(POST_BLOCKS)
     last_total = 0
@@ -112,11 +128,11 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     # settling time: first block whose value enters the final-16-block band
     # (mean +- 2 sd) and stays there for 4 consecutive blocks
     tail = cold_logL_means[-16:]
-    band_lo, band_hi = tail.mean() - 2. * tail.std(), tail.mean() + 2. * tail.std()
+    band_lo, band_hi = tail.mean() - 2.0 * tail.std(), tail.mean() + 2.0 * tail.std()
     in_band = (cold_logL_means >= band_lo) & (cold_logL_means <= band_hi)
     settle_block = POST_BLOCKS
     for itrb in range(POST_BLOCKS - 3):
-        if np.all(in_band[itrb:itrb + 4]):
+        if np.all(in_band[itrb : itrb + 4]):
             settle_block = itrb
             break
 
@@ -150,7 +166,10 @@ def main(argv: list[str] | None = None) -> int:
         rule, seed = rule_seed
         result = subprocess.run(  # noqa: S603 — static module entry, pilot-local args
             [sys.executable, '-m', 'experiments.pilots.remap_ab', '--single', rule, str(seed)],
-            cwd=repo_root(), capture_output=True, text=True, check=False,
+            cwd=repo_root(),
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode != 0:
             msg = f'remap pilot failed for {rule} seed {seed}:\n{result.stderr[-2000:]}'
@@ -160,7 +179,12 @@ def main(argv: list[str] | None = None) -> int:
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(launch, combos))
 
-    summary: dict[str, object] = {'seeds': list(SEEDS), 'pre_blocks': PRE_BLOCKS, 'post_blocks': POST_BLOCKS, 'n_chain': N_CHAIN}
+    summary: dict[str, object] = {
+        'seeds': list(SEEDS),
+        'pre_blocks': PRE_BLOCKS,
+        'post_blocks': POST_BLOCKS,
+        'n_chain': N_CHAIN,
+    }
     for rule in RULES:
         results = [json.loads((out_dir / f'remap_{rule}_seed{seed}.json').read_text()) for seed in SEEDS]
         rule_summary: dict[str, list[float]] = {
@@ -170,9 +194,11 @@ def main(argv: list[str] | None = None) -> int:
             'late_swap_acceptance': [r['late_swap_acceptance_per_block'] for r in results],
         }
         summary[rule] = rule_summary
-        print(f'{rule:>14}: settle {np.mean(rule_summary["settle_blocks"]):5.1f} blocks, '
-              f'post RTs {np.mean(rule_summary["post_round_trips"]):6.1f}, '
-              f'early swaps/block {np.mean(rule_summary["early_swap_acceptance"]):7.1f}')
+        print(
+            f'{rule:>14}: settle {np.mean(rule_summary["settle_blocks"]):5.1f} blocks, '
+            f'post RTs {np.mean(rule_summary["post_round_trips"]):6.1f}, '
+            f'early swaps/block {np.mean(rule_summary["early_swap_acceptance"]):7.1f}'
+        )
 
     save_summary('remap_ab', summary)
     return 0

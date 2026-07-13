@@ -1,4 +1,5 @@
 """an n dimensional normal distribution"""
+
 from typing import TYPE_CHECKING
 
 import h5py
@@ -13,7 +14,8 @@ if TYPE_CHECKING:
 
 class HawaiiLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, rescale_like: float=1., default_like: float=5.e-1, normalize_like: bool=True) -> None:
+
+    def __init__(self, rescale_like: float = 1.0, default_like: float = 5.0e-1, normalize_like: bool = True) -> None:
         """Create the class and store any object specific variables"""
         self.rescale_like = rescale_like
         self.default_like = default_like
@@ -44,10 +46,14 @@ class HawaiiLikelihood(RectangularLikelihood):
 
         self.log_hawaii_grid = np.log(self.hawaii_grid)
 
-        self.xs_grid = np.linspace(-1., 1., self.hawaii_grid.shape[0])
-        self.ys_grid = np.linspace(-1., 1., self.hawaii_grid.shape[1]) * self.hawaii_grid.shape[1] / self.hawaii_grid.shape[0]
+        self.xs_grid = np.linspace(-1.0, 1.0, self.hawaii_grid.shape[0])
+        self.ys_grid = (
+            np.linspace(-1.0, 1.0, self.hawaii_grid.shape[1]) * self.hawaii_grid.shape[1] / self.hawaii_grid.shape[0]
+        )
 
-        self.hawaii_interp = RegularGridInterpolator((self.xs_grid, self.ys_grid), self.log_hawaii_grid, method='linear')
+        self.hawaii_interp = RegularGridInterpolator(
+            (self.xs_grid, self.ys_grid), self.log_hawaii_grid, method='linear'
+        )
 
         low_lims = np.array([self.xs_grid.min(), self.ys_grid.min()])
         high_lims = np.array([self.xs_grid.max(), self.ys_grid.max()])

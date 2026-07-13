@@ -27,7 +27,15 @@ TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'name': 'tiny_gaussian_test',
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
-    'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
+    'ladder': {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 1,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    },
     'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
@@ -96,18 +104,23 @@ def test_dumps_toml_roundtrip_tricky_values() -> None:
     assert tomllib.loads(dumps_toml(data)) == data
 
 
-@pytest.mark.parametrize(('field_path', 'bad_value', 'match'), [
-    (('likelihood', 'name'), 'nonsense', 'unknown likelihood'),
-    (('ladder', 'kind'), 'nonsense', 'unknown ladder kind'),
-    (('ladder', 'n_cold'), 0, 'n_cold must be'),
-    (('run', 'n_steps'), 100, 'multiple of'),
-    (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
-    (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
-    (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),
-])
+@pytest.mark.parametrize(
+    ('field_path', 'bad_value', 'match'),
+    [
+        (('likelihood', 'name'), 'nonsense', 'unknown likelihood'),
+        (('ladder', 'kind'), 'nonsense', 'unknown ladder kind'),
+        (('ladder', 'n_cold'), 0, 'n_cold must be'),
+        (('run', 'n_steps'), 100, 'multiple of'),
+        (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
+        (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
+        (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),
+    ],
+)
 def test_spec_validation_errors(field_path, bad_value, match) -> None:
     """Malformed specs raise SpecError with a pointed message."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     table: dict[str, Any] = data
     for key in field_path[:-1]:
         table = table[key]
@@ -186,7 +199,9 @@ def test_counting_proxy_matches_artifact(tmp_path) -> None:
     """
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
 
     sampler, like_obj = build_sampler(spec)
     evals_after_init = like_obj.n_evals
@@ -214,7 +229,9 @@ def test_partial_artifact_validates_as_partial_only(tmp_path) -> None:
     """A non-finalized artifact passes partial validation but not complete."""
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
 
     sampler, like_obj = build_sampler(spec)
     sampler.advance_block()
@@ -233,13 +250,17 @@ def test_batch_expansion(tmp_path) -> None:
     base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
 
     sweep_path = tmp_path / 'sweep.toml'
-    sweep_path.write_text(dumps_toml({
-        'name': 'test_sweep',
-        'base_spec': str(base_path),
-        'out': str(tmp_path / 'out'),
-        'seeds': [101, 102, 103],
-        'grid': {'ladder.n_chain': [6, 8], 'run.n_steps': [128]},
-    }))
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'test_sweep',
+                'base_spec': str(base_path),
+                'out': str(tmp_path / 'out'),
+                'seeds': [101, 102, 103],
+                'grid': {'ladder.n_chain': [6, 8], 'run.n_steps': [128]},
+            }
+        )
+    )
 
     manifest_path = write_batch(sweep_path)
     manifest_lines = manifest_path.read_text().strip().splitlines()
@@ -263,7 +284,9 @@ def test_eggbox_end_to_end(tmp_path) -> None:
     every call, so eggbox had never run end-to-end (prior jumps evaluate
     prior_factor on each proposal).
     """
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     data['name'] = 'tiny_eggbox_test'
     data['likelihood'] = {'name': 'eggbox', 'n_par': 3}
     data['ladder'] = {'kind': 'geometric', 'n_chain': 4, 'n_cold': 1, 'T_max': 50.0}
@@ -281,7 +304,9 @@ def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
     This smoke keeps the finite-weight code path exercised in the fast
     suite.
     """
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     data['name'] = 'tiny_fisher_weights'
     data['proposals'] = {
         'FisherJumpManager': {'verbose_fisher': False, 'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333},
@@ -311,7 +336,9 @@ def test_de_buffer_memory_warnings() -> None:
     # fixed ladder below the floor warns
     reset_seed_guard_for_tests()
     seed_run(4322)
-    short_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    short_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     short_data['name'] = 'tiny_short_de'
     short_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
     with pytest.warns(UserWarning, match='DE buffer memory.*short DE buffers'):
@@ -320,7 +347,9 @@ def test_de_buffer_memory_warnings() -> None:
     # adaptive run whose buffer cannot bridge rebuilds warns
     reset_seed_guard_for_tests()
     seed_run(4323)
-    narrow_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    narrow_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     narrow_data['name'] = 'tiny_narrow_de'
     narrow_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
     narrow_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
@@ -330,7 +359,9 @@ def test_de_buffer_memory_warnings() -> None:
     # adaptive run with a whole-run buffer warns that burn-in is never forgotten
     reset_seed_guard_for_tests()
     seed_run(4324)
-    whole_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    whole_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     whole_data['name'] = 'tiny_whole_de'
     whole_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 64 * 8}}
     whole_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
@@ -364,7 +395,9 @@ def test_builder_registries_match_spec_names() -> None:
 
 def _explicit_ladder_data(n_chain: int, Ts: list[float]) -> dict[str, Any]:
     """Copy the tiny spec with an explicit ladder of the given geometry."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     data['ladder'] = {'kind': 'explicit', 'n_chain': n_chain, 'n_cold': 1, 'Ts': Ts}
     return data
 
@@ -387,7 +420,9 @@ def test_schema_version_mismatch_reported_alone(tmp_path) -> None:
     """PR #10 review: a schema mismatch yields one clear message, not a dataset flood."""
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
     sampler, like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'old_schema.h5'
@@ -406,7 +441,9 @@ def test_artifact_ladder_mismatch_detected(tmp_path) -> None:
     """PR #9 review: validate() flags a ladder that contradicts the embedded spec."""
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
-    provenance = collect_provenance(spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text())
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
     sampler, like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'tampered.h5'

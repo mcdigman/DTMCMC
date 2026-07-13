@@ -196,9 +196,9 @@ def _build_geometric_ladder(spec: RunSpec) -> TemperatureLadder:
     return GeometricTemperatureLadder(
         spec.n_chain,
         n_cold=spec.n_cold,
-        T_cold=_scalar(ladder.get('T_cold', 1.)),
-        T_min=_scalar(ladder.get('T_min', 1.)),
-        T_max=_scalar(ladder.get('T_max', 1.e15)),
+        T_cold=_scalar(ladder.get('T_cold', 1.0)),
+        T_min=_scalar(ladder.get('T_min', 1.0)),
+        T_max=_scalar(ladder.get('T_max', 1.0e15)),
         n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
     )
 
@@ -212,7 +212,7 @@ def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
         str(resolve(str(ladder['Ts_file']))),
         str(resolve(str(ladder['vars_file']))),
         n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
-        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        T_cold=_scalar(ladder.get('T_cold', 1.0)),
         correct_last=bool(ladder.get('correct_last', False)),
     )
 
@@ -239,7 +239,7 @@ def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
         Ts_in,
         vars_in,
         n_cold=spec.n_cold,
-        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        T_cold=_scalar(ladder.get('T_cold', 1.0)),
         n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
         correct_last=bool(ladder.get('correct_last', False)),
     )
@@ -255,7 +255,7 @@ def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
         means_in,
         vars_in,
         n_cold=spec.n_cold,
-        T_cold=_scalar(ladder.get('T_cold', 1.)),
+        T_cold=_scalar(ladder.get('T_cold', 1.0)),
         n_inf_final=int(_scalar(ladder.get('n_inf_final', 1))),
     )
 
@@ -360,7 +360,9 @@ class HarnessSampler(DTMCMCSampler):
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
         )
-        self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+        self.de_manager = next(
+            (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
+        )
         # DE buffer-memory hygiene: the ring buffer's memory span is sized
         # to the ADAPTATION timescale, not the run. Too short and the
         # buffer cannot bridge ladder rebuilds; spanning the whole run and
@@ -440,7 +442,9 @@ class HarnessSampler(DTMCMCSampler):
         """Record the checkpoint DE-buffer difference spectrum."""
         if self.de_manager is not None:
             self.checkpoints.itrns.append(self.itrn)
-            self.checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng))
+            self.checkpoints.de_spectrum_eigvals.append(
+                de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng)
+            )
 
     def post_Nblock_teardown(self) -> None:
         """Checkpoint at the end of each advance_N_blocks segment.
@@ -472,9 +476,15 @@ class HarnessSampler(DTMCMCSampler):
             self.steps_since_major_report %= self.spec.n_steps_per_major_report
         if self.artifact_path is not None and self.provenance is not None:
             write_artifact(
-                self.artifact_path, self.spec, self, self.counting_like.n_evals, self.provenance,
-                finalized=major_report, wall_seconds=time.monotonic() - self.start_monotonic,
-                checkpoints=self.checkpoints, adaptive_state=self.controller,
+                self.artifact_path,
+                self.spec,
+                self,
+                self.counting_like.n_evals,
+                self.provenance,
+                finalized=major_report,
+                wall_seconds=time.monotonic() - self.start_monotonic,
+                checkpoints=self.checkpoints,
+                adaptive_state=self.controller,
             )
         if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and major_report):
             self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
@@ -561,15 +571,20 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     return AdaptiveLadderController(
         mode=str(adaptive_table['mode']),
         update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
-        forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
-        freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
+        forgetting=_scalar(adaptive_table.get('forgetting', 0.0)),
+        freeze_criterion=(
+            _scalar(adaptive_table.get('freeze_dlog', 0.02)),
+            int(_scalar(adaptive_table.get('freeze_consecutive', 3))),
+        ),
         remap_rule=str(adaptive_table.get('remap_rule', 'no_remap')),
-        T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
+        T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.0)),
         budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
         var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),
         n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
         min_updates_at_target=int(_scalar(adaptive_table.get('min_updates_at_target', 6))),
-        window_extension_factor=_scalar(adaptive_table.get('window_extension_factor', adaptive.WINDOW_EXTENSION_FACTOR)),
+        window_extension_factor=_scalar(
+            adaptive_table.get('window_extension_factor', adaptive.WINDOW_EXTENSION_FACTOR)
+        ),
         ds_link_cap=_scalar(adaptive_table.get('ds_link_cap', adaptive.DS_LINK_CAP)),
         cold_cap_links=int(_scalar(adaptive_table.get('cold_cap_links', adaptive.COLD_CAP_LINKS_AUTO))),
         cap_ratio_bounds=(
@@ -578,11 +593,15 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
         ),
         var_history_length=int(_scalar(adaptive_table.get('var_history_length', adaptive.VAR_HISTORY_LENGTH))),
         pool_dlog_tol=_scalar(adaptive_table.get('pool_dlog_tol', adaptive.POOL_DLOG_TOL)),
-        discard_blocks_after_update=int(_scalar(adaptive_table.get('discard_blocks_after_update', adaptive.DISCARD_BLOCKS_AFTER_UPDATE))),
+        discard_blocks_after_update=int(
+            _scalar(adaptive_table.get('discard_blocks_after_update', adaptive.DISCARD_BLOCKS_AFTER_UPDATE))
+        ),
     )
 
 
-def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0) -> Path:
+def run_from_spec(
+    spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0
+) -> Path:
     """Execute one run end to end and return the artifact path.
 
     Chdirs to the repo root (engine-internal relative paths), seeds both
@@ -602,8 +621,11 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
     # default_config.ini changes mid-run (PR #9 review)
     config = spec.build_proposal_config()
     provenance: RunProvenance = collect_provenance(
-        spec.seed, child_seed_python, child_seed_numba,
-        spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config),
+        spec.seed,
+        child_seed_python,
+        child_seed_numba,
+        spec_toml=spec.to_toml_text(),
+        proposal_config_ini=config_to_text(config),
     )
 
     controller = None
@@ -621,9 +643,15 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
     sampler, _like_obj = build_sampler(
-        spec, config=config, like_obj=like_obj, T_ladder=initial_ladder,
-        controller=controller, artifact_path=artifact_path, provenance=provenance,
-        start_monotonic=start_monotonic, sampler_verbosity=sampler_verbosity,
+        spec,
+        config=config,
+        like_obj=like_obj,
+        T_ladder=initial_ladder,
+        controller=controller,
+        artifact_path=artifact_path,
+        provenance=provenance,
+        start_monotonic=start_monotonic,
+        sampler_verbosity=sampler_verbosity,
     )
 
     n_full_segments, blocks_remainder = divmod(spec.n_blocks, spec.checkpoint_every_blocks)

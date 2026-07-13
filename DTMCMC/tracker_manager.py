@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 module to store various trackers about the state of chains
 """
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -8,18 +9,26 @@ from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-
     from DTMCMC.proposal_manager import ProposalManager
 
 
 # direction codes for the round-trip event log
 RT_ARRIVED_COLD = 0  # walker touched the cold extreme having last been at the hot extreme
-RT_ARRIVED_HOT = 1   # walker touched the hot extreme having last been at the cold extreme
+RT_ARRIVED_HOT = 1  # walker touched the hot extreme having last been at the cold extreme
 
 
 # TODO fix cycle and exchange tracking if not sorted
 @njit()
-def process_chain_cycles(cycle_tracker: NDArray[np.int64], itrn: int, block_size: int, chain_track: NDArray[np.int64], n_cold: int, rt_event_buffer: NDArray[np.int64], flow_up_count: NDArray[np.int64], flow_labeled_count: NDArray[np.int64]) -> int:
+def process_chain_cycles(
+    cycle_tracker: NDArray[np.int64],
+    itrn: int,
+    block_size: int,
+    chain_track: NDArray[np.int64],
+    n_cold: int,
+    rt_event_buffer: NDArray[np.int64],
+    flow_up_count: NDArray[np.int64],
+    flow_labeled_count: NDArray[np.int64],
+) -> int:
     """Process whether the sampler has undergone any partial cold-hot cycles.
 
     Also logs each extreme-touch transition as a (walker id, iteration,
@@ -31,7 +40,6 @@ def process_chain_cycles(cycle_tracker: NDArray[np.int64], itrn: int, block_size
     n_chain = chain_track.shape[1]
     n_events = 0
     for itrb in range(1, block_size + 1, 1):
-
         # check if any current cold chains have been hot more recently than it was last cold
         # if so, a hot->cold cycle has occurred
         for itrj in range(n_cold):
@@ -73,13 +81,23 @@ def process_chain_cycles(cycle_tracker: NDArray[np.int64], itrn: int, block_size
 
     return n_events
 
+
 # TODO clean up tracker reporting
 
 
 class TrackerManager:
     """track various things about chains like acceptance rates and cycle times."""
 
-    def __init__(self, n_cold: int, n_chain: int, block_size: int, n_par: int, track_full_exchanges: int, n_jump_types: int, n_block_archive: int) -> None:
+    def __init__(
+        self,
+        n_cold: int,
+        n_chain: int,
+        block_size: int,
+        n_par: int,
+        track_full_exchanges: int,
+        n_jump_types: int,
+        n_block_archive: int,
+    ) -> None:
         self.n_cold: int = n_cold
         self.n_chain: int = n_chain
         self.block_size: int = block_size
@@ -93,7 +111,7 @@ class TrackerManager:
 
         self.cycle_archive: list[NDArray[np.int64]] = []
         self.accept_archive: list[NDArray[np.int64]] = []
-        self.exchange_archive: list[NDArray[np.int64]]= []
+        self.exchange_archive: list[NDArray[np.int64]] = []
         self.esd_archive: list[NDArray[np.floating]] = []
         self.esd_exchange_archive: list[NDArray[np.floating]] = []
         self.itrn_archive: list[int] = []
@@ -122,8 +140,8 @@ class TrackerManager:
         # the layout is: cycle_tracker = [chain_last_cold,chain_last_hot,chain_hc_cycles,chain_ch_cyles]
         # the hot to cold and cold to hot trackers should be within 1 of each other
         self.cycle_tracker = np.zeros((4, self.n_chain), dtype=np.int64)
-        self.cycle_tracker[0][self.n_cold:] = -1
-        self.cycle_tracker[1][:self.n_chain - 1] = -1
+        self.cycle_tracker[0][self.n_cold :] = -1
+        self.cycle_tracker[1][: self.n_chain - 1] = -1
         self.cycle_tracker[3] = np.zeros(self.n_chain, dtype=np.int64)
 
         self.accept_record: NDArray[np.int64] = np.zeros((2, self.n_chain, self.n_jump_types), dtype=np.int64)
@@ -161,7 +179,16 @@ class TrackerManager:
         """Process whether the sampler has undergone any partial cold-hot cycles."""
         flow_up_count = np.zeros(self.n_chain, dtype=np.int64)
         flow_labeled_count = np.zeros(self.n_chain, dtype=np.int64)
-        n_events = process_chain_cycles(self.cycle_tracker, itrn, self.block_size, chain_track, self.n_cold, self.rt_event_buffer, flow_up_count, flow_labeled_count)
+        n_events = process_chain_cycles(
+            self.cycle_tracker,
+            itrn,
+            self.block_size,
+            chain_track,
+            self.n_cold,
+            self.rt_event_buffer,
+            flow_up_count,
+            flow_labeled_count,
+        )
         if n_events > 0:
             self.rt_event_log.append(self.rt_event_buffer[:n_events].copy())
         self.flow_up_archive.append(flow_up_count)
@@ -188,8 +215,8 @@ class TrackerManager:
         self.rt_segment_itrns.append(itrn)
 
         self.cycle_tracker[:] = 0
-        self.cycle_tracker[0][self.n_cold:] = -1
-        self.cycle_tracker[1][:self.n_chain - 1] = -1
+        self.cycle_tracker[0][self.n_cold :] = -1
+        self.cycle_tracker[1][: self.n_chain - 1] = -1
 
     def get_rt_segment_itrns(self) -> NDArray[np.int64]:
         """Get the round-trip event-log segment boundaries as an array."""
@@ -208,7 +235,9 @@ class TrackerManager:
             return empty, empty.copy()
         return np.asarray(self.flow_up_archive), np.asarray(self.flow_labeled_archive)
 
-    def get_exchange_rate_summary(self, itrt_start: int = 0, itrt_end: int = -1, last_itrn: int = -1) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
+    def get_exchange_rate_summary(
+        self, itrt_start: int = 0, itrt_end: int = -1, last_itrn: int = -1
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
         """Get nn exchange rate summary."""
         if last_itrn == -1 and len(self.itrn_archive) >= 2:
             exchange_tracker_loc = self.exchange_tracker - self.exchange_archive[-2]
@@ -226,15 +255,22 @@ class TrackerManager:
             itrt_end = min(itrt_start + 1, self.n_chain)
 
         if self.track_full_exchanges:
-
             a_yes = exchange_tracker_loc[0, itrt_start:itrt_end, itrt_start:itrt_end]
             a_no = exchange_tracker_loc[1, itrt_start:itrt_end, itrt_start:itrt_end]
 
-            a_yes_nn_right = np.hstack([a_yes[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)], np.array([0])])
-            a_no_nn_right = np.hstack([a_no[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)], np.array([0])])
+            a_yes_nn_right = np.hstack(
+                [a_yes[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)], np.array([0])]
+            )
+            a_no_nn_right = np.hstack(
+                [a_no[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)], np.array([0])]
+            )
 
-            a_yes_nn_left = np.hstack([np.array([0]), a_yes[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)]])
-            a_no_nn_left = np.hstack([np.array([0]), a_no[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)]])
+            a_yes_nn_left = np.hstack(
+                [np.array([0]), a_yes[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)]]
+            )
+            a_no_nn_left = np.hstack(
+                [np.array([0]), a_no[np.arange(0, itrt_end - itrt_start - 1), np.arange(1, itrt_end - itrt_start)]]
+            )
 
             a_yes_nn_sym = a_yes_nn_right + a_yes_nn_left
             a_no_nn_sym = a_no_nn_right + a_no_nn_left
@@ -258,7 +294,9 @@ class TrackerManager:
         """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone."""
         return np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
 
-    def print_tracker_summary(self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: ProposalManager, last_itrn: int = -1) -> None:
+    def print_tracker_summary(
+        self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: ProposalManager, last_itrn: int = -1
+    ) -> None:
         """Print a summmary of results from this tracker object."""
         with np.errstate(invalid='ignore', divide='ignore'):
             if last_itrn == -1 and len(self.itrn_archive) >= 2:
@@ -274,12 +312,14 @@ class TrackerManager:
                 a_yes_unique[itrt] = accept_record_loc[0, Ts == T_loc].sum(axis=0)
                 a_no_unique[itrt] = accept_record_loc[1, Ts == T_loc].sum(axis=0)
 
-            a_tot_unique = a_yes_unique + a_no_unique    # get total number of trials
+            a_tot_unique = a_yes_unique + a_no_unique  # get total number of trials
             a_any_mask = np.any(a_tot_unique > 0, axis=0)  # filter to only jumps that are actually tried
             a_yes_unique = a_yes_unique[:, a_any_mask]
             a_no_unique = a_no_unique[:, a_any_mask]
             a_tot_unique = a_tot_unique[:, a_any_mask]
-            jump_labels_need = [label for label, keep in zip(proposal_manager.get_jump_labels(), a_any_mask, strict=True) if keep]
+            jump_labels_need = [
+                label for label, keep in zip(proposal_manager.get_jump_labels(), a_any_mask, strict=True) if keep
+            ]
 
             # build the print string for jump labels
             print('Acceptance Summary:')
@@ -302,7 +342,7 @@ class TrackerManager:
                         label_loc = '%-15s ' % ' No Trials'
                     elif a_yes_unique[itrt, itrj] == 0:
                         # print an upper limit on the acceptance instead of zero if no trials were accepted
-                        label_loc = '<%-.3e      ' % (1. / a_tot_unique[itrt, itrj])
+                        label_loc = '<%-.3e      ' % (1.0 / a_tot_unique[itrt, itrj])
                     else:
                         # print the actual acceptance
                         label_loc = ' %-9.7f      ' % (a_yes_unique[itrt, itrj] / a_tot_unique[itrt, itrj])
@@ -310,6 +350,13 @@ class TrackerManager:
                 print(label_T)
 
             _exchange_full, _exchange_nn, exchange_overall = self.get_exchange_rate_summary(0)
-            _exchange_full_no_cold, exchange_nn_no_cold, exchange_overall_no_cold = self.get_exchange_rate_summary(n_cold)
+            _exchange_full_no_cold, exchange_nn_no_cold, exchange_overall_no_cold = self.get_exchange_rate_summary(
+                n_cold
+            )
             # TODO maybe need option to use actual nearest neighbors, not just in the ladder
-            print('overall exchange rate, no cold exchange rate, no cold nearest neighbor exchange rate', exchange_overall, exchange_overall_no_cold, np.mean(exchange_nn_no_cold))
+            print(
+                'overall exchange rate, no cold exchange rate, no cold nearest neighbor exchange rate',
+                exchange_overall,
+                exchange_overall_no_cold,
+                np.mean(exchange_nn_no_cold),
+            )

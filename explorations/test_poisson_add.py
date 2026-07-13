@@ -1,13 +1,13 @@
 import numpy as np
 
-T0 = 1.
-dense0 = np.array([100., 10., 1.])
+T0 = 1.0
+dense0 = np.array([100.0, 10.0, 1.0])
 dense0 /= np.sum(dense0)
 
 n_bin = dense0.size
 
-T1 = 10.
-dense1 = dense0**(T0 / T1)
+T1 = 10.0
+dense1 = dense0 ** (T0 / T1)
 dense1 /= np.sum(dense1)
 
 n_run = 10000
@@ -25,11 +25,11 @@ for itrm in range(n_run):
     infer0_res[itrm] = draws0 / np.sum(draws0)
     infer1_res[itrm] = draws1 / np.sum(draws1)
 
-    infer01_res[itrm] = draws1**(T1 / T0) / np.sum(draws1**(T1 / T0))  # /n_draw
+    infer01_res[itrm] = draws1 ** (T1 / T0) / np.sum(draws1 ** (T1 / T0))  # /n_draw
     # infer01_res[itrm] /= n_draw#np.sum(infer01_res[itrm])
     # infer01_res[itrm] *= np.sum(draws1**(T1/T0))/n_draw
 
-    infer10_res[itrm] = infer0_res[itrm]**(T0 / T1)
+    infer10_res[itrm] = infer0_res[itrm] ** (T0 / T1)
     infer10_res[itrm] /= np.sum(infer10_res[itrm])
 
 print('got0', infer0_res.mean(axis=0))

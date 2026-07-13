@@ -38,20 +38,20 @@ ADAPTIVE_DE_WINDOW_BLOCKS = 64
 
 
 def make_adaptive_spec(
-        name: str,
-        seed: int,
-        likelihood: dict[str, Any],
-        *,
-        n_chain: int,
-        block_size: int,
-        n_blocks: int,
-        budget_blocks: int,
-        store_thin: int = 4,
-        t_min_factor: float = 0.9,
-        remap_rule: str = 'no_remap',
-        mode: str = 'entropy',
-        de_window_blocks: int | None = ADAPTIVE_DE_WINDOW_BLOCKS,
-        proposals_extra: dict[str, dict[str, Any]] | None = None,
+    name: str,
+    seed: int,
+    likelihood: dict[str, Any],
+    *,
+    n_chain: int,
+    block_size: int,
+    n_blocks: int,
+    budget_blocks: int,
+    store_thin: int = 4,
+    t_min_factor: float = 0.9,
+    remap_rule: str = 'no_remap',
+    mode: str = 'entropy',
+    de_window_blocks: int | None = ADAPTIVE_DE_WINDOW_BLOCKS,
+    proposals_extra: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the shared adaptive spec dict (batteries and family arms).
 
@@ -70,17 +70,36 @@ def make_adaptive_spec(
         'seed': seed,
         'likelihood': likelihood,
         'ladder': {'kind': 'geometric', 'n_chain': n_chain, 'n_cold': 1},
-        'run': {'n_steps': block_size * n_blocks, 'block_size': block_size, 'store_thin': store_thin,
-                'checkpoint_every_blocks': n_blocks},
-        'adaptive': {'mode': mode, 'update_every_blocks': 8, 'forgetting': 0.15,
-                     'freeze_dlog': 0.05, 'freeze_consecutive': 3, 'budget_blocks': budget_blocks,
-                     'remap_rule': remap_rule, 'T_min_factor': t_min_factor},
+        'run': {
+            'n_steps': block_size * n_blocks,
+            'block_size': block_size,
+            'store_thin': store_thin,
+            'checkpoint_every_blocks': n_blocks,
+        },
+        'adaptive': {
+            'mode': mode,
+            'update_every_blocks': 8,
+            'forgetting': 0.15,
+            'freeze_dlog': 0.05,
+            'freeze_consecutive': 3,
+            'budget_blocks': budget_blocks,
+            'remap_rule': remap_rule,
+            'T_min_factor': t_min_factor,
+        },
         'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
         'proposals': proposals,
     }
 
 
-def make_spec(name: str, seed: int, likelihood: dict[str, Any], ladder: dict[str, Any], n_steps: int, block_size: int = 1024, store_thin: int = 16) -> dict[str, Any]:
+def make_spec(
+    name: str,
+    seed: int,
+    likelihood: dict[str, Any],
+    ladder: dict[str, Any],
+    n_steps: int,
+    block_size: int = 1024,
+    store_thin: int = 16,
+) -> dict[str, Any]:
     """Build a pilot spec dict with the shared conventions."""
     return {
         'name': name,
@@ -132,7 +151,10 @@ def run_spec_files(spec_paths: list[Path], out_dir: Path, jobs: int = 8) -> list
         # sys.executable with a static module entry point; pilot-local paths
         result = subprocess.run(  # noqa: S603 — static module entry, pilot-local args
             [sys.executable, '-m', 'experiments.harness.run', str(spec_path), '--out', str(out_dir)],
-            cwd=repo_root(), capture_output=True, text=True, check=False,
+            cwd=repo_root(),
+            capture_output=True,
+            text=True,
+            check=False,
         )
         if result.returncode != 0:
             msg = f'pilot run failed for {spec_path.name}:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}'
@@ -144,7 +166,13 @@ def run_spec_files(spec_paths: list[Path], out_dir: Path, jobs: int = 8) -> list
         return list(pool.map(run_one, spec_paths))
 
 
-def load_run_metrics(artifact_path: Path, burn_fraction: float = 0.5, n_eff_block: int = 64, n_eff_blocks: int = 256, n_eff_seed: int = 271828) -> dict[str, float]:
+def load_run_metrics(
+    artifact_path: Path,
+    burn_fraction: float = 0.5,
+    n_eff_block: int = 64,
+    n_eff_blocks: int = 256,
+    n_eff_seed: int = 271828,
+) -> dict[str, float]:
     """Load the C1 co-primary metrics and supporting counts from an artifact.
 
     Round trips use the full event log; n_eff uses the post-burn stored
