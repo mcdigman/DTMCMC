@@ -6,10 +6,14 @@ name = 'cake'
 n_par = 5
 cutoff = 10
 
-# This spec gives the DE buffer enough rows for the configured run.
-# Shorter buffers are allowed but emit a harness warning.
+# DE ring-buffer sizing rule: memory span (de_size * de_thin) covers a few
+# adaptation windows (update_every_blocks * block_size) — here 8 windows —
+# so difference vectors bridge ladder rebuilds, while the buffer still
+# turns over and FORGETS adaptation burn-in well before the run ends.
+# Too-short buffers and whole-run buffers (which never forget burn-in)
+# both draw a harness warning.
 [proposals.DEJumpManager]
-de_size = 163840
+de_size = 32768
 
 [ladder]
 # the [ladder] table sizes the chain bank; the adaptive controller
@@ -46,6 +50,11 @@ forgetting = 0.15
 # coupling witness (a completed round trip in the open ladder segment)
 freeze_dlog = 0.05
 freeze_consecutive = 3
+# DE-buffer column remap on ladder updates. 'no_remap' (the default)
+# preserves columns by slot and lets each re-burn-in under its new
+# temperature; 'at_or_hotter'/'nearest' clone columns (old behavior,
+# retained for A/Bs)
+remap_rule = 'no_remap'
 # cold-edge target in (0, 1] as a multiple of the T=1 readout; sub-unit
 # values extend the ladder below the readout while storage stays
 # index-based.

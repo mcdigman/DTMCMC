@@ -35,6 +35,20 @@ TARGETS: dict[str, dict[str, Any]] = {
         # finite Fisher weights (all current specs run them at 0)
         'proposals_extra': {'FisherJumpManager': {'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333}},
     },
+    # the non-entropy spacing rules, end to end: the controller is
+    # mode-agnostic by design, and these arms hold that claim to the same
+    # posterior gates as the entropy default (calibration runs measured
+    # mean_dev <= 0.015, var ratios within [0.99, 1.09], NN <= 0.29)
+    'gaussian_length': {
+        'like_name': 'gaussian', 'mode': 'length',
+        'params': {'n_par': 4, 'cutoff': 5}, 'n_chain': 8, 'block': 256, 'blocks': 160, 'budget': 120,
+        'nn': 0.8, 'mean_sigmas': 0.3, 'var_band': (0.85, 1.2),
+    },
+    'gaussian_acceptance': {
+        'like_name': 'gaussian', 'mode': 'acceptance',
+        'params': {'n_par': 4, 'cutoff': 5}, 'n_chain': 8, 'block': 256, 'blocks': 160, 'budget': 120,
+        'nn': 0.8, 'mean_sigmas': 0.3, 'var_band': (0.85, 1.2),
+    },
     'gaussian_shell': {
         'params': {'n_par': 2}, 'n_chain': 8, 'block': 256, 'blocks': 160, 'budget': 120,
         'nn': 0.8, 'occupancy_tol': 0.08,
@@ -106,12 +120,13 @@ def test_adaptive_convergence_recovers_posterior(name, tmp_path) -> None:
     data = adaptive_spec_data(
         f'conv_{name}', BATTERY_SEED, {'name': like_name, **cfg['params']},
         n_chain=cfg['n_chain'], block_size=cfg['block'], n_blocks=cfg['blocks'],
-        budget_blocks=cfg['budget'], proposals_extra=cfg.get('proposals_extra'),
+        budget_blocks=cfg['budget'], mode=str(cfg.get('mode', 'entropy')),
+        proposals_extra=cfg.get('proposals_extra'),
     )
     spec = RunSpec.from_dict(data)
     artifact_path = run_from_spec(spec, tmp_path)
 
-    run = load_post_freeze(artifact_path, block_size=cfg['block'], store_thin=4, budget_blocks=cfg['budget'])
+    run = load_post_freeze(artifact_path)
     assert_readout_structure(run)
 
     cold = run['cold']
@@ -155,7 +170,7 @@ def test_rosenbrock_20d_structural(tmp_path) -> None:
     spec = RunSpec.from_dict(data)
     artifact_path = run_from_spec(spec, tmp_path)
 
-    run = load_post_freeze(artifact_path, block_size=cfg['block'], store_thin=4, budget_blocks=cfg['budget'])
+    run = load_post_freeze(artifact_path)
     assert_readout_structure(run)
     assert run['n_applied'] >= 20, 'the deep descent requires many applied extensions'
     finite_Ts = np.sort(run['final_Ts'][np.isfinite(run['final_Ts'])])

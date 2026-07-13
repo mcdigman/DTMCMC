@@ -26,6 +26,7 @@ from DTMCMC.fisher_manager import FisherJumpManager
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import (
+    AcceptanceTemperatureLadder,
     GeometricTemperatureLadder,
     TemperatureLadder,
     get_spacing_integrated,
@@ -35,7 +36,7 @@ from DTMCMC.temperature_ladder_helpers import (
 from DTMCMC.tracker_manager import TrackerManager
 from experiments.adaptive import AdaptiveLadderController
 from experiments.gates import GateReport, dedup_rows, ladder_entropy_gates, moment_gates, nn_gate, radial_mixture_gates
-from experiments.harness.runner import CountingLikelihood, build_likelihood, build_sampler, run_from_spec
+from experiments.harness.runner import CountingLikelihood, build_adaptive_controller, build_likelihood, build_sampler, run_from_spec
 from experiments.harness.spec import ADAPTIVE_MODES, RunSpec, SpecError
 from experiments.reference_samplers import cake_logL_radial, cake_moment_r2, cake_tempered_cumulants, draw_cake
 from tests.battery_common import adaptive_spec_data, assert_readout_structure, load_post_freeze
@@ -365,12 +366,85 @@ def test_adaptive_cake_battery_recovers_posterior(tmp_path, seed: int) -> None:
     artifact_path = run_from_spec(spec, tmp_path)
     reset_seed_guard_for_tests()
 
-    run = load_post_freeze(artifact_path, block_size=1024, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
+    run = load_post_freeze(artifact_path)
     assert_readout_structure(run)
     assert run['n_applied'] >= 6
 
     report = _cake_battery_gates(run, _battery_reference(), seed)
     assert report.passed, (seed, report.violations, report.stats)
+
+
+@pytest.mark.slow
+def test_adaptive_cake_battery_whole_run_control(tmp_path) -> None:
+    """Old-behavior control: a whole-run DE buffer warns and passes the same gates.
+
+    The ring-buffer battery above certifies the production regime (the
+    buffer turns over — and forgets adaptation burn-in — well before the
+    post-freeze readout window); this control documents that the
+    never-forgetting whole-run configuration draws the harness warning
+    and, on this target, does not change the verdict.
+    """
+    reset_seed_guard_for_tests()
+    data = adaptive_spec_data(
+        'adaptive_cake_whole_run', 555,
+        {'name': 'cake', 'n_par': 5, 'cutoff': 10, 'widths': list(BATTERY_CAKE_WIDTHS)},
+        n_chain=48, block_size=1024, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        store_thin=BATTERY_STORE_THIN, de_window_blocks=None,
+    )
+    spec = RunSpec.from_dict(data)
+    with pytest.warns(UserWarning, match='never forgets burn-in'):
+        artifact_path = run_from_spec(spec, tmp_path)
+    reset_seed_guard_for_tests()
+
+    run = load_post_freeze(artifact_path)
+    assert_readout_structure(run)
+    report = _cake_battery_gates(run, _battery_reference(), 555)
+    assert report.passed, (report.violations, report.stats)
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_adaptive_acceptance_mode_realizes_equal_exchange_rates() -> None:
+    """The adaptive acceptance-mode ladder realizes ~equal NN exchange rates.
+
+    Closes the predicted->realized loop for the ADAPTIVE acceptance path
+    (the fixed-ladder form lives in test_metrics). cold_cap_links=0
+    isolates the spacing rule — the cold-edge cap deliberately overrides
+    it and would tighten the coldest links past the equal-acceptance
+    target — and T_min_factor=1 keeps the readout pin at the cold edge so
+    no interior link is plug-distorted. The realized rates are measured
+    over the final tracker segment, which runs entirely on the frozen
+    geometry. Calibration: observed interior spread 0.031 at this seed;
+    the 0.12 band matches the fixed-ladder realized-equality test (its
+    equal ladder measured 0.059 vs 0.487 for the lopsided control).
+    """
+    data = adaptive_spec_data(
+        'acceptance_flatness', 778, {'name': 'gaussian', 'n_par': 4, 'cutoff': 5},
+        n_chain=8, block_size=256, n_blocks=160, budget_blocks=120,
+        t_min_factor=1.0, mode='acceptance',
+    )
+    data['adaptive']['cold_cap_links'] = 0
+    spec = RunSpec.from_dict(data)
+    assert spec.adaptive is not None
+    seed_run(spec.seed)
+    controller = build_adaptive_controller(spec.adaptive)
+    like_obj = CountingLikelihood(build_likelihood(spec))
+    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+        controller.post_block(sampler)
+
+    assert controller.frozen, 'acceptance-mode adaptation must freeze within budget'
+    ladder = sampler.T_ladder
+    assert isinstance(ladder, AcceptanceTemperatureLadder), 'cap disabled: the frozen ladder is the raw acceptance ladder'
+
+    _full, rates, _total = sampler.tracker_manager.get_exchange_rate_summary(0)
+    # chains 1..5: both NN links lie among the finite spaced rungs
+    # (n_chain=8 with one inf rung; chain 6's upper link reaches the inf edge)
+    interior = np.asarray(rates[1:6], dtype=np.float64)
+    assert np.all(np.isfinite(interior))
+    assert interior.max() - interior.min() < 0.12, interior
+    assert np.all(np.abs(interior - ladder.achieved_acceptance) < 0.12), (interior, ladder.achieved_acceptance)
 
 
 def _warm_started_gold_sampler(seed: int, n_blocks: int, de_size: int):
@@ -451,7 +525,7 @@ def test_adaptive_default_cake_structural(tmp_path) -> None:
     artifact_path = run_from_spec(spec, tmp_path)
     reset_seed_guard_for_tests()
 
-    run = load_post_freeze(artifact_path, block_size=512, store_thin=BATTERY_STORE_THIN, budget_blocks=BATTERY_BUDGET_BLOCKS)
+    run = load_post_freeze(artifact_path)
     assert_readout_structure(run)
     assert run['n_applied'] >= 5
 
@@ -797,6 +871,9 @@ def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
     assert capped.get_arg_cold().size == 1
     # the link above the pin was pulled down to the clipped ratio
     assert capped_Ts[2] <= 1.0 * 1.02 + 1.e-12
+    # the pinned link consumes no cap slot: all three resolved cap links
+    # land on real links, so the third one (ending at the 16 rung) is capped
+    assert capped_Ts[4] <= capped_Ts[3] * 1.02 + 1.e-12
     # disabling the cap returns the ladder unchanged
     disabled = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=0)
     assert disabled._cap_cold_links(ladder, 1) is ladder  # noqa: SLF001

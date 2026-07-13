@@ -293,21 +293,49 @@ def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_short_memory_de_buffer_warns() -> None:
-    """A DE buffer spanning less than the run draws the harness warning.
+def test_de_buffer_memory_warnings() -> None:
+    """The DE buffer-memory warnings key on the adaptation timescale, not the run.
 
-    Deficits warn rather than fail validation;
-    the boundary case (memory == run length) must stay silent.
+    Fixed ladders: warn only below the block-scale floor; a ring buffer
+    shorter than the run is the normal production configuration and must
+    stay silent. Adaptive runs: warn below the rebuild-bridging floor, and
+    warn when the buffer spans the whole run (proposal support never
+    forgets burn-in).
     """
+    # fixed ladder, buffer at the 4-block floor: silent for any run length
     seed_run(4321)
-    with pytest.warns(UserWarning, match='DE buffer memory'):
-        build_sampler(make_tiny_spec(n_steps=64 * 8))
-
-    reset_seed_guard_for_tests()
-    seed_run(4322)
     with warnings_module.catch_warnings():
         warnings_module.simplefilter('error', UserWarning)
-        build_sampler(make_tiny_spec())
+        build_sampler(make_tiny_spec(n_steps=64 * 8))
+
+    # fixed ladder below the floor warns
+    reset_seed_guard_for_tests()
+    seed_run(4322)
+    short_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    short_data['name'] = 'tiny_short_de'
+    short_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    with pytest.warns(UserWarning, match='DE buffer memory.*short DE buffers'):
+        build_sampler(RunSpec.from_dict(short_data))
+
+    # adaptive run whose buffer cannot bridge rebuilds warns
+    reset_seed_guard_for_tests()
+    seed_run(4323)
+    narrow_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    narrow_data['name'] = 'tiny_narrow_de'
+    narrow_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    narrow_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='too short to bridge ladder rebuilds'):
+        build_sampler(RunSpec.from_dict(narrow_data))
+
+    # adaptive run with a whole-run buffer warns that burn-in is never forgotten
+    reset_seed_guard_for_tests()
+    seed_run(4324)
+    whole_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    whole_data['name'] = 'tiny_whole_de'
+    whole_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 64 * 8}}
+    whole_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='never forgets burn-in'):
+        build_sampler(RunSpec.from_dict(whole_data))
 
 
 def test_paths_anchored_to_repo_root() -> None:
