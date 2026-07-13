@@ -40,23 +40,67 @@ def Ts_to_betas(Ts_in: NDArray[np.floating]) -> NDArray[np.floating]:
 class TemperatureLadder:
     """Store a temperature ladder for parallel tempering."""
 
-    def __init__(self, n_cold: int, Ts_in: NDArray[np.floating], sort_mode: int = 1) -> None:
+    def __init__(self, Ts_in: NDArray[np.floating], sort_mode: int = 1, T_cold: float | None = None, n_cold: int=1) -> None:
         """Create the temperature ladder object.
 
         Parameters
         ----------
-        n_cold: int
-            n_cold<=n_chain, total number of T=T_cold chains
         Ts_in: NDArray[np.floating]
-            Ts to store
+            1D array of Ts to store
         sort_mode: int
             Selector for how to sort the input temperatures
+        T_cold: float | None
+            temperature of the n_cold readout chains; None (default) keeps
+            the historical convention that the first n_cold rungs are the
+            readout chains, and reads T_cold from those. Ladders that may extend below the readout
+            temperature must set T_cold so get_arg_cold can locate the
+            readout rungs by temperature instead of by position.
+        n_cold: int
+            n_cold<=n_chain, minimum total number of T=T_cold chains.
+
 
         Raises
         ------
         ValueError
             If the sort mode is not recognized
+            If T_cold is nan
+            If n_cold not in [0, Ts_in.size]
+            If Ts_in.size is 0
+            If less than n_cold values of T_cold were specified
+            If any input Ts are nan
+            If Ts is not 1 dimensional
+        TypeError
+            If n_cold is not an integer
         """
+        if len(Ts_in.shape) != 1:
+            msg = 'Ts_in must be 1D'
+            raise ValueError(msg)
+
+        if Ts_in.size == 0:
+            msg = 'Temperature ladder with zero temperatures specified is undefined'
+            raise ValueError(msg)
+
+        if np.any(np.isnan(Ts_in)):
+            msg = 'Some input temperatures were nan'
+            raise ValueError(msg)
+
+        if T_cold is None:
+            self.T_cold: float = Ts_in[0]
+        else:
+            self.T_cold = T_cold
+
+        if np.isnan(self.T_cold):
+            msg = 'Undefined behavior for T_cold of nan'
+            raise ValueError(msg)
+
+        if not isinstance(n_cold, (int, np.integer)) or isinstance(n_cold, (bool, np.bool_)):
+            msg = 'n_cold must be an integer'
+            raise TypeError(msg)
+
+        if not (0 <= n_cold <= Ts_in.size):
+            msg = f'n_cold {n_cold} not in [0, {Ts_in.size}]'
+            raise ValueError(msg)
+
         if sort_mode == 0:
             self.Ts: NDArray[np.floating] = Ts_in.copy()
         elif sort_mode == 1:
@@ -65,13 +109,35 @@ class TemperatureLadder:
             msg = f'Unrecognized option sort_mode {sort_mode}'
             raise ValueError(msg)
 
-        # self.Ts = Ts_in
+        n_cold_actual = np.sum(self.Ts == self.T_cold)
+        if n_cold_actual < n_cold:
+            msg = f'Must be at least n_cold={n_cold} values of T_cold={self.T_cold}, got {n_cold_actual}'
+            raise ValueError(msg)
+
         self.sort_mode: int = sort_mode
 
         self.betas: NDArray[np.floating] = Ts_to_betas(self.Ts)
 
         self.n_chain: int = Ts_in.size
         self.n_cold: int = n_cold
+
+    def get_arg_cold(self) -> NDArray[np.int64]:
+        """Get the indices of the n_cold readout chains in this ladder.
+
+        With T_cold set, the readout chains are the n_cold rungs pinned at
+        exactly T_cold (every ladder family pins them there by
+        construction) — not necessarily the coldest rungs, since a ladder
+        may extend below T_cold (T_min < T_cold, sort_mode=1). Without
+        T_cold the first n_cold rungs are the readout chains, preserving
+        the historical positional convention for raw ladders.
+        """
+        if self.T_cold is None:
+            return np.arange(self.n_cold, dtype=np.int64)
+        matches = np.flatnonzero(self.Ts == self.T_cold)
+        # every ladder family pins exactly n_cold rungs at T_cold; a spaced
+        # rung landing there exactly only adds interchangeable duplicates
+        assert matches.size >= self.n_cold
+        return matches[:self.n_cold].astype(np.int64)
 
 
 def betas_to_Ts(betas_in: NDArray[np.floating]) -> NDArray[np.floating]:
@@ -199,7 +265,6 @@ class GeometricTemperatureLadder(TemperatureLadder):
         n_inf_final: int
             How many infinite temperature chains to insert at the end
         """
-        self.T_cold: float = T_cold
         self.T_min: float = T_min
         self.T_max: float = T_max
         self.n_inf_final: int = n_inf_final
@@ -207,7 +272,7 @@ class GeometricTemperatureLadder(TemperatureLadder):
         _, Ts = geometric_spaced_betas(
             n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final, sort_mode=sort_mode
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def _standardize_stats_core(betas_in: NDArray[np.floating], stats_in: list[NDArray[np.floating]], nonfinite_msg: str) -> tuple[NDArray[np.floating], list[NDArray[np.floating]]]:
@@ -388,17 +453,24 @@ def _plug_cold_and_inf(
         n_inf_final: int,
         T_cold: float,
         sort_mode: int,
+        snap_mode: int = 0,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Shared cold/infinite-rung plugging and sorting for spaced ladders.
 
     Every spaced ladder family (entropy, length, acceptance) applies the
     same conventions after spacing its rungs: overwrite the hottest
-    n_inf_final rungs with infinity, snap the rung nearest T_cold to
-    T_cold exactly (this deliberately distorts the adjacent spacing
-    interval when T_cold sits far from the input range — the documented
-    cost of the cold plug, identical across families so arm comparisons
-    stay apples-to-apples), pad n_cold-1 duplicate cold rungs, and apply
+    n_inf_final rungs with infinity, snap one spaced rung to T_cold
+    exactly (this deliberately distorts the adjacent spacing interval
+    when T_cold sits far from the input range — the documented cost of
+    the cold plug, identical across families so arm comparisons stay
+    apples-to-apples), pad n_cold-1 duplicate cold rungs, and apply
     sort_mode.
+
+    snap_mode selects which rung the plug consumes: 0 (default) the
+    rung nearest T_cold; 1 the coolest rung at or above T_cold, falling
+    back to nearest when none sits above. The two coincide whenever the
+    spaced rungs all lie at or above T_cold; they differ only for
+    ladders extending below T_cold (T_min < T_cold).
     """
     if n_inf_final > 0:
         Ts_got[n_chain_space - n_inf_final:] = np.inf
@@ -414,8 +486,17 @@ def _plug_cold_and_inf(
             else:
                 arg_cold = 0
             assert arg_cold >= 0
-        else:
+        elif snap_mode == 1:
+            at_or_above = np.flatnonzero(Ts_got >= T_cold)
+            if at_or_above.size:
+                arg_cold = int(at_or_above[np.argmin(Ts_got[at_or_above] - T_cold)])
+            else:
+                arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
+        elif snap_mode == 0:
             arg_cold = int(np.argmin(np.abs(Ts_got - T_cold)))
+        else:
+            msg = f'Unrecognized option snap_mode {snap_mode}'
+            raise ValueError(msg)
         Ts_got[arg_cold] = T_cold
         if arg_cold != 0:
             # put cold values first for now
@@ -452,6 +533,7 @@ def entropy_spaced_betas(
         sort_mode: int = 1,
         p: float = 1.,
         q: float = 1.,
+        snap_mode: int = 0,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Estimate constant entropy increase spaced chain from an input file of betas and logLs.
 
@@ -506,7 +588,7 @@ def entropy_spaced_betas(
 
     assert np.all(Ts_got >= 0.)
 
-    return _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode)
+    return _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode, snap_mode=snap_mode)
 
 
 class EntropyTemperatureLadder(TemperatureLadder):
@@ -522,6 +604,7 @@ class EntropyTemperatureLadder(TemperatureLadder):
             n_inf_final: int = 1,
             correct_last: bool = False,
             sort_mode: int = 1,
+            snap_mode: int = 0,
     ) -> None:
         """
         Create the temperature ladder object.
@@ -547,8 +630,11 @@ class EntropyTemperatureLadder(TemperatureLadder):
             if maximum T in input ladder is well above any phase transitions
         sort_mode: int
             Select mode for how temperatures are sorted.
+        snap_mode: int
+            Which spaced rung the cold plug consumes (see _plug_cold_and_inf):
+            0 nearest to T_cold, 1 coolest at or above T_cold (preserves
+            sub-T_cold rungs when the inputs extend below the readout)
         """
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts = entropy_spaced_betas(
@@ -560,8 +646,9 @@ class EntropyTemperatureLadder(TemperatureLadder):
             T_cold=T_cold,
             correct_last=correct_last,
             sort_mode=sort_mode,
+            snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 class LengthTemperatureLadder(TemperatureLadder):
@@ -593,9 +680,9 @@ class LengthTemperatureLadder(TemperatureLadder):
             n_inf_final: int = 1,
             correct_last: bool = False,
             sort_mode: int = 1,
+            snap_mode: int = 0,
     ) -> None:
         """Create the temperature ladder object; parameters as EntropyTemperatureLadder."""
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts = entropy_spaced_betas(
@@ -609,8 +696,9 @@ class LengthTemperatureLadder(TemperatureLadder):
             sort_mode=sort_mode,
             p=0.5,
             q=0.,
+            snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def standardize_input_stats(betas_in: NDArray[np.floating], logL_means_in: NDArray[np.floating], logL_vars_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
@@ -666,6 +754,7 @@ def acceptance_spaced_betas(
         n_inf_final: int = 1,
         T_cold: float = 1.,
         sort_mode: int = 1,
+        snap_mode: int = 0,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
     """Space rungs for constant predicted swap acceptance between neighbors.
 
@@ -788,7 +877,7 @@ def acceptance_spaced_betas(
     Ts_got = betas_to_Ts(positions[::-1].copy())
     assert Ts_got.size == n_chain_space
 
-    betas_got, Ts_got = _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode)
+    betas_got, Ts_got = _plug_cold_and_inf(Ts_got, betas_in, n_chain_space, n_chain_need, n_cold, n_inf_final, T_cold, sort_mode, snap_mode=snap_mode)
     return betas_got, Ts_got, a_star
 
 
@@ -810,13 +899,13 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             T_cold: float = 1.,
             n_inf_final: int = 1,
             sort_mode: int = 1,
+            snap_mode: int = 0,
     ) -> None:
         """Create the temperature ladder object.
 
         Parameters as EntropyTemperatureLadder, plus logL_means_in: the
         per-input-temperature mean log likelihoods.
         """
-        self.T_cold: float = T_cold
         self.n_inf_final: int = n_inf_final
 
         _, Ts, a_star = acceptance_spaced_betas(
@@ -828,9 +917,56 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             n_inf_final=n_inf_final,
             T_cold=T_cold,
             sort_mode=sort_mode,
+            snap_mode=snap_mode,
         )
         self.achieved_acceptance: float = a_star
-        TemperatureLadder.__init__(self, n_cold, Ts, sort_mode=sort_mode)
+        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
+
+
+def remap_ladder_indices(Ts_old: NDArray[np.floating], Ts_new: NDArray[np.floating], remap_rule: str) -> NDArray[np.int64]:
+    """Old-ladder source column feeding each new-ladder slot on a ladder update.
+
+    The apply_ladder_update hook and pilot code share this definition.
+    Chain states do not use these rules: they remap by temperature rank,
+    which for equal-size sorted ladders is the identity.
+
+    - 'at_or_hotter': the coolest old temperature at-or-hotter than the
+      new one, falling back to the hottest old rung. Under cold support
+      extension this rule can be many-to-one.
+    - 'nearest': nearest old temperature in log T.
+    - 'no_remap': preserve DE-buffer columns by slot. This is bijective
+      for equal-size ladder updates.
+
+    Exact-temperature ties resolve slot-preservingly, else to the lowest
+    tied slot, so an identical-ladder update — including duplicate
+    temperatures — maps every slot to itself. Infinite temperatures are
+    clipped to 1e300 for the log comparison.
+    """
+    if remap_rule == 'no_remap':
+        if Ts_old.size != Ts_new.size:
+            msg = 'no_remap requires equal-size old and new ladders'
+            raise ValueError(msg)
+        return np.arange(Ts_new.size, dtype=np.int64)
+
+    sources = np.zeros(Ts_new.size, dtype=np.int64)
+    Ts_old_clip = np.minimum(Ts_old, 1.e300)
+    log_old = np.log(Ts_old_clip)
+    for itrt in range(Ts_new.size):
+        T_new_clip = min(Ts_new[itrt], 1.e300)
+        if remap_rule == 'at_or_hotter':
+            hotter = np.flatnonzero(Ts_old_clip >= T_new_clip)
+            if hotter.size:
+                tied = hotter[Ts_old_clip[hotter] == Ts_old_clip[hotter].min()]
+            else:
+                tied = np.flatnonzero(Ts_old_clip == Ts_old_clip.max())
+        elif remap_rule == 'nearest':
+            log_dist = np.abs(log_old - np.log(T_new_clip))
+            tied = np.flatnonzero(log_dist == log_dist.min())
+        else:
+            msg = f'unknown remap rule {remap_rule!r}'
+            raise ValueError(msg)
+        sources[itrt] = itrt if itrt in tied else int(tied[0])
+    return sources
 
 
 def filter_ladder_inputs(Ts_in: NDArray[np.floating], *stats_in: NDArray[np.floating], T_min: float = 1.) -> tuple[NDArray[np.floating], ...]:

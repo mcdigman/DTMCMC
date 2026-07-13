@@ -8,6 +8,7 @@ counting-proxy eval accounting; and batch sweep expansion.
 
 import shlex
 import tomllib
+import warnings as warnings_module
 from typing import Any
 
 import h5py
@@ -27,7 +28,7 @@ TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
     'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
-    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2},
+    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
         'FisherJumpManager': {'verbose_fisher': False},
@@ -266,11 +267,75 @@ def test_eggbox_end_to_end(tmp_path) -> None:
     data['name'] = 'tiny_eggbox_test'
     data['likelihood'] = {'name': 'eggbox', 'n_par': 3}
     data['ladder'] = {'kind': 'geometric', 'n_chain': 4, 'n_cold': 1, 'T_max': 50.0}
-    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 2}
+    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2}
     spec = RunSpec.from_dict(data)
 
     artifact_path = run_from_spec(spec, tmp_path)
     assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_finite_fisher_weights_run_end_to_end(tmp_path) -> None:
+    """Finite cold/hot Fisher weights run through the full stack.
+
+    This smoke keeps the finite-weight code path exercised in the fast
+    suite.
+    """
+    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data['name'] = 'tiny_fisher_weights'
+    data['proposals'] = {
+        'FisherJumpManager': {'verbose_fisher': False, 'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333},
+        'DEJumpManager': {'de_size': 256},
+    }
+    spec = RunSpec.from_dict(data)
+    artifact_path = run_from_spec(spec, tmp_path)
+    assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_de_buffer_memory_warnings() -> None:
+    """The DE buffer-memory warnings key on the adaptation timescale, not the run.
+
+    Fixed ladders: warn only below the block-scale floor; a ring buffer
+    shorter than the run is the normal production configuration and must
+    stay silent. Adaptive runs: warn below the rebuild-bridging floor, and
+    warn when the buffer spans the whole run (proposal support never
+    forgets burn-in).
+    """
+    # fixed ladder, buffer at the 4-block floor: silent for any run length
+    seed_run(4321)
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter('error', UserWarning)
+        build_sampler(make_tiny_spec(n_steps=64 * 8))
+
+    # fixed ladder below the floor warns
+    reset_seed_guard_for_tests()
+    seed_run(4322)
+    short_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    short_data['name'] = 'tiny_short_de'
+    short_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    with pytest.warns(UserWarning, match='DE buffer memory.*short DE buffers'):
+        build_sampler(RunSpec.from_dict(short_data))
+
+    # adaptive run whose buffer cannot bridge rebuilds warns
+    reset_seed_guard_for_tests()
+    seed_run(4323)
+    narrow_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    narrow_data['name'] = 'tiny_narrow_de'
+    narrow_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    narrow_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='too short to bridge ladder rebuilds'):
+        build_sampler(RunSpec.from_dict(narrow_data))
+
+    # adaptive run with a whole-run buffer warns that burn-in is never forgotten
+    reset_seed_guard_for_tests()
+    seed_run(4324)
+    whole_data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    whole_data['name'] = 'tiny_whole_de'
+    whole_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 64 * 8}}
+    whole_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='never forgets burn-in'):
+        build_sampler(RunSpec.from_dict(whole_data))
 
 
 def test_paths_anchored_to_repo_root() -> None:

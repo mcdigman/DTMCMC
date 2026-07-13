@@ -78,6 +78,19 @@ def nn_kl(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floa
     return float(entropy_cross - entropy_ref)
 
 
+def nn_divergence_symmetric(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator) -> float:
+    """Symmetric two-sample NN divergence: max of both nn_kl orientations.
+
+    The signed nn_kl can have opposite signs for overconcentrated and
+    support-missing samples. Taking the max over both orientations makes
+    either mismatch a positive value, at the cost of doubling the
+    O(n_use^2) work.
+    """
+    forward = nn_kl(reference_samples, test_samples, n_use, rng)
+    backward = nn_kl(test_samples, reference_samples, n_use, rng)
+    return max(forward, backward)
+
+
 def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator) -> NDArray[np.floating]:
     """Frozen C1 effective-sample estimator (n_eff_preds_empirical, plan §6).
 
@@ -221,46 +234,69 @@ def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_
     )
 
 
-def round_trip_counts(rt_events: NDArray[np.int64], n_chain: int) -> NDArray[np.int64]:
+def _rt_segment_ids(rt_events: NDArray[np.int64], segment_itrns: NDArray[np.int64] | None) -> NDArray[np.int64]:
+    """Ladder-segment index of each event row.
+
+    Boundaries are ladder-update iterations (plan D6); an event at or
+    before a boundary belongs to the closing segment. No boundaries
+    (fixed-ladder run) means one segment.
+    """
+    if segment_itrns is None or len(segment_itrns) == 0:
+        return np.zeros(rt_events.shape[0], dtype=np.int64)
+    return np.searchsorted(np.asarray(segment_itrns), rt_events[:, 1], side='left').astype(np.int64)
+
+
+def round_trip_counts(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> NDArray[np.int64]:
     """Complete round trips per walker from the event log.
 
     A round trip needs one arrival in each direction; the count per
     walker is min(#cold arrivals, #hot arrivals), matching
-    TrackerManager.get_n_cycles.
+    TrackerManager.get_n_cycles. With segment boundaries (adaptive
+    runs), arrivals are paired within each ladder segment and the
+    per-segment trips summed — never across an update (plan D6).
     """
-    counts = np.zeros((2, n_chain), dtype=np.int64)
-    for walker, _itrn, direction in rt_events:
-        counts[direction, walker] += 1
-    return np.minimum(counts[RT_ARRIVED_COLD], counts[RT_ARRIVED_HOT])
+    seg_ids = _rt_segment_ids(rt_events, segment_itrns)
+    trips = np.zeros(n_chain, dtype=np.int64)
+    for seg in np.unique(seg_ids):
+        counts = np.zeros((2, n_chain), dtype=np.int64)
+        for walker, _itrn, direction in rt_events[seg_ids == seg]:
+            counts[direction, walker] += 1
+        trips += np.minimum(counts[RT_ARRIVED_COLD], counts[RT_ARRIVED_HOT])
+    return trips
 
 
-def round_trip_rate(rt_events: NDArray[np.int64], n_chain: int, n_iterations: int) -> float:
+def round_trip_rate(rt_events: NDArray[np.int64], n_chain: int, n_iterations: int, segment_itrns: NDArray[np.int64] | None = None) -> float:
     """Round trips per walker per 1e6 chain-steps (primary C1/C2 metric)."""
-    total_trips = int(round_trip_counts(rt_events, n_chain).sum())
+    total_trips = int(round_trip_counts(rt_events, n_chain, segment_itrns).sum())
     chain_steps = n_iterations * n_chain
     if chain_steps == 0:
         return 0.
     return total_trips / n_chain / (chain_steps / 1.e6)
 
 
-def fraction_walkers_with_round_trip(rt_events: NDArray[np.int64], n_chain: int) -> float:
+def fraction_walkers_with_round_trip(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> float:
     """Fraction of walkers that completed at least one round trip."""
-    return float(np.count_nonzero(round_trip_counts(rt_events, n_chain))) / n_chain
+    return float(np.count_nonzero(round_trip_counts(rt_events, n_chain, segment_itrns))) / n_chain
 
 
-def round_trip_times(rt_events: NDArray[np.int64], n_chain: int) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+def round_trip_times(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
     """Full-cycle durations pooled over walkers, from the event log.
 
     Returns (cold-to-cold durations, hot-to-hot durations): iteration
     counts between a walker's consecutive same-direction arrivals.
+    With segment boundaries, durations never span a ladder update
+    (plan D6).
     """
+    seg_ids = _rt_segment_ids(rt_events, segment_itrns)
     cold_times: list[int] = []
     hot_times: list[int] = []
-    for walker in range(n_chain):
-        walker_events = rt_events[rt_events[:, 0] == walker]
-        for direction, out in ((RT_ARRIVED_COLD, cold_times), (RT_ARRIVED_HOT, hot_times)):
-            arrivals = walker_events[walker_events[:, 2] == direction, 1]
-            out.extend(np.diff(arrivals).tolist())
+    for seg in np.unique(seg_ids):
+        seg_events = rt_events[seg_ids == seg]
+        for walker in range(n_chain):
+            walker_events = seg_events[seg_events[:, 0] == walker]
+            for direction, out in ((RT_ARRIVED_COLD, cold_times), (RT_ARRIVED_HOT, hot_times)):
+                arrivals = walker_events[walker_events[:, 2] == direction, 1]
+                out.extend(np.diff(arrivals).tolist())
     return np.asarray(cold_times, dtype=np.int64), np.asarray(hot_times, dtype=np.int64)
 
 

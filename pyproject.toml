@@ -62,6 +62,9 @@ ignore_missing_imports = true
 # *_test.py (e.g. integ_box_test.py, test_entropy_spacing.py) and execute their
 # plotting / sys.exit() bodies.
 testpaths = ["tests"]
+markers = [
+    "slow: heavy convergence batteries; the per-push CI job runs -m 'not slow'",
+]
 
 [project.optional-dependencies]
 # Development / test tooling: pytest, type stubs for the typed checks, and the

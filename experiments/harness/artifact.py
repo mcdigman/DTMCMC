@@ -32,10 +32,11 @@ from .paths import repo_root
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from experiments.adaptive import AdaptiveLadderController
 
     from .spec import RunSpec
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 # root attrs written at flush time rather than carried by RunProvenance
 _FLUSH_ATTRS: tuple[str, ...] = (
@@ -47,6 +48,7 @@ _FLUSH_ATTRS: tuple[str, ...] = (
     'n_iterations',
     'n_chain_steps',
     'n_likelihood_evals',
+    'block_size',
 )
 
 REQUIRED_DATASETS: tuple[str, ...] = (
@@ -75,10 +77,13 @@ REQUIRED_DATASETS: tuple[str, ...] = (
     'trackers/esd_exchange_archive',
     'trackers/itrn_archive',
     'events/rt_events',
+    'events/rt_segment_itrns',
     'flow/up_counts',
     'flow/labeled_counts',
     'store/samples',
     'store/logLs',
+    'store/record_indices',
+    'store/record_history_indices',
 )
 
 
@@ -190,6 +195,7 @@ def write_artifact(
     finalized: bool,
     wall_seconds: float,
     checkpoints: CheckpointLog | None = None,
+    adaptive_state: AdaptiveLadderController | None = None,
 ) -> None:
     """Write the full run artifact, atomically replacing any previous flush."""
     tracker = sampler.tracker_manager
@@ -212,11 +218,37 @@ def write_artifact(
         hf.attrs['n_iterations'] = sampler.itrn
         hf.attrs['n_chain_steps'] = sampler.itrn * n_chain
         hf.attrs['n_likelihood_evals'] = n_likelihood_evals
+        # readers convert freeze blocks to iterations without reparsing the
+        # embedded spec (schema v4)
+        hf.attrs['block_size'] = sampler.block_size
 
         ladder_grp = hf.create_group('ladder')
         ladder_grp.attrs['n_cold'] = sampler.n_cold
         ladder_grp.create_dataset('Ts', data=sampler.Ts)
         ladder_grp.create_dataset('betas', data=sampler.betas)
+
+        if adaptive_state is not None:
+            # adaptive runs: one row per rebuild evaluation, applied or
+            # held (plan D2/Phase 5); frozen_by is '' until the freeze
+            # fires, then 'criterion' or 'budget' so E3 can segregate
+            # budget-frozen runs
+            ladder_history = adaptive_state.history
+            history_grp = ladder_grp.create_group('history')
+            history_grp.attrs['frozen'] = adaptive_state.frozen
+            history_grp.attrs['frozen_by'] = adaptive_state.frozen_by
+            # the burn-in boundary, stored so every reader shares one
+            # convention instead of re-deriving it from the history rows:
+            # criterion freezes stamp their history row, budget freezes map
+            # to budget_blocks, -1 while still adapting (schema v4)
+            frozen_block = adaptive_state.frozen_block_index
+            history_grp.attrs['frozen_block'] = -1 if frozen_block is None else frozen_block
+            history_grp.attrs['budget_blocks'] = adaptive_state.budget_blocks
+            history_grp.create_dataset('Ts', data=np.asarray([record.Ts for record in ladder_history]))
+            history_grp.create_dataset('block_index', data=np.asarray([record.block_index for record in ladder_history], dtype=np.int64))
+            history_grp.create_dataset('applied', data=np.asarray([record.applied for record in ladder_history], dtype=np.bool_))
+            history_grp.create_dataset('t_cold_window', data=np.asarray([record.t_cold_window for record in ladder_history]))
+            history_grp.create_dataset('max_dlog_t', data=np.asarray([record.max_dlog_t for record in ladder_history]))
+            history_grp.create_dataset('n_pool_points', data=np.asarray([record.n_pool_points for record in ladder_history], dtype=np.int64))
 
         moments_grp = hf.create_group('moments')
         moments_grp.create_dataset('logL_means', data=_stack_blocks(sampler.logL_means, n_chain))
@@ -245,9 +277,12 @@ def write_artifact(
         trackers_grp.create_dataset('itrn_archive', data=np.asarray(tracker.itrn_archive, dtype=np.int64))
 
         # round-trip event log: rows of (walker id, iteration, direction)
-        # with direction 0 = arrived cold from hot, 1 = arrived hot from cold
+        # with direction 0 = arrived cold from hot, 1 = arrived hot from cold,
+        # plus the ladder-segment boundaries (empty for fixed-ladder runs)
+        # that round-trip metrics must not pair arrivals across (plan D6)
         events_grp = hf.create_group('events')
         events_grp.create_dataset('rt_events', data=tracker.get_rt_events())
+        events_grp.create_dataset('rt_segment_itrns', data=tracker.get_rt_segment_itrns())
 
         flow_up, flow_labeled = tracker.get_flow_counts()
         flow_grp = hf.create_group('flow')
@@ -261,7 +296,12 @@ def write_artifact(
 
         store_grp = hf.create_group('store')
         store_grp.attrs['store_thin'] = sampler.store_thin
-        store_grp.attrs['n_record'] = sampler.n_record
+        # store column j holds chain record_indices[j]; the history maps
+        # every iteration range to the recorded set active during it (the
+        # readout-chain indices move when a ladder update adds or removes
+        # rungs below T_cold)
+        store_grp.create_dataset('record_indices', data=np.asarray(sampler.record_indices, dtype=np.int64))
+        store_grp.create_dataset('record_history_indices', data=np.asarray(sampler.record_history, dtype=np.int64))
         store_grp.create_dataset('samples', data=sampler.samples_store[:rows_written])
         store_grp.create_dataset('logLs', data=sampler.logLs_store[:rows_written])
 

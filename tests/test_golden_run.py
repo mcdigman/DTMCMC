@@ -33,7 +33,7 @@ GOLDEN_SPEC: dict[str, Any] = {
     'seed': 20260704,
     'likelihood': {'name': 'cake', 'n_par': 5, 'cutoff': 10},
     'ladder': {'kind': 'geometric', 'n_chain': 8, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 1000.0, 'n_inf_final': 1},
-    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'n_record': -1, 'checkpoint_every_blocks': 4},
+    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
         'FisherJumpManager': {'verbose_fisher': False},

@@ -6,11 +6,18 @@ jumps — increments the eval counter by construction rather than by
 enumerating call sites (plan §4 Phase 1). Both RNG streams are seeded once
 at run start (plan D1); the artifact is flushed per checkpoint and
 finalized at the end (plan D2).
+
+Harness behavior rides the DTMCMCSampler extension API rather than an
+external driver loop: HarnessSampler builds its proposal manager in
+initialize_jumps, runs the adaptive controller in postblock_operations,
+and checkpoints in post_Nblock_teardown, so run_from_spec just advances
+the run as checkpoint-sized advance_N_blocks segments.
 """
 
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
+from warnings import warn
 
 import numpy as np
 
@@ -20,15 +27,25 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+from diagnostic_commentary_helpers import print_diagnostic_commentary
+from DTMCMC.corr_summary_helpers import CorrelationSummary
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.likelihood import AbstractLikelihood
+from DTMCMC.likelihoods.ar1 import Ar1Likelihood
+from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.likelihoods.eggbox import Likelihood as EggboxLikelihood
+from DTMCMC.likelihoods.gaussian_mixture import GaussianMixtureLikelihood
+from DTMCMC.likelihoods.gaussian_shell import GaussianShellLikelihood
 from DTMCMC.likelihoods.hawaii_likelihood import HawaiiLikelihood
+from DTMCMC.likelihoods.hyperpyramid import HyperpyramidLikelihood
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
-from DTMCMC.proposal_manager_helper import get_default_proposal_manager
+from DTMCMC.likelihoods.random_wheel import RandomWheelLikelihood
+from DTMCMC.likelihoods.rosenbrock import RosenbrockLikelihood
+from DTMCMC.likelihoods.spoke_wheel import SpokeWheelLikelihood
+from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
     AcceptanceTemperatureLadder,
@@ -38,6 +55,8 @@ from DTMCMC.temperature_ladder_helpers import (
     entropy_ladder_fromfile,
     filter_ladder_inputs,
 )
+from experiments import adaptive
+from experiments.adaptive import AdaptiveLadderController
 from experiments.metrics import de_buffer_difference_spectrum
 
 from .artifact import CheckpointLog, RunProvenance, collect_provenance, write_artifact
@@ -46,6 +65,12 @@ from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
 
 # random buffer-difference pairs per temperature in the checkpoint DE spectrum
 DE_SPECTRUM_PAIRS = 256
+
+# DE buffer-memory floors (in adaptation windows / blocks) below which the
+# harness warns: shorter spans cannot bridge ladder rebuilds (adaptive) or
+# a block's own decorrelation scale (fixed ladders)
+DE_MEMORY_MIN_WINDOWS = 2
+DE_MEMORY_MIN_BLOCKS_FIXED = 4
 
 
 class LikelihoodLike(Protocol):
@@ -136,6 +161,14 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., LikelihoodLike]] = {
     'cake': CakeLikelihood,
     'eggbox': EggboxLikelihood,
     'hawaii': HawaiiLikelihood,
+    'ar1': Ar1Likelihood,
+    'banana': BananaLikelihood,
+    'gaussian_mixture': GaussianMixtureLikelihood,
+    'gaussian_shell': GaussianShellLikelihood,
+    'hyperpyramid': HyperpyramidLikelihood,
+    'random_wheel': RandomWheelLikelihood,
+    'rosenbrock': RosenbrockLikelihood,
+    'spoke_wheel': SpokeWheelLikelihood,
 }
 
 
@@ -236,7 +269,7 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
     if not isinstance(Ts_raw, list):
         msg = 'explicit ladder requires a Ts list'
         raise TypeError(msg)
-    return TemperatureLadder(spec.n_cold, np.asarray(Ts_raw, dtype=np.float64))
+    return TemperatureLadder(np.asarray(Ts_raw, dtype=np.float64), n_cold=spec.n_cold)
 
 
 # one builder per spec ladder kind; a test asserts the keys stay in sync with
@@ -260,54 +293,300 @@ def build_ladder(spec: RunSpec) -> TemperatureLadder:
     return builder(spec)
 
 
-def build_sampler(spec: RunSpec, config: configparser.ConfigParser | None = None) -> tuple[DTMCMCSampler, CountingLikelihood]:
-    """Build the sampler and counting-proxy likelihood for a spec.
+class HarnessSampler(DTMCMCSampler):
+    """DTMCMCSampler wired to the harness through the extension API.
+
+    The subclass carries the run-level context its hooks need (spec,
+    proposal config, adaptive controller, artifact destination) and
+    implements the harness behaviors as overrides of the pre-existing
+    extension points rather than as an external driver loop:
+    initialize_jumps builds the spec-configured proposal manager around
+    the starting samples the base class draws; postblock_operations
+    advances the adaptive controller schedule; post_Nblock_teardown
+    checkpoints, so run_from_spec drives the run as checkpoint-sized
+    advance_N_blocks segments.
+
+    sampler_verbosity gates the pretty-printed tracker diagnostics that
+    the base teardown emits unconditionally: 0 is silent (the default,
+    so automated runners keep their logs clean), 1 prints the summary
+    at each major-report boundary only, 2 prints at every checkpoint
+    teardown. With the default report interval (spec.n_steps) the single
+    major report lands at the last teardown of a full run.
+    """
+
+    def __init__(
+        self,
+        spec: RunSpec,
+        T_ladder: TemperatureLadder,
+        like_obj: CountingLikelihood,
+        config: configparser.ConfigParser,
+        *,
+        controller: AdaptiveLadderController | None = None,
+        artifact_path: Path | None = None,
+        provenance: RunProvenance | None = None,
+        start_monotonic: float | None = None,
+        sampler_verbosity: int = 0,
+    ) -> None:
+        if artifact_path is not None and provenance is None:
+            msg = 'artifact_path requires provenance'
+            raise ValueError(msg)
+        # hook-consumed attributes must exist before super().__init__,
+        # which runs the overridable initialization chain
+        # (initialize_jumps reads spec and config)
+        self.spec = spec
+        self.config = config
+        self.controller = controller
+        self.artifact_path = artifact_path
+        self.provenance = provenance
+        self.start_monotonic = time.monotonic() if start_monotonic is None else start_monotonic
+        self.sampler_verbosity = sampler_verbosity
+        self.counting_like = like_obj
+        # periodic "major report" bookkeeping: rather than comparing itrn
+        # against a run total (the sampler must not know how many iterations
+        # it will be run for), the teardown accumulates steps since the last
+        # major report and wraps when the configured interval is reached
+        self.steps_since_major_report = 0
+        self.itrn_prev_teardown = 0
+        self.checkpoints = CheckpointLog()
+        # checkpoint metrics draw from a dedicated Generator seeded by the
+        # run seed: reproducible, recorded, and independent of both run RNG
+        # streams (plan D5) — the golden digest is unaffected
+        self.metrics_rng = get_rng(spec.seed)
+        super().__init__(
+            T_ladder,
+            like_obj,
+            spec.block_size,
+            spec.store_size,
+            store_thin=spec.store_thin,
+            arg_record=spec.arg_record,
+        )
+        self.de_manager = next((manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
+        # DE buffer-memory hygiene: the ring buffer's memory span is sized
+        # to the ADAPTATION timescale, not the run. Too short and the
+        # buffer cannot bridge ladder rebuilds; spanning the whole run and
+        # the proposal support never forgets burn-in — post-freeze samples
+        # stay conditioned on prior-fill and adaptation-era states, which
+        # is not a production configuration.
+        if self.de_manager is not None:
+            memory_span = self.de_manager.de_size * self.de_manager.de_thin
+            if spec.adaptive is not None:
+                window = int(_scalar(spec.adaptive.get('update_every_blocks', 8))) * spec.block_size
+                if memory_span < DE_MEMORY_MIN_WINDOWS * window:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_WINDOWS} adaptation '
+                        f'windows ({DE_MEMORY_MIN_WINDOWS * window}): too short to bridge ladder rebuilds',
+                        stacklevel=3,
+                    )
+                elif memory_span >= spec.n_steps:
+                    warn(
+                        f'DE buffer memory de_size*de_thin = {memory_span} spans the whole run ({spec.n_steps}): '
+                        'proposal support never forgets burn-in (not a production configuration)',
+                        stacklevel=3,
+                    )
+            elif memory_span < DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size:
+                warn(
+                    f'DE buffer memory de_size*de_thin = {memory_span} < {DE_MEMORY_MIN_BLOCKS_FIXED} blocks '
+                    f'({DE_MEMORY_MIN_BLOCKS_FIXED * spec.block_size}): short DE buffers can change proposal behavior',
+                    stacklevel=3,
+                )
+
+    def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
+        """Build the spec-configured proposal manager around the base-drawn starting samples.
+
+        Runs inside super().__init__ after initialize_state has filled
+        samples[0] from prior draws, so the per-stream RNG order matches
+        the previous external construction (starting draws first, then
+        manager-construction draws) and the golden digest is unchanged.
+        """
+        if proposal_manager_in is not None:
+            super().initialize_jumps(proposal_manager_in)
+            return
+        exchange_manager = ExchangeManager(
+            EXCHANGE_STRATEGY_CODES[self.spec.exchange_strategy],
+            track_full_exchanges=self.spec.track_full_exchanges,
+        )
+        self.proposal_manager = get_default_proposal_manager(
+            self.T_ladder,
+            self.like_obj,
+            starting_samples=self.samples[0, :, :],
+            config=self.config,
+            exchange_manager_loc=exchange_manager,
+        )
+
+    def postblock_operations(self) -> None:
+        """Advance the adaptive controller's schedule at the block boundary."""
+        if self.controller is not None:
+            self.controller.post_block(self)
+
+    def adaptive_burnin_iterations(self) -> int:
+        """Iterations to treat as adaptive burn-in for the correlation summary.
+
+        Derived from the adaptive controller's freeze point (the block at
+        which adaptation stopped, times the block size): everything up to
+        the freeze was spent tuning the ladder rather than sampling a
+        fixed target. Fixed-ladder runs (no controller) or a controller
+        still adapting yield 0. CorrelationSummary clamps the value to the
+        stored ring-buffer window, so an over-long burn-in is safe.
+        """
+        if self.controller is None:
+            return 0
+        frozen_block = self.controller.frozen_block_index
+        return 0 if frozen_block is None else frozen_block * self.block_size
+
+    def record_checkpoint_metrics(self) -> None:
+        """Record the checkpoint DE-buffer difference spectrum."""
+        if self.de_manager is not None:
+            self.checkpoints.itrns.append(self.itrn)
+            self.checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng))
+
+    def post_Nblock_teardown(self) -> None:
+        """Checkpoint at the end of each advance_N_blocks segment.
+
+        Records metrics, flushes the artifact when a destination is
+        configured (marked finalized at each major-report boundary), and
+        prints diagnostics per sampler_verbosity: the tracker summary
+        (verbosity 1 at each major report, verbosity 2 every checkpoint),
+        plus, at each major report, the descriptive commentary (verbosity
+        >= 1) and the full correlation summary (verbosity 2).
+
+        Major-report boundaries are periodic: the teardown tracks steps
+        elapsed since the last report and wraps when they reach the
+        configured interval, rather than comparing itrn against a run
+        total. This keeps the sampler agnostic to how many iterations it
+        will ultimately run (parent-sampler design principle) — advancing
+        past the initially requested count yields further periodic
+        reports instead of re-emitting a one-shot "final" report every
+        segment. With the default interval (spec.n_steps) exactly one
+        report lands at the end of a full run.
+        """
+        self.record_checkpoint_metrics()
+        self.steps_since_major_report += self.itrn - self.itrn_prev_teardown
+        self.itrn_prev_teardown = self.itrn
+        major_report = self.steps_since_major_report >= self.spec.n_steps_per_major_report
+        if major_report:
+            # preserve the overflow remainder so the report cadence does
+            # not drift when the interval is not a whole number of segments
+            self.steps_since_major_report %= self.spec.n_steps_per_major_report
+        if self.artifact_path is not None and self.provenance is not None:
+            write_artifact(
+                self.artifact_path, self.spec, self, self.counting_like.n_evals, self.provenance,
+                finalized=major_report, wall_seconds=time.monotonic() - self.start_monotonic,
+                checkpoints=self.checkpoints, adaptive_state=self.controller,
+            )
+        if self.sampler_verbosity >= 2 or (self.sampler_verbosity == 1 and major_report):
+            self.tracker_manager.print_tracker_summary(self.n_cold, self.Ts, self.proposal_manager)
+        if major_report and self.sampler_verbosity >= 1:
+            print_diagnostic_commentary(self)
+            if self.sampler_verbosity >= 2:
+                # burn-in from the adaptive freeze; 0 for fixed-ladder runs
+                n_burnin = self.adaptive_burnin_iterations()
+                corr_sum = CorrelationSummary()
+                corr_sum.summarize_blocks(self, n_burnin)
+                corr_sum.final_prints(self, n_burnin)
+
+
+def build_sampler(
+    spec: RunSpec,
+    config: configparser.ConfigParser | None = None,
+    like_obj: CountingLikelihood | None = None,
+    T_ladder: TemperatureLadder | None = None,
+    *,
+    controller: AdaptiveLadderController | None = None,
+    artifact_path: Path | None = None,
+    provenance: RunProvenance | None = None,
+    start_monotonic: float | None = None,
+    sampler_verbosity: int = 0,
+) -> tuple[HarnessSampler, CountingLikelihood]:
+    """Build the harness sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
     starting samples, DE-buffer fills, and Fisher initialization all draw
     from the run streams. Pass the config explicitly to share one instance
-    between the sampler and the artifact provenance (run_from_spec does).
+    between the sampler and the artifact provenance (run_from_spec does);
+    pass like_obj/T_ladder to override the spec-built ones (the adaptive
+    path supplies its prior-anchored initial ladder). The keyword-only
+    arguments configure the extension hooks: without an artifact_path the
+    teardown records checkpoint metrics but writes nothing.
     """
-    like_obj = CountingLikelihood(build_likelihood(spec))
-    T_ladder = build_ladder(spec)
+    if like_obj is None:
+        like_obj = CountingLikelihood(build_likelihood(spec))
+    if T_ladder is None:
+        T_ladder = build_ladder(spec)
     if config is None:
         config = spec.build_proposal_config()
 
-    starting_samples = np.zeros((T_ladder.n_chain, like_obj.n_par))
-    for itrt in range(T_ladder.n_chain):
-        starting_samples[itrt, :] = like_obj.prior_draw()
-
-    exchange_manager = ExchangeManager(
-        EXCHANGE_STRATEGY_CODES[spec.exchange_strategy],
-        track_full_exchanges=spec.track_full_exchanges,
-    )
-    proposal_manager = get_default_proposal_manager(
+    sampler = HarnessSampler(
+        spec,
         T_ladder,
         like_obj,
-        starting_samples=starting_samples,
-        config=config,
-        exchange_manager_loc=exchange_manager,
-    )
-
-    sampler = DTMCMCSampler(
-        T_ladder,
-        like_obj,
-        spec.block_size,
-        spec.store_size,
-        proposal_manager=proposal_manager,
-        starting_samples=starting_samples,
-        store_thin=spec.store_thin,
-        n_record=spec.n_record,
+        config,
+        controller=controller,
+        artifact_path=artifact_path,
+        provenance=provenance,
+        start_monotonic=start_monotonic,
+        sampler_verbosity=sampler_verbosity,
     )
     return sampler, like_obj
 
 
-def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None) -> Path:
+def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderController:
+    """Construct the adaptive controller from a spec [adaptive] table.
+
+    Keys (validated against ADAPTIVE_KEYS at spec load; see
+    experiments/specs/adaptive_cake12.toml for a worked example):
+    `mode` ('entropy'|'length'|'acceptance', required), `budget_blocks`
+    (hard adaptation cap in blocks, required, plan Phase 5),
+    `update_every_blocks` (rebuild cadence, default 8), `forgetting`
+    (pool down-weighting per evaluation, default 0), `freeze_dlog` /
+    `freeze_consecutive` (stability criterion, defaults 0.02 / 3),
+    `remap_rule` (DE-buffer remap applied on ladder updates, default
+    'no_remap': columns keep their slot and re-burn-in under the new
+    temperature; 'at_or_hotter'/'nearest' clone columns and are retained
+    for old-behavior tests and pilot A/Bs),
+    `T_min_factor` (cold-edge target in (0, 1] as a multiple of the T=1
+    readout; sub-unit values extend the ladder below the readout),
+    `var_estimator` (rebuild-variance rule: 1 = pessimistic max over
+    recent segment estimates, the default; 0 = forgetting-weighted
+    mean), `n_prior_draws` (hot-anchor prior sample size, default 256),
+    `min_updates_at_target` (dwell evaluations before freeze counting,
+    default 6), plus optional controller-geometry fields:
+    `window_extension_factor`, `ds_link_cap`, `cold_cap_links`,
+    `cap_ratio_min` / `cap_ratio_max`, `var_history_length`,
+    `pool_dlog_tol`, and `discard_blocks_after_update` — defaults are
+    the module constants in experiments.adaptive.
+    """
+    return AdaptiveLadderController(
+        mode=str(adaptive_table['mode']),
+        update_every_blocks=int(_scalar(adaptive_table.get('update_every_blocks', 8))),
+        forgetting=_scalar(adaptive_table.get('forgetting', 0.)),
+        freeze_criterion=(_scalar(adaptive_table.get('freeze_dlog', 0.02)), int(_scalar(adaptive_table.get('freeze_consecutive', 3)))),
+        remap_rule=str(adaptive_table.get('remap_rule', 'no_remap')),
+        T_min_factor=_scalar(adaptive_table.get('T_min_factor', 1.)),
+        budget_blocks=int(_scalar(adaptive_table['budget_blocks'])),
+        var_estimator=int(_scalar(adaptive_table.get('var_estimator', 1))),
+        n_prior_draws=int(_scalar(adaptive_table.get('n_prior_draws', 256))),
+        min_updates_at_target=int(_scalar(adaptive_table.get('min_updates_at_target', 6))),
+        window_extension_factor=_scalar(adaptive_table.get('window_extension_factor', adaptive.WINDOW_EXTENSION_FACTOR)),
+        ds_link_cap=_scalar(adaptive_table.get('ds_link_cap', adaptive.DS_LINK_CAP)),
+        cold_cap_links=int(_scalar(adaptive_table.get('cold_cap_links', adaptive.COLD_CAP_LINKS_AUTO))),
+        cap_ratio_bounds=(
+            _scalar(adaptive_table.get('cap_ratio_min', adaptive.CAP_RATIO_BOUNDS[0])),
+            _scalar(adaptive_table.get('cap_ratio_max', adaptive.CAP_RATIO_BOUNDS[1])),
+        ),
+        var_history_length=int(_scalar(adaptive_table.get('var_history_length', adaptive.VAR_HISTORY_LENGTH))),
+        pool_dlog_tol=_scalar(adaptive_table.get('pool_dlog_tol', adaptive.POOL_DLOG_TOL)),
+        discard_blocks_after_update=int(_scalar(adaptive_table.get('discard_blocks_after_update', adaptive.DISCARD_BLOCKS_AFTER_UPDATE))),
+    )
+
+
+def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0) -> Path:
     """Execute one run end to end and return the artifact path.
 
     Chdirs to the repo root (engine-internal relative paths), seeds both
-    RNG streams from the spec seed (once per process, plan D1), advances
-    block by block, flushes the artifact every checkpoint, and finalizes.
+    RNG streams from the spec seed (once per process, plan D1), and
+    advances the run as checkpoint-sized advance_N_blocks segments: the
+    sampler's own teardown hook flushes the artifact at every checkpoint
+    and finalizes at the last (plan D2).
     """
     chdir_repo_root()
     start_monotonic = time.monotonic()
@@ -324,37 +603,29 @@ def run_from_spec(spec: RunSpec, out_dir: str | Path, artifact_name: str | None 
         spec_toml=spec.to_toml_text(), proposal_config_ini=config_to_text(config),
     )
 
-    sampler, like_obj = build_sampler(spec, config=config)
+    controller = None
+    like_obj: CountingLikelihood | None = None
+    initial_ladder: TemperatureLadder | None = None
+    if spec.adaptive is not None:
+        controller = build_adaptive_controller(spec.adaptive)
+        like_obj = CountingLikelihood(build_likelihood(spec))
+        # prior-draw anchoring consumes run-stream draws and counted evals,
+        # deliberately: adaptive burn-in is charged in full (plan C3)
+        initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
-    # checkpoint metrics draw from a dedicated Generator seeded by the run
-    # seed: reproducible, recorded, and independent of both run RNG
-    # streams (plan D5) — the golden digest is unaffected
-    metrics_rng = get_rng(spec.seed)
-    checkpoints = CheckpointLog()
-    de_manager = next((manager for manager in sampler.proposal_manager.managers if isinstance(manager, DEJumpManager)), None)
-
-    def record_checkpoint_metrics() -> None:
-        if de_manager is not None:
-            checkpoints.itrns.append(sampler.itrn)
-            checkpoints.de_spectrum_eigvals.append(de_buffer_difference_spectrum(de_manager.de_buffer, DE_SPECTRUM_PAIRS, metrics_rng))
-
-    for itr_block in range(spec.n_blocks):
-        sampler.advance_block()
-        blocks_done = itr_block + 1
-        if blocks_done % spec.checkpoint_every_blocks == 0 and blocks_done < spec.n_blocks:
-            record_checkpoint_metrics()
-            write_artifact(
-                artifact_path, spec, sampler, like_obj.n_evals, provenance,
-                finalized=False, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
-            )
-
-    record_checkpoint_metrics()
-    write_artifact(
-        artifact_path, spec, sampler, like_obj.n_evals, provenance,
-        finalized=True, wall_seconds=time.monotonic() - start_monotonic, checkpoints=checkpoints,
+    sampler, _like_obj = build_sampler(
+        spec, config=config, like_obj=like_obj, T_ladder=initial_ladder,
+        controller=controller, artifact_path=artifact_path, provenance=provenance,
+        start_monotonic=start_monotonic, sampler_verbosity=sampler_verbosity,
     )
+
+    n_full_segments, blocks_remainder = divmod(spec.n_blocks, spec.checkpoint_every_blocks)
+    for _ in range(n_full_segments):
+        sampler.advance_N_blocks(spec.checkpoint_every_blocks)
+    if blocks_remainder:
+        sampler.advance_N_blocks(blocks_remainder)
     return artifact_path

@@ -1,0 +1,89 @@
+name = 'adaptive_cake12'
+seed = 555
+
+[likelihood]
+name = 'cake'
+n_par = 5
+cutoff = 10
+
+# DE ring-buffer sizing rule: memory span (de_size * de_thin) covers a few
+# adaptation windows (update_every_blocks * block_size) — here 8 windows —
+# so difference vectors bridge ladder rebuilds, while the buffer still
+# turns over and FORGETS adaptation burn-in well before the run ends.
+# Too-short buffers and whole-run buffers (which never forget burn-in)
+# both draw a harness warning.
+[proposals.DEJumpManager]
+de_size = 32768
+
+[ladder]
+# the [ladder] table sizes the chain bank; the adaptive controller
+# replaces the geometric ladder with its prior-anchored initial ladder
+# before the first block (plan Phase 5)
+kind = 'geometric'
+n_chain = 12
+n_cold = 1
+
+[run]
+n_steps = 163840
+block_size = 512
+store_thin = 16
+checkpoint_every_blocks = 160
+
+# the adaptive burn-in controller (plan §4 Phase 5). Keys are validated
+# against ADAPTIVE_KEYS: an unknown key fails the spec instead of
+# silently running with a default.
+[adaptive]
+# spacing rule: 'entropy' | 'length' | 'acceptance'
+mode = 'entropy'
+# hard adaptation cap in blocks (required): a run still unfrozen here
+# hard-freezes with frozen_by = 'budget' recorded, leaving a post-freeze
+# fixed-ladder segment before the run ends
+budget_blocks = 288
+# ladder rebuild cadence in blocks (block-boundary updates, plan D6)
+update_every_blocks = 8
+# per-evaluation multiplicative down-weighting of previously pooled
+# cumulants (0 = fully cumulative)
+forgetting = 0.15
+# stability criterion: freeze eligibility once the rebuilt ladder moves
+# less than freeze_dlog (max |dlog T|) for freeze_consecutive
+# evaluations in a row; the freeze itself additionally requires the
+# coupling witness (a completed round trip in the open ladder segment)
+freeze_dlog = 0.05
+freeze_consecutive = 3
+# DE-buffer column remap on ladder updates. 'no_remap' (the default)
+# preserves columns by slot and lets each re-burn-in under its new
+# temperature; 'at_or_hotter'/'nearest' clone columns (old behavior,
+# retained for A/Bs)
+remap_rule = 'no_remap'
+# cold-edge target in (0, 1] as a multiple of the T=1 readout; sub-unit
+# values extend the ladder below the readout while storage stays
+# index-based.
+T_min_factor = 0.9
+# rebuild-variance rule: 1 = pessimistic (max over recent segment
+# estimates), 0 = forgetting-weighted mean; integer switch to leave room
+# for future rules
+var_estimator = 1
+# prior draws anchoring the initial hot end (charged to the run, plan C3)
+n_prior_draws = 256
+
+# optional controller geometry; the values below are the defaults and may be omitted
+# cold-window extension factor per rebuild
+window_extension_factor = 4.0
+# per-link dS budget throttling window extension (nats)
+ds_link_cap = 2.5
+# coldest links under the coupling cap: -1 scales with the ladder
+# (max(3, n_links / 4))
+cold_cap_links = -1
+# clip on the capped link temperature ratio
+cap_ratio_min = 1.05
+cap_ratio_max = 1.35
+# rolling window (absorbed segments) of the pessimistic estimator
+var_history_length = 4
+# |dlog T| within which measured rungs merge into an existing pooled
+# cumulant row, preserving variance history across rebuild drift
+pool_dlog_tol = 0.02
+# blocks discarded from the head of each ladder segment before pooling
+# (post-remap chains are transients of their previous temperatures)
+discard_blocks_after_update = 1
+# evaluations with the window at target before freeze counting begins
+min_updates_at_target = 6

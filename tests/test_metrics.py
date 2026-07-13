@@ -17,8 +17,9 @@ from scipy.special import gamma as gamma_func
 from DTMCMC.likelihoods import eggbox as eggbox_module
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
-from DTMCMC.temperature_ladder_helpers import EntropyTemperatureLadder, GeometricTemperatureLadder
+from DTMCMC.temperature_ladder_helpers import AcceptanceTemperatureLadder, EntropyTemperatureLadder, GeometricTemperatureLadder
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
+from experiments.harness.paths import resolve
 from experiments.harness.runner import build_sampler
 from experiments.harness.spec import RunSpec
 from experiments.metrics import (
@@ -40,7 +41,9 @@ from experiments.reference_samplers import (
     CAKE_AMPS,
     CAKE_EXPONENTS,
     CAKE_WIDTHS,
+    cake_logL_radial,
     cake_moment_r2,
+    cake_tempered_cumulants,
     draw_cake,
     draw_eggbox,
     draw_truncated_gaussian,
@@ -61,7 +64,7 @@ GAUSSIAN_INVARIANT_SPEC: dict[str, object] = {
     # hottest tested rung on the CI platform's realization without it)
     'likelihood': {'name': 'gaussian', 'n_par': 4, 'cutoff': 12},
     'ladder': {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [*GAUSSIAN_INVARIANT_TS, 16., float('inf')]},
-    'run': {'n_steps': 49152, 'block_size': 512, 'store_thin': 16, 'n_record': -1, 'checkpoint_every_blocks': 96},
+    'run': {'n_steps': 49152, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 96},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
         'FisherJumpManager': {'verbose_fisher': False},
@@ -120,6 +123,50 @@ def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) ->
     assert_allclose(np.log(entropy_ladder.Ts), np.log(geometric_ladder.Ts), atol=0.1)
 
 
+def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run) -> None:
+    """A run on an acceptance ladder realizes ~equal NN exchange rates.
+
+    The ladder family's own test checks equal PREDICTED acceptance; this
+    closes the loop on the realized statistic. Stage 1 reuses the module
+    fixture run to measure per-rung logL means/variances; stage 2 builds
+    the acceptance ladder from those measurements, runs it, and requires
+    the realized nearest-neighbor exchange rates over the finite spaced
+    links to be flat within a band covering binomial counting noise plus
+    interpolation error, and centered near the predicted target.
+    """
+    sampler_stage1 = gaussian_invariant_run
+    n_burn_blocks = sampler_stage1.itrn // sampler_stage1.block_size // 2
+    means_measured = np.asarray(sampler_stage1.logL_means)[n_burn_blocks:].mean(axis=0)
+    vars_measured = measured_logL_vars(sampler_stage1, n_burn_blocks)
+
+    Ts_in = np.asarray([*GAUSSIAN_INVARIANT_TS, 16.])
+    ladder = AcceptanceTemperatureLadder(
+        9, Ts_in, means_measured[:Ts_in.size], vars_measured[:Ts_in.size], n_cold=1, T_cold=1., n_inf_final=1,
+    )
+
+    data = {key: dict(value) if isinstance(value, dict) else value for key, value in GAUSSIAN_INVARIANT_SPEC.items()}
+    data['name'] = 'acceptance_equality'
+    data['seed'] = 271829
+    data['ladder'] = {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [float(T_loc) for T_loc in ladder.Ts]}
+    data['run'] = {'n_steps': 16384, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 16}
+    spec = RunSpec.from_dict(data)
+
+    reset_seed_guard_for_tests()
+    seed_run(spec.seed)
+    sampler, _like_obj = build_sampler(spec)
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+    reset_seed_guard_for_tests()
+
+    _full, rates, _total = sampler.tracker_manager.get_exchange_rate_summary(0)
+    # chains 1..6: both NN links lie among the finite spaced rungs (the
+    # equal-acceptance contract excludes the inf edge and the cold plug)
+    interior = np.asarray(rates[1:7], dtype=np.float64)
+    assert np.all(np.isfinite(interior))
+    assert interior.max() - interior.min() < 0.12, interior
+    assert np.all(np.abs(interior - ladder.achieved_acceptance) < 0.12), (interior, ladder.achieved_acceptance)
+
+
 def test_cake_constants_match_engine() -> None:
     """The reference sampler's tier constants reproduce the engine logL exactly.
 
@@ -140,6 +187,42 @@ def test_cake_constants_match_engine() -> None:
             for amp, width, exponent in zip(CAKE_AMPS, CAKE_WIDTHS, CAKE_EXPONENTS, strict=True)
         ]
         assert like_obj.get_loglike(point) == pytest.approx(np.logaddexp(tier_logs[0], tier_logs[1]), rel=1.e-12)
+
+
+def test_cake_radial_logL_matches_engine() -> None:
+    """The vectorized radial cake logL reproduces the engine exactly.
+
+    The quadrature gold standard (cake_tempered_cumulants) rests on this
+    reconstruction, so it gets the same drift guard as the reference
+    sampler constants.
+    """
+    n_par = 5
+    like_obj = CakeLikelihood(n_par=n_par, cutoff=10)
+    rng = get_rng(29)
+    points = rng.uniform(-9., 9., size=(64, n_par))
+    radii = np.linalg.norm(points, axis=1)
+    radial = cake_logL_radial(radii, n_par)
+    for point, expected in zip(points, radial, strict=True):
+        assert like_obj.get_loglike(point) == pytest.approx(expected, rel=1.e-12)
+
+
+def test_cake_tempered_cumulants_match_measured_gold() -> None:
+    """Quadrature Var(logL) agrees with the measured gold arrays where valid.
+
+    The spherical quadrature is exact below the temperature where the
+    prior box's corners start to matter (tier width * T^(1/e) << box
+    half-width); the gold arrays were measured on the box, so agreement
+    over T <= 4 validates the quadrature exactly where the adaptive
+    batteries anchor their ladder gates. Hotter rungs legitimately
+    diverge (corner mass) and are excluded from any analytic anchoring.
+    """
+    Ts_gold = np.load(resolve('data/Ts_cake_gold.npy'))
+    vars_gold = np.load(resolve('data/vars_cake_gold.npy'))
+    keep = np.isfinite(Ts_gold) & (Ts_gold >= 1.) & (Ts_gold <= 4.)
+    betas = 1. / Ts_gold[keep]
+    _means, vars_quad = cake_tempered_cumulants(betas, 5)
+    ratio = vars_quad / vars_gold[keep]
+    assert np.all((ratio > 0.9) & (ratio < 1.1)), ratio
 
 
 def test_truncated_gaussian_reference() -> None:
@@ -228,6 +311,44 @@ def test_round_trip_statistics_synthetic() -> None:
     cold_times, hot_times = round_trip_times(events, n_chain)
     assert sorted(cold_times.tolist()) == [2, 3, 3]
     assert sorted(hot_times.tolist()) == [2, 3, 3]
+
+
+def test_round_trip_metrics_do_not_pair_across_segments() -> None:
+    """Arrivals in different ladder segments never pair.
+
+    A pre-update HOT arrival and a post-update COLD arrival by the same
+    restarted walker id count as one complete round trip only when
+    segmentation is absent.
+    """
+    events = np.array([
+        [0, 10, RT_ARRIVED_HOT],   # before the ladder update
+        [0, 20, RT_ARRIVED_COLD],  # after: walker labels restarted
+    ], dtype=np.int64)
+
+    # unsegmented (fixed-ladder) behavior pairs them
+    assert int(round_trip_counts(events, 1).sum()) == 1
+    # a segment boundary between the arrivals forbids the pairing
+    boundaries = np.array([15], dtype=np.int64)
+    assert int(round_trip_counts(events, 1, boundaries).sum()) == 0
+    assert fraction_walkers_with_round_trip(events, 1, boundaries) == 0.
+    assert round_trip_rate(events, 1, 20, boundaries) == 0.
+
+    # an event exactly at the boundary iteration belongs to the closing
+    # segment (the update happens after the block's last step)
+    events_at_boundary = np.array([
+        [0, 10, RT_ARRIVED_HOT],
+        [0, 15, RT_ARRIVED_COLD],
+    ], dtype=np.int64)
+    assert int(round_trip_counts(events_at_boundary, 1, boundaries).sum()) == 1
+
+    # same-direction gaps never span a boundary either
+    events_gaps = np.array([
+        [0, 3, RT_ARRIVED_COLD],
+        [0, 10, RT_ARRIVED_COLD],
+        [0, 20, RT_ARRIVED_COLD],
+    ], dtype=np.int64)
+    cold_times, _hot_times = round_trip_times(events_gaps, 1, boundaries)
+    assert sorted(cold_times.tolist()) == [7]
 
 
 def test_flow_fraction_normalization() -> None:

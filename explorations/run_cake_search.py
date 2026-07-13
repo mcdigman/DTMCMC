@@ -69,8 +69,10 @@ if __name__ == '__main__':
 
     print('Chain parameters', n_cold, n_chain, n_burnin, block_size, store_size, T_max)
 
-    # create the chain object
-    mcc = DTMCMCSampler(T_ladder, like_obj, block_size, store_size, starting_samples=starting_samples, n_record=n_chain, proposal_manager=proposal_manager)
+    # create the chain object, recording every chain: the n_cold readout
+    # chains occupy the first store columns and arg_record appends the
+    # rest in order, so store column j is chain j
+    mcc = DTMCMCSampler(T_ladder, like_obj, block_size, store_size, starting_samples=starting_samples, arg_record=np.arange(n_cold, n_chain), proposal_manager=proposal_manager)
 
     t_init_end = perf_counter()
     print('all objects initialized in ', t_init_end - t0, 's')

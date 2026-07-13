@@ -38,9 +38,35 @@ EXCHANGE_STRATEGY_CODES: dict[str, int] = {
     'alternate_sequential': em.ALTERNATE_SEQUENTIAL_TARGETS,
 }
 
-LIKELIHOOD_NAMES: frozenset[str] = frozenset({'gaussian', 'cake', 'eggbox', 'hawaii'})
+LIKELIHOOD_NAMES: frozenset[str] = frozenset({
+    'gaussian',
+    'cake',
+    'eggbox',
+    'hawaii',
+    'ar1',
+    'banana',
+    'gaussian_mixture',
+    'gaussian_shell',
+    'hyperpyramid',
+    'random_wheel',
+    'rosenbrock',
+    'spoke_wheel',
+})
 
 LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_file', 'acceptance_file', 'explicit'})
+
+# the [run] table's full key set: like [adaptive], an unknown key must fail
+# loudly rather than be silently dropped. This closes the gap where a legacy
+# run.n_record spec parsed successfully and silently recorded nothing extra
+# (its recording intent lost) after n_record was replaced by arg_record.
+RUN_KEYS: frozenset[str] = frozenset({
+    'n_steps',
+    'n_steps_per_major_report',
+    'block_size',
+    'store_thin',
+    'arg_record',
+    'checkpoint_every_blocks',
+})
 
 # the ConfigParser sections the proposal mixture maps onto
 PROPOSAL_SECTIONS: frozenset[str] = frozenset({
@@ -50,6 +76,35 @@ PROPOSAL_SECTIONS: frozenset[str] = frozenset({
     'ProposalManager',
     'AuxilliaryJumpManager',
     'LadderHistoryJumpManager',
+})
+
+# adaptive controller modes; a test pins this to experiments.adaptive's
+# ADAPTIVE_MODES (spec stays a pure-data layer, so no runtime import)
+ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
+
+# the [adaptive] table's full key set: these knobs feed the paper, so a
+# typo must fail loudly rather than silently run with a default (see
+# build_adaptive_controller for semantics and defaults)
+ADAPTIVE_KEYS: frozenset[str] = frozenset({
+    'mode',
+    'update_every_blocks',
+    'forgetting',
+    'freeze_dlog',
+    'freeze_consecutive',
+    'remap_rule',
+    'T_min_factor',
+    'budget_blocks',
+    'var_estimator',
+    'n_prior_draws',
+    'min_updates_at_target',
+    'window_extension_factor',
+    'ds_link_cap',
+    'cold_cap_links',
+    'cap_ratio_min',
+    'cap_ratio_max',
+    'var_history_length',
+    'pool_dlog_tol',
+    'discard_blocks_after_update',
 })
 
 _BARE_KEY_RE = re.compile(r'^[A-Za-z0-9_-]+$')
@@ -102,6 +157,21 @@ def _opt_int(table: dict[str, object], key: str, ctx: str, default: int) -> int:
     if key not in table:
         return default
     return _require_int(table, key, ctx)
+
+
+def _opt_int_list(table: dict[str, object], key: str, ctx: str) -> list[int]:
+    """Fetch an optional list-of-integers entry from parsed TOML data (default empty)."""
+    if key not in table:
+        return []
+    value = table.get(key)
+    if not isinstance(value, list):
+        msg = f'{ctx}.{key} must be a list of integers'
+        raise SpecError(msg)
+    for item in value:
+        if not isinstance(item, int) or isinstance(item, bool):
+            msg = f'{ctx}.{key} entries must be integers'
+            raise SpecError(msg)
+    return list(value)
 
 
 def _opt_bool(table: dict[str, object], key: str, ctx: str, default: bool) -> bool:
@@ -207,12 +277,23 @@ class RunSpec:
         kind-specific constructor parameters
     n_steps: int
         Total iterations (each advances all chains once); multiple of block_size
+    n_steps_per_major_report: int
+        Iterations between "major report" boundaries at which the sampler
+        emits a final-style tracker summary and marks the artifact
+        finalized; a positive multiple of block_size. Defaults to n_steps
+        (one major report at the end). This is an interval, not a total:
+        the sampler consumes it so it can flag major reports periodically
+        without knowing how many iterations it will ultimately be run for
+        (parent-sampler design principle — runs are indefinite).
     block_size: int
         Iterations per block
     store_thin: int
         Thinning applied to the stored cold-chain samples
-    n_record: int
-        Number of chains recorded in storage (-1 means n_cold)
+    arg_record: list[int]
+        Indices of additional chains recorded in storage beyond the
+        ladder's n_cold readout chains (default none). The readout chains
+        always occupy the first n_cold store columns and their indices
+        are recomputed at every ladder update; duplicates are kept
     checkpoint_every_blocks: int
         Artifact flush cadence in blocks
     exchange_strategy: str
@@ -229,13 +310,15 @@ class RunSpec:
     likelihood_params: dict[str, TomlValue] = field(default_factory=dict)
     ladder: dict[str, TomlValue] = field(default_factory=dict)
     n_steps: int = 0
+    n_steps_per_major_report: int = 0
     block_size: int = 0
     store_thin: int = 1
-    n_record: int = -1
+    arg_record: list[int] = field(default_factory=list)
     checkpoint_every_blocks: int = 8
     exchange_strategy: str = 'sequential'
     track_full_exchanges: bool = False
     proposal_overrides: dict[str, dict[str, TomlValue]] = field(default_factory=dict)
+    adaptive: dict[str, TomlValue] | None = None
 
     def __post_init__(self) -> None:
         """Validate cross-field constraints."""
@@ -276,12 +359,22 @@ class RunSpec:
         if self.n_steps < 1 or self.n_steps % self.block_size != 0:
             msg = 'run.n_steps must be a positive multiple of run.block_size'
             raise SpecError(msg)
+        # an unset (0) report interval means "one major report at the end";
+        # resolve it to n_steps so the effective value is always stored (the
+        # dataclass is frozen, so post-init normalization goes through
+        # object.__setattr__)
+        if self.n_steps_per_major_report == 0:
+            object.__setattr__(self, 'n_steps_per_major_report', self.n_steps)
+        if self.n_steps_per_major_report < 1 or self.n_steps_per_major_report % self.block_size != 0:
+            msg = 'run.n_steps_per_major_report must be a positive multiple of run.block_size'
+            raise SpecError(msg)
         if self.store_thin < 1:
             msg = 'run.store_thin must be >= 1'
             raise SpecError(msg)
-        if self.n_record != -1 and not 1 <= self.n_record <= n_chain:
-            msg = 'run.n_record must be -1 or in [1, n_chain]'
-            raise SpecError(msg)
+        for record_idx in self.arg_record:
+            if isinstance(record_idx, bool) or not isinstance(record_idx, int) or not 0 <= record_idx < n_chain:
+                msg = 'run.arg_record entries must be integers in [0, n_chain)'
+                raise SpecError(msg)
         if self.checkpoint_every_blocks < 1:
             msg = 'run.checkpoint_every_blocks must be >= 1'
             raise SpecError(msg)
@@ -296,6 +389,26 @@ class RunSpec:
                 raise SpecError(msg)
             for key, value in entries.items():
                 _check_toml_value(value, f'proposals.{section}.{key}')
+
+        if self.adaptive is not None:
+            adaptive_mode = self.adaptive.get('mode')
+            if adaptive_mode not in ADAPTIVE_MODES:
+                msg = f'unknown adaptive mode {adaptive_mode!r}; known: {sorted(ADAPTIVE_MODES)}'
+                raise SpecError(msg)
+            unknown_keys = set(self.adaptive) - ADAPTIVE_KEYS
+            if unknown_keys:
+                msg = f'unknown [adaptive] keys {sorted(unknown_keys)}; known: {sorted(ADAPTIVE_KEYS)}'
+                raise SpecError(msg)
+            if 'budget_blocks' not in self.adaptive:
+                msg = '[adaptive] requires budget_blocks (hard adaptation cap in blocks, plan Phase 5)'
+                raise SpecError(msg)
+            t_min_factor = self.adaptive.get('T_min_factor', 1)
+            if isinstance(t_min_factor, bool) or not isinstance(t_min_factor, int | float) or not 0. < float(t_min_factor) <= 1.:
+                msg = ('adaptive.T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the '
+                       'T=1 readout temperature (sub-unit rungs are supported now that storage is index-based)')
+                raise SpecError(msg)
+            for key, value in self.adaptive.items():
+                _check_toml_value(value, f'adaptive.{key}')
 
     @property
     def n_chain(self) -> int:
@@ -336,6 +449,14 @@ class RunSpec:
         ladder = {key: _check_toml_value(value, f'ladder.{key}') for key, value in ladder_raw.items()}
 
         run = _require_table(data, 'run')
+        if 'n_record' in run:
+            msg = ('run.n_record was replaced by run.arg_record (a list of extra chain indices to '
+                   'record beyond the readout chains); update the spec instead of relying on n_record')
+            raise SpecError(msg)
+        unknown_run_keys = set(run) - RUN_KEYS
+        if unknown_run_keys:
+            msg = f'unknown [run] keys {sorted(unknown_run_keys)}; known: {sorted(RUN_KEYS)}'
+            raise SpecError(msg)
 
         exchange_raw = data.get('exchange', {})
         if not isinstance(exchange_raw, dict):
@@ -354,6 +475,14 @@ class RunSpec:
                 raise SpecError(msg)
             proposal_overrides[section] = {key: _check_toml_value(value, f'proposals.{section}.{key}') for key, value in entries.items()}
 
+        adaptive_raw = data.get('adaptive')
+        adaptive: dict[str, TomlValue] | None = None
+        if adaptive_raw is not None:
+            if not isinstance(adaptive_raw, dict):
+                msg = '[adaptive] must be a table'
+                raise SpecError(msg)
+            adaptive = {key: _check_toml_value(value, f'adaptive.{key}') for key, value in adaptive_raw.items()}
+
         return cls(
             name=_require_str(data, 'name', 'spec'),
             seed=_require_int(data, 'seed', 'spec'),
@@ -361,13 +490,15 @@ class RunSpec:
             likelihood_params=likelihood_params,
             ladder=ladder,
             n_steps=_require_int(run, 'n_steps', 'run'),
+            n_steps_per_major_report=_opt_int(run, 'n_steps_per_major_report', 'run', 0),
             block_size=_require_int(run, 'block_size', 'run'),
             store_thin=_opt_int(run, 'store_thin', 'run', 1),
-            n_record=_opt_int(run, 'n_record', 'run', -1),
+            arg_record=_opt_int_list(run, 'arg_record', 'run'),
             checkpoint_every_blocks=_opt_int(run, 'checkpoint_every_blocks', 'run', 8),
             exchange_strategy=_require_str(exchange, 'strategy', 'exchange') if 'strategy' in exchange else 'sequential',
             track_full_exchanges=_opt_bool(exchange, 'track_full_exchanges', 'exchange', False),
             proposal_overrides=proposal_overrides,
+            adaptive=adaptive,
         )
 
     @classmethod
@@ -379,16 +510,17 @@ class RunSpec:
 
     def to_dict(self) -> dict[str, object]:
         """Get the nested-dict (TOML-shaped) form of this spec."""
-        return {
+        data: dict[str, object] = {
             'name': self.name,
             'seed': self.seed,
             'likelihood': {'name': self.likelihood_name, **self.likelihood_params},
             'ladder': dict(self.ladder),
             'run': {
                 'n_steps': self.n_steps,
+                'n_steps_per_major_report': self.n_steps_per_major_report,
                 'block_size': self.block_size,
                 'store_thin': self.store_thin,
-                'n_record': self.n_record,
+                'arg_record': list(self.arg_record),
                 'checkpoint_every_blocks': self.checkpoint_every_blocks,
             },
             'exchange': {
@@ -397,6 +529,9 @@ class RunSpec:
             },
             'proposals': {section: dict(entries) for section, entries in self.proposal_overrides.items()},
         }
+        if self.adaptive is not None:
+            data['adaptive'] = dict(self.adaptive)
+        return data
 
     def to_toml_text(self) -> str:
         """Serialize the fully resolved spec as TOML text (artifact embedding)."""
