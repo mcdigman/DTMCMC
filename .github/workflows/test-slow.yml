@@ -1,11 +1,11 @@
 name: Test (slow)
 
-# Runs ONLY the heavy convergence batteries carrying the `slow` marker, and
-# ONLY on the issue19-adaptive-flex branch. The per-push Test workflow excludes
-# these with -m "not slow"; this job is their counterpart.
+# Runs ONLY the heavy convergence batteries carrying the `slow` marker. The
+# per-push Test workflow excludes these with -m "not slow"; this job is their
+# counterpart. Manual-only: a maintainer starts it from the Actions tab or via
+# `gh workflow run test-slow.yml --ref <branch>` when a change warrants the
+# heavy suite. It never runs on its own.
 on:
-  push:
-    branches: [issue19-adaptive-flex]
   workflow_dispatch:
 
 concurrency:
