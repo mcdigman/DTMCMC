@@ -71,6 +71,23 @@ class AbstractLikelihood(ABC):
         del params_in
         return True
 
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check if the specified point is within the prior volume, correct if not.
+        input:
+            params_in: the point to be checkout
+        output:
+            params_out: the point with corrected parameters
+            valid: a scalar boolean which is True is the corrected point is valid in the prior volume and false otherwise
+        """
+        success: bool = self.check_bounds(params_in)
+        if not success:
+            # try to make the point in bounds and fail if unsuccesful
+            new_point = self.correct_bounds(params_in)
+            success = self.check_bounds(params_in)
+        else:
+            new_point = params_in
+        return new_point, success
+
     def get_epsilons(self) -> NDArray[np.floating]:
         """Special helper for FisherJumpManager
         if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
@@ -115,7 +132,6 @@ def prior_draw_rectangular(
     return draw
 
 
-# TODO handle trivial bounds correctly
 @njit()
 def check_bounds_rectangular(
     v: NDArray[np.floating], low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
@@ -125,6 +141,20 @@ def check_bounds_rectangular(
         if not low_lims[itrp] <= v[itrp] <= high_lims[itrp]:
             return False
     return True
+
+
+@njit()
+def validate_bounds_rectangular(
+    params_in: NDArray[np.floating], low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
+) -> tuple[NDArray[np.floating], bool]:
+    success: bool = check_bounds_rectangular(params_in, low_lims, high_lims)
+    if not success:
+        # try to make the point in bounds and fail if unsuccesful
+        new_point = correct_bounds_rectangular(params_in, low_lims, high_lims)
+        success = check_bounds_rectangular(params_in, low_lims, high_lims)
+    else:
+        new_point = params_in
+    return new_point, success
 
 
 class RectangularLikelihood(AbstractLikelihood):
@@ -157,3 +187,7 @@ class RectangularLikelihood(AbstractLikelihood):
     def prior_draw(self) -> NDArray[np.floating]:
         """Get a draw from the prior"""
         return prior_draw_rectangular(self.n_par, self.low_lims, self.high_lims)
+
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check the parameters and correct if required."""
+        return validate_bounds_rectangular(params_in, self.low_lims, self.high_lims)

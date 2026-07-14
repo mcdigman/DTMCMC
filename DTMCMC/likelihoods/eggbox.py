@@ -1,10 +1,8 @@
 """the eggbox likelihood in n dimensions"""
 
 # see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
-import numba as nb
 import numpy as np
 from numba import njit
-from numba.experimental import jitclass  # type: ignore[attr-defined] # pyright: ignore[reportPrivateImportUsage]
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
@@ -39,13 +37,7 @@ def prior_draw(n_par: int) -> NDArray[np.floating]:
 
 @njit()
 def prior_factor(_v: NDArray[np.floating], _n_par: int) -> float:
-    """Get the denstiy factor for prior draws
-
-    numba cannot type `del` of function arguments, so the unused inputs
-    are marked by naming: the previous del-based body made every call to
-    prior_factor raise a TypingError, which left the eggbox jitclass
-    unable to run through the default proposal mixture at all
-    """
+    """Get the denstiy factor for prior draws."""
     return 0.0
 
 
@@ -66,7 +58,19 @@ def check_bounds(v: NDArray[np.floating]) -> bool:
     return True
 
 
-@jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
+@njit()
+def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+    success: bool = check_bounds(params_in)
+    if not success:
+        # try to make the point in bounds and fail if unsuccesful
+        new_point = correct_bounds(params_in, params_in.size)
+        success = check_bounds(params_in)
+    else:
+        new_point = params_in
+    return new_point, success
+
+
+# @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
 class Likelihood:
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -99,6 +103,10 @@ class Likelihood:
     def check_bounds(self, v: NDArray[np.floating]) -> bool:
         """Check if the bounds of a draw are in the prior range but do not change them"""
         return check_bounds(v)
+
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check the parameters and correct if required."""
+        return validate_bounds(params_in)
 
 
 def get_labels(n_par: int) -> list[str]:

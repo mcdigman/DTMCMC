@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 
-# @njit()
+@njit()
 def get_loglike(v: NDArray[np.floating]) -> float:
     """Get an n dimensional gaussian likelihood"""
     const: float = np.log(1.0 / np.sqrt(2.0 * np.pi))  # normalization constant

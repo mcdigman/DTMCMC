@@ -104,6 +104,10 @@ class LikelihoodLike(Protocol):
         """Check if the specified point is within the prior volume."""
         ...
 
+    def validate_bounds(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], bool]:
+        """Check if the specified point is within the prior volume, try to correct if not."""
+        ...
+
 
 class CountingLikelihood(AbstractLikelihood):
     """Proxy that counts get_loglike calls and delegates everything else.
@@ -139,6 +143,10 @@ class CountingLikelihood(AbstractLikelihood):
     def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
         """Delegate the bounds check."""
         return self._wrapped.check_bounds(params_in)
+
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Delegate the bounds validation."""
+        return self._wrapped.validate_bounds(params_in)
 
     def get_epsilons(self) -> NDArray[np.floating]:
         """Delegate Fisher epsilons, bridging duck-typed likelihoods.

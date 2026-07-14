@@ -34,8 +34,16 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
-# functions profiled, in table-column order
-FUNCTIONS = ('prior_draw', 'get_loglike', 'check_bounds', 'correct_bounds')
+# functions profiled, in table-column order; validate_bounds is split by
+# input: an already-in-bounds point (check passes) vs one needing correction
+FUNCTIONS = (
+    'prior_draw',
+    'get_loglike',
+    'check_bounds',
+    'correct_bounds',
+    'validate_inbounds',
+    'validate_corrected',
+)
 
 WARMUP_CALLS = 5
 DEFAULT_REPEATS = 7
@@ -74,6 +82,18 @@ def _build_perturb_pool(like: Any, seed: int) -> NDArray[np.floating]:
     return base
 
 
+def _out_of_bounds_pool(like: Any, pool: NDArray[np.floating]) -> NDArray[np.floating]:
+    """Subset of ``pool`` whose points fail check_bounds and so need correction.
+
+    validate_bounds only runs its correct-and-recheck branch on
+    out-of-bounds input; falls back to the whole pool for targets whose domain
+    is effectively unbounded so no perturbed point ever escapes it.
+    """
+    mask = np.array([not like.check_bounds(row) for row in pool])
+    oob = pool[mask]
+    return oob if oob.shape[0] else pool
+
+
 def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, float | None], int]:
     """Time the profiled functions for one benchmark likelihood.
 
@@ -83,7 +103,9 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     """
     target = BENCHMARKS[name]
     builder = LIKELIHOOD_BUILDERS[name]
-    like = builder(**target.default_params)
+    # Any: validate_bounds is a concrete AbstractLikelihood method the
+    # sampler does not use, so it is absent from the LikelihoodLike protocol
+    like: Any = builder(**target.default_params)
 
     # a valid point for get_loglike, and a fresh pool for correct_bounds
     point = np.asarray(like.prior_draw(), dtype=np.float64)
@@ -91,11 +113,6 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     pool_len = pool.shape[0]
 
     # warm every JIT path before timing anything
-    for _ in range(WARMUP_CALLS):
-        like.prior_draw()
-        like.get_loglike(point)
-        like.check_bounds(point)
-        like.correct_bounds(pool[0].copy())
 
     # correct_bounds mutates its argument, so cycle distinct copies; the copy
     # cost is measured separately below and subtracted out
@@ -112,13 +129,51 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
         _ = pool[idx].copy()
 
     results: dict[str, float | None] = {}
+    for _ in range(WARMUP_CALLS):
+        like.prior_draw()
     results['prior_draw'] = _best_seconds_per_call(like.prior_draw, repeats) * 1e6
+    for _ in range(WARMUP_CALLS):
+        like.get_loglike(point)
     results['get_loglike'] = _best_seconds_per_call(lambda: like.get_loglike(point), repeats) * 1e6
     # check_bounds is read-only; timing the valid point measures the full-scan
     # (in-bounds) path that dominates a typical accepted-proposal step
+    for _ in range(WARMUP_CALLS):
+        like.check_bounds(point)
     results['check_bounds'] = _best_seconds_per_call(lambda: like.check_bounds(point), repeats) * 1e6
+    for _ in range(WARMUP_CALLS):
+        like.correct_bounds(pool[0].copy())
     net = _best_seconds_per_call(call_correct_bounds, repeats) - _best_seconds_per_call(copy_baseline, repeats)
     results['correct_bounds'] = max(net, 0.0) * 1e6
+    # validate_bounds has two very different paths depending on the input:
+    #   in-bounds     -> check_bounds passes and the point is returned as-is
+    #   out-of-bounds -> check_bounds fails, then correct_bounds + a re-check
+    # The in-bounds point is read-only; the out-of-bounds path reflects in place
+    # (via correct_bounds), so cycle fresh copies and net out the copy cost just
+    # as the correct_bounds measurement above does.
+    for _ in range(WARMUP_CALLS):
+        like.validate_bounds(point)
+    results['validate_inbounds'] = _best_seconds_per_call(lambda: like.validate_bounds(point), repeats) * 1e6
+
+    oob = _out_of_bounds_pool(like, pool)
+    oob_len = oob.shape[0]
+    vcounter = {'i': 0}
+
+    def call_validate_corrected() -> None:
+        idx = vcounter['i'] % oob_len
+        vcounter['i'] += 1
+        like.validate_bounds(oob[idx].copy())
+
+    def validate_copy_baseline() -> None:
+        idx = vcounter['i'] % oob_len
+        vcounter['i'] += 1
+        _ = oob[idx].copy()
+
+    for _ in range(WARMUP_CALLS):
+        like.validate_bounds(oob[0].copy())
+    net_v = _best_seconds_per_call(call_validate_corrected, repeats) - _best_seconds_per_call(
+        validate_copy_baseline, repeats
+    )
+    results['validate_corrected'] = max(net_v, 0.0) * 1e6
     return results, int(like.n_par)
 
 
