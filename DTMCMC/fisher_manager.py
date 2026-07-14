@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 module to store objects related to fisher matrix jumps
 """
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -18,9 +19,16 @@ if TYPE_CHECKING:
 
 
 @njit()
-def sigma_subspace_jump_helper(sample_point: NDArray[np.floating], itrt: int, n_par: int, fisher_subspace_frac: float, sigma_scales: NDArray[np.floating], do_full: int) -> tuple[NDArray[np.floating], float, bool]:
+def sigma_subspace_jump_helper(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    n_par: int,
+    fisher_subspace_frac: float,
+    sigma_scales: NDArray[np.floating],
+    do_full: int,
+) -> tuple[NDArray[np.floating], float, bool]:
     """Helper to compute a standard deviation jump in random subspaces"""
-    mult = np.random.normal(0., 1., n_par)
+    mult = np.random.normal(0.0, 1.0, n_par)
     count = n_par
     # average fraction of dimensions to use in subspace
     subspace_frac = fisher_subspace_frac
@@ -29,14 +37,14 @@ def sigma_subspace_jump_helper(sample_point: NDArray[np.floating], itrt: int, n_
         # ensure at least one random direction is protected so we aren't making null proposals
         safe_itrp = np.random.randint(n_par)
         for itrp in range(n_par):
-            if np.random.uniform(0., 1.) > subspace_frac and itrp != safe_itrp:
-                mult[itrp] = 0.
+            if np.random.uniform(0.0, 1.0) > subspace_frac and itrp != safe_itrp:
+                mult[itrp] = 0.0
                 count -= 1
 
     assert count > 0
 
     new_point = sample_point + sigma_scales[itrt] * np.sqrt(n_par / count) * mult
-    return new_point, 0., True
+    return new_point, 0.0, True
 
 
 class SigmaFullJump(AbstractJump):
@@ -49,7 +57,14 @@ class SigmaFullJump(AbstractJump):
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump"""
-        return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, True)
+        return sigma_subspace_jump_helper(
+            sample_point,
+            itrt,
+            self.manager.n_par,
+            self.manager.strategy_params.fisher_subspace_frac,
+            self.manager.sigma_scales,
+            True,
+        )
         # n_par = self.manager.n_par
         # mult = np.random.normal(0., 1., n_par)
         # new_point = sample_point+self.manager.sigma_scales[itrt]*mult
@@ -65,7 +80,14 @@ class SigmaRandomSubspaceJump(AbstractJump):
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump in random subspaces"""
-        return sigma_subspace_jump_helper(sample_point, itrt, self.manager.n_par, self.manager.strategy_params.fisher_subspace_frac, self.manager.sigma_scales, False)
+        return sigma_subspace_jump_helper(
+            sample_point,
+            itrt,
+            self.manager.n_par,
+            self.manager.strategy_params.fisher_subspace_frac,
+            self.manager.sigma_scales,
+            False,
+        )
 
 
 class FisherStrategyParameters:
@@ -86,17 +108,17 @@ class FisherStrategyParameters:
         # how often to do fisher draws in the hottest finite temperature chain
         self.hot_fisher_weight = config_f.getfloat('hot_fisher_weight', 0.333)
         # what fraction of dimensions to include in fisher subspace jumps
-        self.fisher_subspace_frac = config_f.getfloat('fisher_subspace_frac', 1.)
+        self.fisher_subspace_frac = config_f.getfloat('fisher_subspace_frac', 1.0)
         # how often to not do subspace jumps when doing a fisher jump
-        self.fisher_full_d_frac = config_f.getfloat('fisher_full_d_frac', 1.)
+        self.fisher_full_d_frac = config_f.getfloat('fisher_full_d_frac', 1.0)
         # how many blocks to skip between fisher matrix updates
         self.fisher_downsample = config_f.getint('fisher_downsample', 1)
         # default sigma for fisher matrix jumps
-        self.sigma_default = config_f.getfloat('sigma_default', 100.)
+        self.sigma_default = config_f.getfloat('sigma_default', 100.0)
         # maximum element of fisher matrix
         self.max_fisher_el = config_f.getfloat('max_fisher_el', np.inf)
         # default epsilon of fisher matrix
-        self.eps_default = config_f.getfloat('eps_default', 1.e-4)
+        self.eps_default = config_f.getfloat('eps_default', 1.0e-4)
         # whether to print a notification every time the fisher matrix is update
         self.verbose_fisher = config_f.getboolean('verbose_fisher', True)
 
@@ -122,7 +144,12 @@ class FisherStrategyParameters:
         config_f['verbose_Fisher'] = str(self.verbose_fisher)
 
 
-def set_fishers(sample_set: NDArray[np.floating], strategy_params: FisherStrategyParameters, n_chain: int, like_obj: AbstractLikelihood) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
+def set_fishers(
+    sample_set: NDArray[np.floating],
+    strategy_params: FisherStrategyParameters,
+    n_chain: int,
+    like_obj: AbstractLikelihood,
+) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Set up the fisher matrices"""
     use_chol_fishers = strategy_params.use_chol_fishers
     sigma_default = strategy_params.sigma_default
@@ -139,7 +166,7 @@ def set_fishers(sample_set: NDArray[np.floating], strategy_params: FisherStrateg
 
     epsilons = like_obj.get_epsilons()
     for itrp, eps in enumerate(epsilons):
-        if eps == 0.:
+        if eps == 0.0:
             epsilons[itrp] = strategy_params.eps_default
 
     for itrt in range(n_chain):
@@ -159,16 +186,16 @@ def set_fishers(sample_set: NDArray[np.floating], strategy_params: FisherStrateg
             pointm = like_obj.correct_bounds(pointm)
             mm = like_obj.get_loglike(pointm)
 
-            fisher_loc = -(pp - 2.0 * nn + mm) / (4 * eps * eps) + 1. / sigma_default**2
+            fisher_loc = -(pp - 2.0 * nn + mm) / (4 * eps * eps) + 1.0 / sigma_default**2
 
             if use_chol_fishers:
                 fishers[itrt, itrp, itrp] = fisher_loc
-            if not np.isfinite(fisher_loc) or fisher_loc <= 0. or fisher_loc > max_fisher_el:
+            if not np.isfinite(fisher_loc) or fisher_loc <= 0.0 or fisher_loc > max_fisher_el:
                 if use_chol_fishers:
-                    fishers[itrt, itrp, itrp] = 1. / sigma_default**2
+                    fishers[itrt, itrp, itrp] = 1.0 / sigma_default**2
                 sigma_diags[itrt, itrp] = sigma_default
             else:
-                sigma_diags[itrt, itrp] = 1. / np.sqrt(fisher_loc)
+                sigma_diags[itrt, itrp] = 1.0 / np.sqrt(fisher_loc)
 
         if use_chol_fishers:
             for itrp1 in range(n_par):
@@ -201,27 +228,25 @@ def set_fishers(sample_set: NDArray[np.floating], strategy_params: FisherStrateg
 
                     res = -(pp - mp - pm + mm) / (4.0 * eps1 * eps2)
                     if not np.isfinite(res) or np.abs(res) > max_fisher_el:
-                        res = 0.
+                        res = 0.0
 
                     fishers[itrt, itrp1, itrp2] = res
                     fishers[itrt, itrp2, itrp1] = fishers[itrt, itrp1, itrp2]
 
             det_fisher = np.linalg.det(fishers[itrt])
-            if (
-                not np.isfinite(det_fisher) or
-                det_fisher <= 0. or
-                np.any(np.linalg.eigh(fishers[itrt])[0] <= 0.)
-            ):
+            if not np.isfinite(det_fisher) or det_fisher <= 0.0 or np.any(np.linalg.eigh(fishers[itrt])[0] <= 0.0):
                 for itrp1 in range(n_par):
                     for itrp2 in range(itrp1 + 1, n_par):
-                        fishers[itrt, itrp1, itrp2] = 0.
-                        fishers[itrt, itrp2, itrp1] = 0.
+                        fishers[itrt, itrp1, itrp2] = 0.0
+                        fishers[itrt, itrp2, itrp1] = 0.0
 
             chol_fishers[itrt] = np.linalg.cholesky(fishers[itrt])
     return sigma_diags, fishers, chol_fishers
 
 
-def set_scales(n_par: int, T_ladder: TemperatureLadder, sigma_diags: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+def set_scales(
+    n_par: int, T_ladder: TemperatureLadder, sigma_diags: NDArray[np.floating]
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Helper to get several scaling parameters for fisher matrix jumps"""
     n_chain = T_ladder.n_chain
     betas = T_ladder.betas
@@ -229,11 +254,11 @@ def set_scales(n_par: int, T_ladder: TemperatureLadder, sigma_diags: NDArray[np.
     sigma_scales = np.zeros((n_chain, n_par))
     gamma_mults = np.zeros(n_chain)
 
-    if np.any((betas > 0.) & (np.isfinite(betas))):
+    if np.any((betas > 0.0) & (np.isfinite(betas))):
         # use the smallest postive beta if beta is 0 or non-finite for scaling
-        small_default = np.min(betas[betas > 0.])
+        small_default = np.min(betas[betas > 0.0])
     else:
-        small_default = 1.
+        small_default = 1.0
 
     # set the scale factors for the sigma and fisher jumps as a function of temperature
     for itrj in range(n_chain):
@@ -251,7 +276,13 @@ def set_scales(n_par: int, T_ladder: TemperatureLadder, sigma_diags: NDArray[np.
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, sample_set: NDArray[np.floating], config: ConfigParser) -> None:
+    def __init__(
+        self,
+        T_ladder: TemperatureLadder,
+        like_obj: AbstractLikelihood,
+        sample_set: NDArray[np.floating],
+        config: ConfigParser,
+    ) -> None:
         """Create the object"""
         self.strategy_params = FisherStrategyParameters(config)
 
@@ -273,7 +304,7 @@ class FisherJumpManager(JumpManager):
         cold_weight = self.strategy_params.cold_fisher_weight
         hot_weight = self.strategy_params.hot_fisher_weight
 
-        subspace_weight = 1. - self.strategy_params.fisher_full_d_frac
+        subspace_weight = 1.0 - self.strategy_params.fisher_full_d_frac
         full_weight = self.strategy_params.fisher_full_d_frac
 
         # get the indices of the jump types we need to assign probabilities for
@@ -293,27 +324,29 @@ class FisherJumpManager(JumpManager):
         assert fisher_full_idx >= 0
 
         if self.strategy_params.use_chol_fishers:
-            jump_weights[:n_cold, sigma_full_idx] = 0.
-            jump_weights[:n_cold, sigma_random_idx] = 0.
+            jump_weights[:n_cold, sigma_full_idx] = 0.0
+            jump_weights[:n_cold, sigma_random_idx] = 0.0
             jump_weights[:n_cold, fisher_full_idx] = cold_weight
         else:
             jump_weights[:n_cold, sigma_full_idx] = cold_weight * full_weight
             jump_weights[:n_cold, sigma_random_idx] = cold_weight * subspace_weight
-            jump_weights[:n_cold, fisher_full_idx] = 0.
+            jump_weights[:n_cold, fisher_full_idx] = 0.0
 
         if self.strategy_params.use_chol_fishers:
             jump_weights[n_cold:, fisher_full_idx] = hot_weight
-            jump_weights[n_cold:, sigma_full_idx] = 0.
-            jump_weights[n_cold:, sigma_random_idx] = 0.
+            jump_weights[n_cold:, sigma_full_idx] = 0.0
+            jump_weights[n_cold:, sigma_random_idx] = 0.0
         else:
-            jump_weights[n_cold:, fisher_full_idx] = 0.
+            jump_weights[n_cold:, fisher_full_idx] = 0.0
             jump_weights[n_cold:, sigma_full_idx] = hot_weight * full_weight
             jump_weights[n_cold:, sigma_random_idx] = hot_weight * subspace_weight
 
         self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
-    def post_block_update(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
+    def post_block_update(
+        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
+    ) -> None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         """
@@ -326,7 +359,9 @@ class FisherJumpManager(JumpManager):
         )
         self.sigma_scales, self.gamma_mults = set_scales(self.n_par, self.T_ladder, self.sigma_diags)
 
-    def reset_fishers(self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]) -> None:
+    def reset_fishers(
+        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
+    ) -> None:
         """Reset the fisher matrices from input samples"""
         if itrn // block_size < 4 or itrn % (block_size * self.strategy_params.fisher_downsample) == 0:
             samples_fisher = np.zeros((self.n_chain, self.n_par))
@@ -355,7 +390,7 @@ class FisherFullJump(AbstractJump):
         n_par: int = sample_point.size
         new_point = sample_point + solve_triangular(
             self.manager.chol_fishers[itrt],
-            self.manager.gamma_mults[itrt] * np.random.normal(0., 1., n_par),
-            trans_a=True
+            self.manager.gamma_mults[itrt] * np.random.normal(0.0, 1.0, n_par),
+            trans_a=True,
         )
-        return new_point, 0., True
+        return new_point, 0.0, True

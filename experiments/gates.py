@@ -47,13 +47,13 @@ def dedup_rows(samples: NDArray[np.floating]) -> NDArray[np.floating]:
 
 
 def moment_gates(
-        samples: NDArray[np.floating],
-        means_ref: NDArray[np.floating],
-        vars_ref: NDArray[np.floating],
-        *,
-        mean_tol_sigmas: float,
-        var_ratio_bounds: tuple[float, float],
-        label: str = 'moments',
+    samples: NDArray[np.floating],
+    means_ref: NDArray[np.floating],
+    vars_ref: NDArray[np.floating],
+    *,
+    mean_tol_sigmas: float,
+    var_ratio_bounds: tuple[float, float],
+    label: str = 'moments',
 ) -> GateReport:
     """Per-coordinate first two cumulants against reference values.
 
@@ -68,20 +68,24 @@ def moment_gates(
     report.stats[f'{label}_var_ratio_min'] = float(var_ratio.min())
     report.stats[f'{label}_var_ratio_max'] = float(var_ratio.max())
     if float(mean_dev.max()) > mean_tol_sigmas:
-        report.violations.append(f'{label}: max per-coordinate mean deviation {mean_dev.max():.3f} sigma > {mean_tol_sigmas}')
+        report.violations.append(
+            f'{label}: max per-coordinate mean deviation {mean_dev.max():.3f} sigma > {mean_tol_sigmas}'
+        )
     if float(var_ratio.min()) < var_ratio_bounds[0] or float(var_ratio.max()) > var_ratio_bounds[1]:
-        report.violations.append(f'{label}: per-coordinate variance ratios [{var_ratio.min():.3f}, {var_ratio.max():.3f}] outside {var_ratio_bounds}')
+        report.violations.append(
+            f'{label}: per-coordinate variance ratios [{var_ratio.min():.3f}, {var_ratio.max():.3f}] outside {var_ratio_bounds}'
+        )
     return report
 
 
 def nn_gate(
-        reference: NDArray[np.floating],
-        samples: NDArray[np.floating],
-        *,
-        threshold: float,
-        n_use: int,
-        rng: np.random.Generator,
-        label: str = 'nn',
+    reference: NDArray[np.floating],
+    samples: NDArray[np.floating],
+    *,
+    threshold: float,
+    n_use: int,
+    rng: np.random.Generator,
+    label: str = 'nn',
 ) -> GateReport:
     """Symmetric NN divergence below a calibrated threshold.
 
@@ -98,12 +102,12 @@ def nn_gate(
 
 
 def occupancy_gates(
-        samples: NDArray[np.floating],
-        centers: NDArray[np.floating],
-        weights_ref: NDArray[np.floating],
-        *,
-        tol: float,
-        label: str = 'occupancy',
+    samples: NDArray[np.floating],
+    centers: NDArray[np.floating],
+    weights_ref: NDArray[np.floating],
+    *,
+    tol: float,
+    label: str = 'occupancy',
 ) -> GateReport:
     """Nearest-center mode occupancy within tol of the reference weights."""
     report = GateReport()
@@ -111,20 +115,22 @@ def occupancy_gates(
     deviation = np.abs(occupancy - weights_ref)
     report.stats[f'{label}_dev_max'] = float(deviation.max())
     if float(deviation.max()) > tol:
-        report.violations.append(f'{label}: mode occupancy deviates up to {deviation.max():.3f} > {tol} (occupancy {np.round(occupancy, 3).tolist()})')
+        report.violations.append(
+            f'{label}: mode occupancy deviates up to {deviation.max():.3f} > {tol} (occupancy {np.round(occupancy, 3).tolist()})'
+        )
     return report
 
 
 def radial_mixture_gates(
-        samples: NDArray[np.floating],
-        *,
-        r2_threshold: float,
-        narrow_frac_ref: float,
-        narrow_frac_tol: float,
-        r2_mean_ref: float,
-        r2_mean_rtol: float,
-        min_tier_flips: int,
-        label: str = 'tiers',
+    samples: NDArray[np.floating],
+    *,
+    r2_threshold: float,
+    narrow_frac_ref: float,
+    narrow_frac_tol: float,
+    r2_mean_ref: float,
+    r2_mean_rtol: float,
+    min_tier_flips: int,
+    label: str = 'tiers',
 ) -> GateReport:
     """Concentric radial-mixture (cake-style) tier recovery.
 
@@ -143,7 +149,9 @@ def radial_mixture_gates(
     report.stats[f'{label}_n_flips'] = float(n_flips)
     report.stats[f'{label}_r2_mean'] = r2_mean
     if abs(narrow_frac - narrow_frac_ref) > narrow_frac_tol:
-        report.violations.append(f'{label}: narrow fraction {narrow_frac:.3f} outside {narrow_frac_ref} +- {narrow_frac_tol}')
+        report.violations.append(
+            f'{label}: narrow fraction {narrow_frac:.3f} outside {narrow_frac_ref} +- {narrow_frac_tol}'
+        )
     if abs(r2_mean - r2_mean_ref) > r2_mean_rtol * r2_mean_ref:
         report.violations.append(f'{label}: E[r^2] {r2_mean:.3f} outside {r2_mean_ref:.3f} +- {r2_mean_rtol:.0%}')
     if n_flips < min_tier_flips:
@@ -152,13 +160,13 @@ def radial_mixture_gates(
 
 
 def ladder_entropy_gates(
-        finite_Ts: NDArray[np.floating],
-        betas_profile: NDArray[np.floating],
-        s_profile: NDArray[np.floating],
-        *,
-        tip_max_nats: float,
-        link_max_nats: float,
-        label: str = 'ladder',
+    finite_Ts: NDArray[np.floating],
+    betas_profile: NDArray[np.floating],
+    s_profile: NDArray[np.floating],
+    *,
+    tip_max_nats: float,
+    link_max_nats: float,
+    label: str = 'ladder',
 ) -> GateReport:
     """Ladder structure against a reference entropy profile S(beta).
 
@@ -169,16 +177,16 @@ def ladder_entropy_gates(
     and every other in-span link at most link_max_nats.
     """
     report = GateReport()
-    span = (finite_Ts >= 1. / betas_profile.max()) & (finite_Ts <= 1. / betas_profile.min())
+    span = (finite_Ts >= 1.0 / betas_profile.max()) & (finite_Ts <= 1.0 / betas_profile.min())
     Ts_in_span = np.sort(finite_Ts[span])
-    betas_rungs = 1. / Ts_in_span
+    betas_rungs = 1.0 / Ts_in_span
     s_at_rungs = np.asarray(np.interp(betas_rungs[::-1], betas_profile[::-1], s_profile[::-1]))[::-1]
     increments = np.abs(np.diff(s_at_rungs))
     if increments.size == 0:
         report.violations.append(f'{label}: fewer than two rungs inside the reference profile span')
         return report
     report.stats[f'{label}_tip_nats'] = float(increments[0])
-    report.stats[f'{label}_max_link_nats'] = float(increments[1:].max()) if increments.size > 1 else 0.
+    report.stats[f'{label}_max_link_nats'] = float(increments[1:].max()) if increments.size > 1 else 0.0
     if float(increments[0]) > tip_max_nats:
         report.violations.append(f'{label}: coldest link hides {increments[0]:.2f} nats > {tip_max_nats}')
     if increments.size > 1 and float(increments[1:].max()) > link_max_nats:

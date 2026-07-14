@@ -16,7 +16,9 @@ if TYPE_CHECKING:
     from dashboard.themes import Theme
 
 
-def base_layout(theme: Theme, *, x_title: str = '', y_title: str = '', log_x: bool = False, log_y: bool = False) -> go.Layout:
+def base_layout(
+    theme: Theme, *, x_title: str = '', y_title: str = '', log_x: bool = False, log_y: bool = False
+) -> go.Layout:
     """Build the standard themed layout: recessive hairline grid, thin chrome."""
     axis_common: dict[str, Any] = {
         'gridcolor': theme.gridline,
@@ -48,7 +50,7 @@ def ordinal_colors(theme: Theme, n_steps: int) -> list[str]:
         return []
     if n_steps == 1:
         return [ramp[len(ramp) // 2]]
-    positions = np.linspace(0., 1., n_steps)
+    positions = np.linspace(0.0, 1.0, n_steps)
     return [str(pcolors.sample_colorscale(ramp, float(pos), colortype='rgb')[0]) for pos in positions]
 
 
@@ -75,23 +77,33 @@ def curve_traces(curves: list[Curve], theme: Theme, *, hover_suffix: str = '') -
         if curve.emphasis == 'current':
             color, dash, width = theme.highlight, 'solid', 2.5
         elif curve.emphasis == 'reference':
-            color, dash, width = theme.ink_muted, 'dot', 2.
+            color, dash, width = theme.ink_muted, 'dot', 2.0
         else:
             color = history_color[id(curve)]
             dash = 'solid' if curve.emphasis == 'applied' else 'dash'
             width = 1.6
-        traces.append(go.Scatter(
-            x=curve.x, y=curve.y, name=curve.label, mode='lines',
-            line={'color': color, 'dash': dash, 'width': width},
-            hovertemplate=f'%{{x:.6g}}, %{{y:.6g}}{hover_suffix}<extra>{curve.label}</extra>',
-        ))
+        traces.append(
+            go.Scatter(
+                x=curve.x,
+                y=curve.y,
+                name=curve.label,
+                mode='lines',
+                line={'color': color, 'dash': dash, 'width': width},
+                hovertemplate=f'%{{x:.6g}}, %{{y:.6g}}{hover_suffix}<extra>{curve.label}</extra>',
+            )
+        )
     return traces
 
 
 def annotate_empty(fig: go.Figure, theme: Theme, message: str) -> go.Figure:
     """Put a centered explanatory note on a figure with no data."""
     fig.add_annotation(
-        text=message, showarrow=False, xref='paper', yref='paper', x=0.5, y=0.5,
+        text=message,
+        showarrow=False,
+        xref='paper',
+        yref='paper',
+        x=0.5,
+        y=0.5,
         font={'color': theme.ink_muted, 'size': 13},
     )
     return fig

@@ -5,7 +5,9 @@ from DTMCMC.chain_analysis_helpers import StoreView
 from DTMCMC.corr_summary_helpers import CorrelationSummary, autocorr_helper, get_crosscorr_sum
 
 
-def make_store_view(samples_store: np.ndarray, logLs_store: np.ndarray, Ts: np.ndarray, block_size: int = 16) -> StoreView:
+def make_store_view(
+    samples_store: np.ndarray, logLs_store: np.ndarray, Ts: np.ndarray, block_size: int = 16
+) -> StoreView:
     n_rows, n_cold, n_par = samples_store.shape
     return StoreView(
         samples_store=samples_store,

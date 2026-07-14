@@ -32,21 +32,28 @@ from DTMCMC.rng_helpers import get_rng
 from experiments.benchmarks import BENCHMARKS
 from experiments.gates import GateReport, dedup_rows, moment_gates, nn_gate
 from experiments.harness.postfreeze import load_post_freeze, readout_structure_violations
-from experiments.pilots.common import PILOT_ROOT, load_run_metrics, make_adaptive_spec, run_spec_files, save_summary, write_specs
+from experiments.pilots.common import (
+    PILOT_ROOT,
+    load_run_metrics,
+    make_adaptive_spec,
+    run_spec_files,
+    save_summary,
+    write_specs,
+)
 
 MODES = ('entropy', 'length', 'acceptance')
 
 
 def evaluate_arm_run(
-        artifact_path: Path,
-        target_name: str,
-        n_par: int,
-        *,
-        nn_threshold: float,
-        mean_tol_sigmas: float,
-        var_ratio_bounds: tuple[float, float],
-        n_reference: int = 8000,
-        gate_seed: int = 2,
+    artifact_path: Path,
+    target_name: str,
+    n_par: int,
+    *,
+    nn_threshold: float,
+    mean_tol_sigmas: float,
+    var_ratio_bounds: tuple[float, float],
+    n_reference: int = 8000,
+    gate_seed: int = 2,
 ) -> dict[str, Any]:
     """Gate one arm run and, if it passes, attach its efficiency metrics.
 
@@ -62,10 +69,28 @@ def evaluate_arm_run(
 
     if target.draw_reference is not None:
         reference = target.draw_reference(n_reference, n_par, get_rng(90000 + gate_seed))
-        report.merge(nn_gate(reference, dedup_rows(run['cold']), threshold=nn_threshold, n_use=2000, rng=get_rng(gate_seed), label=target_name))
+        report.merge(
+            nn_gate(
+                reference,
+                dedup_rows(run['cold']),
+                threshold=nn_threshold,
+                n_use=2000,
+                rng=get_rng(gate_seed),
+                label=target_name,
+            )
+        )
     if target.reference_moments is not None:
         means_ref, vars_ref = target.reference_moments(n_par)
-        report.merge(moment_gates(run['cold'], means_ref, vars_ref, mean_tol_sigmas=mean_tol_sigmas, var_ratio_bounds=var_ratio_bounds, label=target_name))
+        report.merge(
+            moment_gates(
+                run['cold'],
+                means_ref,
+                vars_ref,
+                mean_tol_sigmas=mean_tol_sigmas,
+                var_ratio_bounds=var_ratio_bounds,
+                label=target_name,
+            )
+        )
 
     metrics = load_run_metrics(artifact_path)
     return {
@@ -99,7 +124,7 @@ def summarize_arms(results: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
         arms[arm] = {
             'n_runs': len(runs),
             'n_passed': len(passing),
-            'pass_rate': len(passing) / len(runs) if runs else 0.,
+            'pass_rate': len(passing) / len(runs) if runs else 0.0,
             'median_n_eff_per_eval': float(np.median([run['n_eff_per_eval'] for run in passing])) if passing else None,
             'frozen_by': [run['frozen_by'] for run in runs],
             'violations': sorted({violation for run in runs for violation in run['violations']}),
@@ -117,19 +142,19 @@ def summarize_arms(results: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
 
 
 def run_family_comparison(
-        target_name: str,
-        seeds: tuple[int, ...],
-        *,
-        n_par: int,
-        n_chain: int,
-        block_size: int,
-        n_blocks: int,
-        budget_blocks: int,
-        nn_threshold: float,
-        mean_tol_sigmas: float = 0.5,
-        var_ratio_bounds: tuple[float, float] = (0.5, 1.5),
-        out_root: Path | None = None,
-        jobs: int = 4,
+    target_name: str,
+    seeds: tuple[int, ...],
+    *,
+    n_par: int,
+    n_chain: int,
+    block_size: int,
+    n_blocks: int,
+    budget_blocks: int,
+    nn_threshold: float,
+    mean_tol_sigmas: float = 0.5,
+    var_ratio_bounds: tuple[float, float] = (0.5, 1.5),
+    out_root: Path | None = None,
+    jobs: int = 4,
 ) -> dict[str, Any]:
     """Run modes x seeds on one target and write the comparison summary JSON."""
     likelihood: dict[str, Any] = {'name': target_name, **BENCHMARKS[target_name].default_params}
@@ -138,11 +163,17 @@ def run_family_comparison(
 
     specs = [
         make_adaptive_spec(
-            f'family_{target_name}_{mode}', seed, likelihood,
-            n_chain=n_chain, block_size=block_size, n_blocks=n_blocks,
-            budget_blocks=budget_blocks, mode=mode,
+            f'family_{target_name}_{mode}',
+            seed,
+            likelihood,
+            n_chain=n_chain,
+            block_size=block_size,
+            n_blocks=n_blocks,
+            budget_blocks=budget_blocks,
+            mode=mode,
         )
-        for mode in MODES for seed in seeds
+        for mode in MODES
+        for seed in seeds
     ]
     spec_paths = write_specs(specs, root / 'specs')
     artifact_paths = run_spec_files(spec_paths, root / 'runs', jobs=jobs)
@@ -150,10 +181,16 @@ def run_family_comparison(
     results: dict[str, list[dict[str, Any]]] = {mode: [] for mode in MODES}
     for spec_data, artifact_path in zip(specs, artifact_paths, strict=True):
         mode = str(spec_data['adaptive']['mode'])
-        results[mode].append(evaluate_arm_run(
-            artifact_path, target_name, n_par,
-            nn_threshold=nn_threshold, mean_tol_sigmas=mean_tol_sigmas, var_ratio_bounds=var_ratio_bounds,
-        ))
+        results[mode].append(
+            evaluate_arm_run(
+                artifact_path,
+                target_name,
+                n_par,
+                nn_threshold=nn_threshold,
+                mean_tol_sigmas=mean_tol_sigmas,
+                var_ratio_bounds=var_ratio_bounds,
+            )
+        )
 
     summary = {
         'target': target_name,
@@ -171,7 +208,9 @@ def run_family_comparison(
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('target', choices=sorted(name for name, target in BENCHMARKS.items() if target.draw_reference is not None))
+    parser.add_argument(
+        'target', choices=sorted(name for name, target in BENCHMARKS.items() if target.draw_reference is not None)
+    )
     parser.add_argument('--n-par', type=int, required=True)
     parser.add_argument('--seeds', type=int, nargs='+', default=[555, 556, 557])
     parser.add_argument('--n-chain', type=int, default=12)
@@ -182,9 +221,15 @@ def main() -> None:
     parser.add_argument('--jobs', type=int, default=4)
     args = parser.parse_args()
     summary = run_family_comparison(
-        args.target, tuple(args.seeds), n_par=args.n_par, n_chain=args.n_chain,
-        block_size=args.block_size, n_blocks=args.n_blocks, budget_blocks=args.budget_blocks,
-        nn_threshold=args.nn_threshold, jobs=args.jobs,
+        args.target,
+        tuple(args.seeds),
+        n_par=args.n_par,
+        n_chain=args.n_chain,
+        block_size=args.block_size,
+        n_blocks=args.n_blocks,
+        budget_blocks=args.budget_blocks,
+        nn_threshold=args.nn_threshold,
+        jobs=args.jobs,
     )
     print(summary['ranking_by_pass_rate_then_efficiency'], summary['unranked_failing_arms'])
 

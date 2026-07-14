@@ -22,7 +22,9 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-def de_buffer_difference_spectrum(de_buffer: NDArray[np.floating], n_pairs: int, rng: np.random.Generator) -> NDArray[np.floating]:
+def de_buffer_difference_spectrum(
+    de_buffer: NDArray[np.floating], n_pairs: int, rng: np.random.Generator
+) -> NDArray[np.floating]:
     """Eigenspectrum of the covariance of random DE-buffer differences.
 
     Draws n_pairs random buffer-entry pairs per temperature and returns
@@ -53,12 +55,14 @@ def effective_rank(eigvals: NDArray[np.floating]) -> NDArray[np.floating]:
     total = eigvals.sum(axis=-1)
     total_sq = (eigvals**2).sum(axis=-1)
     out = np.zeros(np.shape(total))
-    nonzero = total_sq > 0.
-    out[nonzero] = total[nonzero]**2 / total_sq[nonzero]
+    nonzero = total_sq > 0.0
+    out[nonzero] = total[nonzero] ** 2 / total_sq[nonzero]
     return out
 
 
-def nn_kl(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator) -> float:
+def nn_kl(
+    reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator
+) -> float:
     """Signed two-sample NN divergence of test against reference samples.
 
     Wraps entropy_process.NNEntropyK (O(n_use^2): keep n_use ~ 5-10k,
@@ -79,7 +83,9 @@ def nn_kl(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floa
     return float(entropy_cross - entropy_ref)
 
 
-def nn_divergence_symmetric(reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator) -> float:
+def nn_divergence_symmetric(
+    reference_samples: NDArray[np.floating], test_samples: NDArray[np.floating], n_use: int, rng: np.random.Generator
+) -> float:
     """Symmetric two-sample NN divergence: max of both nn_kl orientations.
 
     The signed nn_kl can have opposite signs for overconcentrated and
@@ -92,7 +98,9 @@ def nn_divergence_symmetric(reference_samples: NDArray[np.floating], test_sample
     return max(forward, backward)
 
 
-def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator) -> NDArray[np.floating]:
+def scramble_block_n_eff(
+    samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator
+) -> NDArray[np.floating]:
     """Frozen C1 effective-sample estimator (n_eff_preds_empirical, plan §6).
 
     Variance ratio of scrambled to sequential block means, per parameter,
@@ -129,7 +137,7 @@ def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_block
     scr_means = np.zeros((n_blocks, n_par))
     for itrb in range(n_blocks):
         start = int(rng.integers(0, n_rows - block_size + 1))
-        seq_means[itrb] = samples[start:start + block_size, :, :].mean(axis=(0, 1))
+        seq_means[itrb] = samples[start : start + block_size, :, :].mean(axis=(0, 1))
         row_idx = rng.integers(0, n_rows, size=block_size * n_cold)
         chain_idx = rng.integers(0, n_cold, size=block_size * n_cold)
         scr_means[itrb] = samples[row_idx, chain_idx, :].mean(axis=0)
@@ -137,12 +145,14 @@ def scramble_block_n_eff(samples: NDArray[np.floating], block_size: int, n_block
     seq_var = seq_means.var(axis=0)
     scr_var = scr_means.var(axis=0)
     n_eff = np.full(n_par, np.inf)
-    nonzero = seq_var > 0.
+    nonzero = seq_var > 0.0
     n_eff[nonzero] = scr_var[nonzero] / seq_var[nonzero] * n_tot
     return n_eff
 
 
-def scramble_block_n_eff_min(samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator) -> float:
+def scramble_block_n_eff_min(
+    samples: NDArray[np.floating], block_size: int, n_blocks: int, rng: np.random.Generator
+) -> float:
     """The C1 primary statistic: minimum over parameters of the frozen estimator.
 
     Plan §6 freezes the aggregation rule — per-parameter n_eff on the
@@ -151,8 +161,6 @@ def scramble_block_n_eff_min(samples: NDArray[np.floating], block_size: int, n_b
     than a convention callers must remember.
     """
     return float(np.min(scramble_block_n_eff(samples, block_size, n_blocks, rng)))
-
-
 
 
 @dataclass(frozen=True)
@@ -164,7 +172,9 @@ class SuperEfficiencyResult:
     n_eff_with_cross: NDArray[np.floating]
 
 
-def _cross_covariance_estimate(samples_store: NDArray[np.floating], itrp: int, n_burnin_thin: int, autocorr_cut: int) -> float:
+def _cross_covariance_estimate(
+    samples_store: NDArray[np.floating], itrp: int, n_burnin_thin: int, autocorr_cut: int
+) -> float:
     """Lag-summed cross-chain covariance, truncated at the autocorrelation cut.
 
     Mirrors the folding in DTMCMC.corr_summary_helpers.get_crosscorr_sum
@@ -177,15 +187,21 @@ def _cross_covariance_estimate(samples_store: NDArray[np.floating], itrp: int, n
     for itrt1 in range(n_cold):
         params_adj1 = samples_store[n_burnin_thin:, itrt1, itrp] - np.mean(samples_store[n_burnin_thin:, itrt1, itrp])
         for itrt2 in range(itrt1 + 1, n_cold):
-            params_adj2 = samples_store[n_burnin_thin:, itrt2, itrp] - np.mean(samples_store[n_burnin_thin:, itrt2, itrp])
+            params_adj2 = samples_store[n_burnin_thin:, itrt2, itrp] - np.mean(
+                samples_store[n_burnin_thin:, itrt2, itrp]
+            )
             corr_loc = scipy.signal.correlate(params_adj1, params_adj2, mode='full')
             cross_sum += corr_loc
             cross_sum += corr_loc[::-1]
-    cross_lim = np.hstack([cross_sum[n_use - 1:n_use], cross_sum[n_use:2 * n_use - 2:2] + cross_sum[n_use + 1:2 * n_use - 1:2]])
-    return float(cross_lim[0] + 2. * np.sum(cross_lim[1:autocorr_cut]))
+    cross_lim = np.hstack(
+        [cross_sum[n_use - 1 : n_use], cross_sum[n_use : 2 * n_use - 2 : 2] + cross_sum[n_use + 1 : 2 * n_use - 1 : 2]]
+    )
+    return float(cross_lim[0] + 2.0 * np.sum(cross_lim[1:autocorr_cut]))
 
 
-def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_size: int, store_thin: int = 1, n_burnin_thin: int = 0) -> SuperEfficiencyResult:
+def detect_apparent_super_efficiency(
+    samples_store: NDArray[np.floating], block_size: int, store_thin: int = 1, n_burnin_thin: int = 0
+) -> SuperEfficiencyResult:
     """Flag parameters whose cross-chain terms claim n_eff above the autocorr estimate.
 
     Negative adjacent-chain cross-correlation makes the combined variance
@@ -196,13 +212,15 @@ def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_
     """
     n_rows, n_cold, n_par = samples_store.shape
     Ts = np.ones(n_cold)
-    logLs_store = np.zeros((n_rows, n_cold)) # TODO need to actually wire in logLs_store and have checks based on it; not really an issue since production doesn't call this now
+    logLs_store = np.zeros(
+        (n_rows, n_cold)
+    )  # TODO need to actually wire in logLs_store and have checks based on it; not really an issue since production doesn't call this now
     itrn_store = 0
     view = StoreView(
         samples_store=samples_store,
         logLs_store=logLs_store,
-        Ts = Ts,
-        itrn = itrn_store,
+        Ts=Ts,
+        itrn=itrn_store,
         store_size=n_rows,
         n_cold=n_cold,
         n_chain=n_cold,
@@ -220,7 +238,7 @@ def detect_apparent_super_efficiency(samples_store: NDArray[np.floating], block_
         n_eff_auto[itrp] = n_tot / (est_var_auto / autocorr_lim[0])
         est_var_cross = _cross_covariance_estimate(samples_store, itrp, n_burnin_thin, autocorr_cut)
         est_var_total = est_var_auto + est_var_cross
-        if est_var_total <= 0.:
+        if est_var_total <= 0.0:
             n_eff_with_cross[itrp] = np.inf
         else:
             n_eff_with_cross[itrp] = n_tot / (est_var_total / autocorr_lim[0])
@@ -244,7 +262,9 @@ def _rt_segment_ids(rt_events: NDArray[np.int64], segment_itrns: NDArray[np.int6
     return np.searchsorted(np.asarray(segment_itrns), rt_events[:, 1], side='left').astype(np.int64)
 
 
-def round_trip_counts(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> NDArray[np.int64]:
+def round_trip_counts(
+    rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None
+) -> NDArray[np.int64]:
     """Complete round trips per walker from the event log.
 
     A round trip needs one arrival in each direction; the count per
@@ -263,21 +283,27 @@ def round_trip_counts(rt_events: NDArray[np.int64], n_chain: int, segment_itrns:
     return trips
 
 
-def round_trip_rate(rt_events: NDArray[np.int64], n_chain: int, n_iterations: int, segment_itrns: NDArray[np.int64] | None = None) -> float:
+def round_trip_rate(
+    rt_events: NDArray[np.int64], n_chain: int, n_iterations: int, segment_itrns: NDArray[np.int64] | None = None
+) -> float:
     """Round trips per walker per 1e6 chain-steps (primary C1/C2 metric)."""
     total_trips = int(round_trip_counts(rt_events, n_chain, segment_itrns).sum())
     chain_steps = n_iterations * n_chain
     if chain_steps == 0:
-        return 0.
-    return total_trips / n_chain / (chain_steps / 1.e6)
+        return 0.0
+    return total_trips / n_chain / (chain_steps / 1.0e6)
 
 
-def fraction_walkers_with_round_trip(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> float:
+def fraction_walkers_with_round_trip(
+    rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None
+) -> float:
     """Fraction of walkers that completed at least one round trip."""
     return float(np.count_nonzero(round_trip_counts(rt_events, n_chain, segment_itrns))) / n_chain
 
 
-def round_trip_times(rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+def round_trip_times(
+    rt_events: NDArray[np.int64], n_chain: int, segment_itrns: NDArray[np.int64] | None = None
+) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
     """Full-cycle durations pooled over walkers, from the event log.
 
     Returns (cold-to-cold durations, hot-to-hot durations): iteration
@@ -322,9 +348,9 @@ def fit_knee_piecewise_linear(x: NDArray[np.floating], y: NDArray[np.floating]) 
     best_k = float(x[1])
     best_sse = np.inf
     for candidate in x[1:-1]:
-        design = np.column_stack([np.ones(x.size), x, np.maximum(0., x - candidate)])
+        design = np.column_stack([np.ones(x.size), x, np.maximum(0.0, x - candidate)])
         _coef, residual, _rank, _sv = np.linalg.lstsq(design, y)
-        sse = float(residual[0]) if residual.size else 0.
+        sse = float(residual[0]) if residual.size else 0.0
         if sse < best_sse:
             best_sse = sse
             best_k = float(candidate)
@@ -343,10 +369,12 @@ def fit_knee_max_curvature(x: NDArray[np.floating], y: NDArray[np.floating]) -> 
         raise ValueError(msg)
     x_norm = (x - x.min()) / (x.max() - x.min())
     y_span = y.max() - y.min()
-    y_norm = (y - y.min()) / y_span if y_span > 0. else np.zeros_like(y)
+    y_norm = (y - y.min()) / y_span if y_span > 0.0 else np.zeros_like(y)
     curvature = np.zeros(x.size)
     for itrk in range(1, x.size - 1):
         h1 = x_norm[itrk] - x_norm[itrk - 1]
         h2 = x_norm[itrk + 1] - x_norm[itrk]
-        curvature[itrk] = np.abs(2. * (h1 * y_norm[itrk + 1] - (h1 + h2) * y_norm[itrk] + h2 * y_norm[itrk - 1]) / (h1 * h2 * (h1 + h2)))
+        curvature[itrk] = np.abs(
+            2.0 * (h1 * y_norm[itrk + 1] - (h1 + h2) * y_norm[itrk] + h2 * y_norm[itrk - 1]) / (h1 * h2 * (h1 + h2))
+        )
     return float(x[int(np.argmax(curvature))])

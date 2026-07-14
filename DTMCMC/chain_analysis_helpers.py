@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 helpers to analyze the results of an mcmc chain
 """
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -28,17 +29,36 @@ class StoreView:
 
 
 @njit()
-def get_blockwise_vars(N_blocks: int, n_burnin: int, samples_store: NDArray[np.floating], block_size: int, itrr: int, itrp: int, blockwise_vars: NDArray[np.floating], blockwise_means: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+def get_blockwise_vars(
+    N_blocks: int,
+    n_burnin: int,
+    samples_store: NDArray[np.floating],
+    block_size: int,
+    itrr: int,
+    itrp: int,
+    blockwise_vars: NDArray[np.floating],
+    blockwise_means: NDArray[np.floating],
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Get the variances for sequential blocks of samples"""
     for itrb in range(N_blocks):
         start1 = np.random.randint(n_burnin, samples_store.shape[0] - block_size)
-        blockwise_vars[itrr, itrp, itrb] = np.var(samples_store[start1:start1 + block_size, :, itrp])
-        blockwise_means[itrr, itrp, itrb] = np.mean(samples_store[start1:start1 + block_size, :, itrp])
+        blockwise_vars[itrr, itrp, itrb] = np.var(samples_store[start1 : start1 + block_size, :, itrp])
+        blockwise_means[itrr, itrp, itrb] = np.mean(samples_store[start1 : start1 + block_size, :, itrp])
     return blockwise_vars, blockwise_means
 
 
 @njit()
-def get_blockwise_vars_scramble(N_blocks: int, n_cold: int, n_burnin: int, samples_store: NDArray[np.floating], block_size: int, itrr: int, itrp: int, blockwise_vars_scramble: NDArray[np.floating], blockwise_means_scramble: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+def get_blockwise_vars_scramble(
+    N_blocks: int,
+    n_cold: int,
+    n_burnin: int,
+    samples_store: NDArray[np.floating],
+    block_size: int,
+    itrr: int,
+    itrp: int,
+    blockwise_vars_scramble: NDArray[np.floating],
+    blockwise_means_scramble: NDArray[np.floating],
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Get the variances for random blocks of samples"""
     dim1 = samples_store.shape[0] - n_burnin
     dim2 = n_cold
@@ -54,7 +74,9 @@ def get_blockwise_vars_scramble(N_blocks: int, n_cold: int, n_burnin: int, sampl
     return blockwise_vars_scramble, blockwise_means_scramble
 
 
-def get_autocorr_sum(n_burnin: int, mcc: DTMCMCSampler | StoreView, itrp: int, autocorr_sum: NDArray[np.floating]) -> None:
+def get_autocorr_sum(
+    n_burnin: int, mcc: DTMCMCSampler | StoreView, itrp: int, autocorr_sum: NDArray[np.floating]
+) -> None:
     """Get the sum of the autocorrelations of all the cold chains"""
     for itrt in range(mcc.n_cold):
         params_adj = mcc.samples_store[n_burnin:, itrt, itrp] - np.mean(mcc.samples_store[n_burnin:, itrt, itrp])

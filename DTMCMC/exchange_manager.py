@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 helpers to perform the parallel tempering exchanges
 """
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -8,29 +9,27 @@ from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-
-
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 # TODO implement option to not do exchanges at all
 
-RANDOM_TARGETS = 0      # uniform random exchange targetting
+RANDOM_TARGETS = 0  # uniform random exchange targetting
 SEQUENTIAL_TARGETS = 1  # target sequentially from back to front
-ADJACENT_TARGETS = 2    # target alternating +/- 1 positions
-NULL_TARGETS = 3        # do not do any exchanges
-REVERSE_SEQUENTIAL_TARGETS = 4        # target sequentially from front to back
-ALTERNATE_SEQUENTIAL_TARGETS = 5        # target sequentially from front to back and back to front alternating
+ADJACENT_TARGETS = 2  # target alternating +/- 1 positions
+NULL_TARGETS = 3  # do not do any exchanges
+REVERSE_SEQUENTIAL_TARGETS = 4  # target sequentially from front to back
+ALTERNATE_SEQUENTIAL_TARGETS = 5  # target sequentially from front to back and back to front alternating
 
 
 @njit()
 def exchange_step_helper(
-        logLs_loc: NDArray[np.floating],
-        betas: NDArray[np.floating],
-        exchange_tracker: NDArray[np.int64],
-        exchange_order: NDArray[np.int64],
-        targets: NDArray[np.int64],
-        no_repeat: bool,
-        track_full_exchanges: bool
+    logLs_loc: NDArray[np.floating],
+    betas: NDArray[np.floating],
+    exchange_tracker: NDArray[np.int64],
+    exchange_order: NDArray[np.int64],
+    targets: NDArray[np.int64],
+    no_repeat: bool,
+    track_full_exchanges: bool,
 ) -> NDArray[np.int64]:
     """Actually execute the swaps for an exchange step"""
     n_chain = betas.shape[0]
@@ -52,10 +51,9 @@ def exchange_step_helper(
             assert itrs_fin[itrt_target] == itrt_target
             assert itrs_fin[itrt] == itrt
 
-        log_accept_prob_exchange = np.log(np.random.uniform(0., 1.))
-        log_mh_ratio_exchange = (
-            betas[itrt] * (logLs_loc[itrt_target] - logLs_loc[itrt]) +
-            betas[itrt_target] * (logLs_loc[itrt] - logLs_loc[itrt_target])
+        log_accept_prob_exchange = np.log(np.random.uniform(0.0, 1.0))
+        log_mh_ratio_exchange = betas[itrt] * (logLs_loc[itrt_target] - logLs_loc[itrt]) + betas[itrt_target] * (
+            logLs_loc[itrt] - logLs_loc[itrt_target]
         )
         if log_mh_ratio_exchange > log_accept_prob_exchange:
             logLs_hold = logLs_loc[itrt_target]
@@ -99,8 +97,8 @@ def random_pair_generate(n_chain: int) -> tuple[NDArray[np.int64], NDArray[np.in
     target_shuffle = np.concatenate((target_shuffle[::2], target_shuffle[1::2]))
 
     targets = np.zeros(n_chain, dtype=np.int64)
-    targets[target_shuffle[:n_chain // 2]] = target_shuffle[n_chain // 2:n_chain]
-    targets[target_shuffle[n_chain // 2:n_chain]] = target_shuffle[:n_chain // 2]
+    targets[target_shuffle[: n_chain // 2]] = target_shuffle[n_chain // 2 : n_chain]
+    targets[target_shuffle[n_chain // 2 : n_chain]] = target_shuffle[: n_chain // 2]
     exchange_order = np.arange(0, n_chain)
     return targets, exchange_order
 
@@ -140,16 +138,16 @@ def offset_pair_generate(n_chain: int, offset: int) -> tuple[NDArray[np.int64], 
 
 @njit()
 def do_ptmcmc_exchange(
-        itrb: int,
-        samples: NDArray[np.floating],
-        logLs: NDArray[np.floating],
-        n_chain: int,
-        betas: NDArray[np.floating],
-        exchange_tracker: NDArray[np.int64],
-        esd_exchange: NDArray[np.floating],
-        chain_track: NDArray[np.int64],
-        target_select: int,
-        track_full_exchanges: bool,
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    n_chain: int,
+    betas: NDArray[np.floating],
+    exchange_tracker: NDArray[np.int64],
+    esd_exchange: NDArray[np.floating],
+    chain_track: NDArray[np.int64],
+    target_select: int,
+    track_full_exchanges: bool,
 ) -> None:
     """Chose and exchange strategy and do the exchange step"""
     no_repeat = True
@@ -196,13 +194,7 @@ def do_ptmcmc_exchange(
     logLs_cur[:] = logLs[itrb]
 
     itrs_fin = exchange_step_helper(
-        logLs_cur,
-        betas,
-        exchange_tracker,
-        exchange_order,
-        targets,
-        no_repeat,
-        track_full_exchanges
+        logLs_cur, betas, exchange_tracker, exchange_order, targets, no_repeat, track_full_exchanges
     )
 
     for itrt in range(n_chain):
@@ -216,7 +208,7 @@ def do_ptmcmc_exchange(
         # displacement accounting needs this term alongside the per-jump-type
         # esd_record. Pure observer: no draws (D5)
         if itrs_fin[itrt] != itrt:
-            delta_sq = 0.
+            delta_sq = 0.0
             for itrp in range(samples.shape[2]):
                 diff = samples[itrb, itrs_fin[itrt], itrp] - samples[itrb, itrt, itrp]
                 delta_sq += diff * diff
@@ -228,13 +220,20 @@ class ExchangeManager:
     and define the strategy by which to propose exchanges
     """
 
-    def __init__(self, strategy: int=RANDOM_TARGETS, track_full_exchanges: bool=True) -> None:
+    def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
         """Select the exchange targeting strategy"""
         self.strategy: int = strategy
         self.track_full_exchanges: bool = track_full_exchanges
 
     def do_ptmcmc_exchange(
-            self, itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], T_ladder: TemperatureLadder, exchange_tracker: NDArray[np.int64], esd_exchange: NDArray[np.floating], chain_track: NDArray[np.int64]
+        self,
+        itrb: int,
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        T_ladder: TemperatureLadder,
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
     ) -> None:
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)

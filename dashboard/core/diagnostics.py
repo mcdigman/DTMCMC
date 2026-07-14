@@ -154,7 +154,9 @@ def ladder_segments(snapshot: RunSnapshot) -> list[LadderSegment]:
     for idx, stop_block in enumerate(history.block_index):
         stop = min(int(stop_block), n_blocks)
         if stop > start_block:
-            segments.append(LadderSegment(start_block, stop, current_Ts, applied=bool(history.applied[idx]), is_current=False))
+            segments.append(
+                LadderSegment(start_block, stop, current_Ts, applied=bool(history.applied[idx]), is_current=False)
+            )
         if history.applied[idx]:
             current_Ts = np.asarray(history.Ts[idx])
         start_block = stop
@@ -169,19 +171,19 @@ def segment_moments(snapshot: RunSnapshot, segment: LadderSegment) -> tuple[np.n
     Matches AdaptiveLadderController._absorb_segment_stats: the variance is
     E[logL^2] - E[logL]^2 with block means averaged over the whole segment.
     """
-    e1_blocks = snapshot.logL_means[segment.start_block:segment.stop_block]
-    e2_blocks = snapshot.logL2_means[segment.start_block:segment.stop_block]
+    e1_blocks = snapshot.logL_means[segment.start_block : segment.stop_block]
+    e2_blocks = snapshot.logL2_means[segment.start_block : segment.stop_block]
     if e1_blocks.shape[0] == 0:
         return np.zeros(snapshot.n_chain), np.zeros(snapshot.n_chain)
     seg_means = e1_blocks.mean(axis=0)
-    seg_vars = np.maximum(e2_blocks.mean(axis=0) - seg_means**2, 0.)
+    seg_vars = np.maximum(e2_blocks.mean(axis=0) - seg_means**2, 0.0)
     return seg_means, seg_vars
 
 
 def _finite_sorted(Ts: np.ndarray, *values: np.ndarray) -> tuple[np.ndarray, ...]:
     """Restrict to finite positive temperatures and finite values, sorted by T."""
     Ts_arr = np.asarray(Ts)
-    finite = np.isfinite(Ts_arr) & (Ts_arr > 0.)
+    finite = np.isfinite(Ts_arr) & (Ts_arr > 0.0)
     for value in values:
         finite &= np.isfinite(np.asarray(value))
     order = np.argsort(Ts_arr[finite])
@@ -214,9 +216,16 @@ def heat_capacity_curves(snapshot: RunSnapshot, segments: list[LadderSegment] | 
     for segment in segments:
         _seg_means, seg_vars = segment_moments(snapshot, segment)
         Ts_use, vars_use = _finite_sorted(segment.Ts, seg_vars)
-        positive = vars_use > 0.
+        positive = vars_use > 0.0
         if np.any(positive):
-            curves.append(Curve(segment.label, Ts_use[positive], vars_use[positive] / Ts_use[positive]**2, _segment_emphasis(segment)))
+            curves.append(
+                Curve(
+                    segment.label,
+                    Ts_use[positive],
+                    vars_use[positive] / Ts_use[positive] ** 2,
+                    _segment_emphasis(segment),
+                )
+            )
     return curves
 
 
@@ -238,7 +247,7 @@ def entropy_curves(snapshot: RunSnapshot, segments: list[LadderSegment] | None =
         betas_use, vars_std = standardize_input_vars(Ts_to_betas(Ts_use), vars_use)
         entropy = get_spacing_integrated(vars_std, betas_use, False)
         with np.errstate(divide='ignore'):
-            Ts_std = np.where(betas_use > 0., 1. / betas_use, np.inf)
+            Ts_std = np.where(betas_use > 0.0, 1.0 / betas_use, np.inf)
         Ts_plot, entropy_plot = _finite_sorted(Ts_std, entropy)
         if Ts_plot.size:
             curves.append(Curve(segment.label, Ts_plot, entropy_plot, _segment_emphasis(segment)))
@@ -291,7 +300,9 @@ def _window_spans(snapshot: RunSnapshot, window: str | int) -> list[tuple[int, s
     """
     n_archived = int(snapshot.itrn_archive.size)
     if window in ('total', 'segment'):
-        spans: list[tuple[int, str | int]] = [(0 if idx == 0 else int(snapshot.itrn_archive[idx - 1]), idx) for idx in range(n_archived)]
+        spans: list[tuple[int, str | int]] = [
+            (0 if idx == 0 else int(snapshot.itrn_archive[idx - 1]), idx) for idx in range(n_archived)
+        ]
         spans.append((int(snapshot.itrn_archive[-1]) if n_archived else 0, 'latest'))
         if window == 'segment':
             segment_start = int(_ladder_timeline(snapshot)[0][-1])
@@ -303,7 +314,9 @@ def _window_spans(snapshot: RunSnapshot, window: str | int) -> list[tuple[int, s
     return [(0 if idx == 0 else int(snapshot.itrn_archive[idx - 1]), idx)]
 
 
-def _windows_with_ladders(snapshot: RunSnapshot, record: np.ndarray, archive: np.ndarray, window: str | int) -> list[tuple[np.ndarray, np.ndarray]]:
+def _windows_with_ladders(
+    snapshot: RunSnapshot, record: np.ndarray, archive: np.ndarray, window: str | int
+) -> list[tuple[np.ndarray, np.ndarray]]:
     """(window counts, ladder Ts in effect during the window) pairs.
 
     Tracker archives are cumulative snapshots taken *before* a ladder
@@ -322,7 +335,9 @@ def _windows_with_ladders(snapshot: RunSnapshot, record: np.ndarray, archive: np
     return pairs
 
 
-def _sums_by_unique_temperature(Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _sums_by_unique_temperature(
+    Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sum stacked per-slot numerator/denominator rows over identical temperatures."""
     Ts_unique = np.unique(np.asarray(Ts_rows))
     n_jump = numerators.shape[-1]
@@ -335,13 +350,17 @@ def _sums_by_unique_temperature(Ts_rows: np.ndarray, numerators: np.ndarray, den
     return Ts_unique, numerator_unique, denominator_unique
 
 
-def _ratio_table(snapshot: RunSnapshot, Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray) -> RateTable:
+def _ratio_table(
+    snapshot: RunSnapshot, Ts_rows: np.ndarray, numerators: np.ndarray, denominators: np.ndarray
+) -> RateTable:
     """Group stacked ratio counts by temperature into a labeled RateTable."""
     Ts_unique, numerator_unique, denominator_unique = _sums_by_unique_temperature(Ts_rows, numerators, denominators)
     tried = np.any(denominator_unique > 0, axis=0)
     labels = [label for label, keep in zip(snapshot.jump_labels, tried, strict=True) if keep]
     with np.errstate(invalid='ignore', divide='ignore'):
-        values = np.where(denominator_unique[:, tried] > 0, numerator_unique[:, tried] / denominator_unique[:, tried], np.nan)
+        values = np.where(
+            denominator_unique[:, tried] > 0, numerator_unique[:, tried] / denominator_unique[:, tried], np.nan
+        )
     return RateTable(Ts_unique, values, denominator_unique[:, tried], labels)
 
 
@@ -372,11 +391,15 @@ def esd_by_temperature(snapshot: RunSnapshot, window: str | int = 'total', *, ac
     accept_pairs = _windows_with_ladders(snapshot, snapshot.accept_record, snapshot.accept_archive, window)
     Ts_rows = np.concatenate([ladder for _counts, ladder in esd_pairs])
     sums_rows = np.concatenate([counts[1] if accepted_only else counts[0] for counts, _ladder in esd_pairs], axis=0)
-    counts_rows = np.concatenate([counts[0] if accepted_only else counts[0] + counts[1] for counts, _ladder in accept_pairs], axis=0)
+    counts_rows = np.concatenate(
+        [counts[0] if accepted_only else counts[0] + counts[1] for counts, _ladder in accept_pairs], axis=0
+    )
     return _ratio_table(snapshot, Ts_rows, sums_rows, counts_rows)
 
 
-def _nn_exchange_counts(snapshot: RunSnapshot, counts: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _nn_exchange_counts(
+    snapshot: RunSnapshot, counts: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Nearest-neighbor and all-exchange yes/no counts per temperature slot.
 
     Mirrors TrackerManager.get_exchange_rate_summary: in the limited layout
@@ -399,7 +422,12 @@ def _nn_exchange_counts(snapshot: RunSnapshot, counts: np.ndarray) -> tuple[np.n
         all_yes = a_yes.sum(axis=0) + a_yes.sum(axis=1)
         all_no = a_no.sum(axis=0) + a_no.sum(axis=1)
         return nn_yes, nn_no, all_yes, all_no
-    return counts[1, 0].astype(float), counts[1, 1].astype(float), counts[0, 0].astype(float), counts[0, 1].astype(float)
+    return (
+        counts[1, 0].astype(float),
+        counts[1, 1].astype(float),
+        counts[0, 0].astype(float),
+        counts[0, 1].astype(float),
+    )
 
 
 def exchange_rates(snapshot: RunSnapshot, window: str | int = 'total') -> ExchangeRates:
@@ -433,7 +461,9 @@ def exchange_history(snapshot: RunSnapshot) -> ExchangeHistory:
     associated iteration is the window's end.
     """
     n_archived = int(snapshot.exchange_archive.shape[0])
-    windows: list[np.ndarray] = [window_counts(snapshot.exchange_tracker, snapshot.exchange_archive, idx) for idx in range(n_archived)]
+    windows: list[np.ndarray] = [
+        window_counts(snapshot.exchange_tracker, snapshot.exchange_archive, idx) for idx in range(n_archived)
+    ]
     itrns = [int(itrn) for itrn in snapshot.itrn_archive[:n_archived]]
     if n_archived == 0 or snapshot.n_iterations > itrns[-1]:
         windows.append(window_counts(snapshot.exchange_tracker, snapshot.exchange_archive, 'latest'))
@@ -465,10 +495,10 @@ def effective_rank(eigvals: np.ndarray) -> np.ndarray:
     (reimplemented so the dashboard core does not import engine metrics).
     """
     total = np.asarray(eigvals).sum(axis=-1)
-    total_sq = (np.asarray(eigvals)**2).sum(axis=-1)
+    total_sq = (np.asarray(eigvals) ** 2).sum(axis=-1)
     out = np.zeros(np.shape(total))
-    nonzero = total_sq > 0.
-    out[nonzero] = total[nonzero]**2 / total_sq[nonzero]
+    nonzero = total_sq > 0.0
+    out[nonzero] = total[nonzero] ** 2 / total_sq[nonzero]
     return out
 
 
@@ -497,7 +527,7 @@ def flow_fraction(snapshot: RunSnapshot, trailing_blocks: int = 0) -> FlowSummar
     with np.errstate(invalid='ignore', divide='ignore'):
         f_latest = np.where(labeled_window > 0, up_window / labeled_window, np.nan)
     n_chain = snapshot.n_chain
-    f_ideal = np.linspace(1., 0., n_chain) if n_chain > 1 else np.ones(1)
+    f_ideal = np.linspace(1.0, 0.0, n_chain) if n_chain > 1 else np.ones(1)
     return FlowSummary(np.asarray(snapshot.Ts), f_latest, f_per_block, np.arange(n_blocks), f_ideal)
 
 
@@ -513,8 +543,12 @@ def round_trip_summary(snapshot: RunSnapshot) -> RoundTripSummary:
     if events.shape[0] == 0:
         empty = np.zeros(0, dtype=np.int64)
         return RoundTripSummary(
-            empty, empty.copy(), empty.copy(), empty.copy(),
-            np.arange(n_chain), np.zeros(n_chain, dtype=np.int64),
+            empty,
+            empty.copy(),
+            empty.copy(),
+            empty.copy(),
+            np.arange(n_chain),
+            np.zeros(n_chain, dtype=np.int64),
             np.asarray(snapshot.rt_segment_itrns, dtype=np.int64),
             np.min(snapshot.cycle_tracker[2:4], axis=0),
         )
@@ -524,9 +558,12 @@ def round_trip_summary(snapshot: RunSnapshot) -> RoundTripSummary:
     hot = events[events[:, 2] == 1]
     per_walker = np.bincount(cold[:, 0], minlength=n_chain)
     return RoundTripSummary(
-        cold[:, 1], np.arange(1, cold.shape[0] + 1),
-        hot[:, 1], np.arange(1, hot.shape[0] + 1),
-        np.arange(n_chain), per_walker,
+        cold[:, 1],
+        np.arange(1, cold.shape[0] + 1),
+        hot[:, 1],
+        np.arange(1, hot.shape[0] + 1),
+        np.arange(n_chain),
+        per_walker,
         np.asarray(snapshot.rt_segment_itrns, dtype=np.int64),
         np.min(snapshot.cycle_tracker[2:4], axis=0),
     )
@@ -540,16 +577,16 @@ def normalized_acf(series: np.ndarray, max_lag: int) -> np.ndarray:
     if n_samples < 2:
         return np.ones(1)
     values = values - values.mean()
-    n_fft = int(2**np.ceil(np.log2(2 * n_samples)))
+    n_fft = int(2 ** np.ceil(np.log2(2 * n_samples)))
     spectrum = np.fft.rfft(values, n=n_fft)
     acov = np.fft.irfft(spectrum * np.conj(spectrum), n=n_fft)[:n_samples].real
-    if acov[0] <= 0.:
+    if acov[0] <= 0.0:
         return np.ones(1)
     lags_keep = min(int(max_lag) + 1, n_samples)
     return acov[:lags_keep] / acov[0]
 
 
-def integrated_autocorr_time(rho: np.ndarray, window_factor: float = 5.) -> float:
+def integrated_autocorr_time(rho: np.ndarray, window_factor: float = 5.0) -> float:
     """Sokal self-consistent-window integrated autocorrelation time.
 
     tau = 1 + 2 sum(rho[1:M]) with M the smallest lag where
@@ -557,9 +594,9 @@ def integrated_autocorr_time(rho: np.ndarray, window_factor: float = 5.) -> floa
     criterion never triggers (series too short for the correlation).
     """
     rho_arr = np.asarray(rho, dtype=float)
-    tau_running = 1. + 2. * np.cumsum(rho_arr[1:])
+    tau_running = 1.0 + 2.0 * np.cumsum(rho_arr[1:])
     if tau_running.size == 0:
-        return 1.
+        return 1.0
     window_lags = np.arange(1, tau_running.size + 1)
     satisfied = window_lags >= window_factor * tau_running
     if np.any(satisfied):
@@ -602,11 +639,17 @@ def logl_acf(snapshot: RunSnapshot, chains: list[int], max_lag: int, burnin_rows
         if not 0 <= chain < snapshot.logLs.shape[1]:
             continue
         rho = normalized_acf(snapshot.logLs[start:, chain], max_lag)
-        results.append(AcfResult(f'logL {store_column_label(snapshot, chain)}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
+        results.append(
+            AcfResult(
+                f'logL {store_column_label(snapshot, chain)}', np.arange(rho.size), rho, integrated_autocorr_time(rho)
+            )
+        )
     return results
 
 
-def parameter_acf(snapshot: RunSnapshot, chain: int, dims: list[int], max_lag: int, burnin_rows: int = 0) -> list[AcfResult]:
+def parameter_acf(
+    snapshot: RunSnapshot, chain: int, dims: list[int], max_lag: int, burnin_rows: int = 0
+) -> list[AcfResult]:
     """Autocorrelation of stored parameters for one recorded chain."""
     start = _store_rows(snapshot, burnin_rows)
     results: list[AcfResult] = []
@@ -616,11 +659,20 @@ def parameter_acf(snapshot: RunSnapshot, chain: int, dims: list[int], max_lag: i
         if not 0 <= dim < snapshot.samples.shape[2]:
             continue
         rho = normalized_acf(snapshot.samples[start:, chain, dim], max_lag)
-        results.append(AcfResult(f'par {dim} {store_column_label(snapshot, chain)}', np.arange(rho.size), rho, integrated_autocorr_time(rho)))
+        results.append(
+            AcfResult(
+                f'par {dim} {store_column_label(snapshot, chain)}',
+                np.arange(rho.size),
+                rho,
+                integrated_autocorr_time(rho),
+            )
+        )
     return results
 
 
-def logl_cross_correlation(snapshot: RunSnapshot, chain_a: int, chain_b: int, max_lag: int, burnin_rows: int = 0) -> AcfResult | None:
+def logl_cross_correlation(
+    snapshot: RunSnapshot, chain_a: int, chain_b: int, max_lag: int, burnin_rows: int = 0
+) -> AcfResult | None:
     """Normalized cross-correlation of stored logL between two recorded chains."""
     start = _store_rows(snapshot, burnin_rows)
     n_recorded = snapshot.logLs.shape[1]
@@ -632,12 +684,27 @@ def logl_cross_correlation(snapshot: RunSnapshot, chain_a: int, chain_b: int, ma
     if n_samples < 2:
         return None
     norm = np.sqrt((series_a**2).sum() * (series_b**2).sum())
-    if norm <= 0.:
+    if norm <= 0.0:
         return None
     lags_keep = min(int(max_lag), n_samples - 1)
     lags = np.arange(-lags_keep, lags_keep + 1)
-    cross = np.asarray([np.dot(series_a[max(0, -lag):n_samples - max(0, lag)], series_b[max(0, lag):n_samples - max(0, -lag)]) for lag in lags]) / norm
-    return AcfResult(f'logL {store_column_label(snapshot, chain_a)} vs {store_column_label(snapshot, chain_b)}', lags, cross, float('nan'))
+    cross = (
+        np.asarray(
+            [
+                np.dot(
+                    series_a[max(0, -lag) : n_samples - max(0, lag)], series_b[max(0, lag) : n_samples - max(0, -lag)]
+                )
+                for lag in lags
+            ]
+        )
+        / norm
+    )
+    return AcfResult(
+        f'logL {store_column_label(snapshot, chain_a)} vs {store_column_label(snapshot, chain_b)}',
+        lags,
+        cross,
+        float('nan'),
+    )
 
 
 def downsample_rows(n_rows: int, max_points: int) -> np.ndarray:
@@ -648,7 +715,9 @@ def downsample_rows(n_rows: int, max_points: int) -> np.ndarray:
     return np.arange(0, n_rows, stride)
 
 
-def corner_matrix(snapshot: RunSnapshot, dims: list[int], chain: int = 0, burnin_rows: int = 0, max_points: int = 20000) -> tuple[np.ndarray, list[str]]:
+def corner_matrix(
+    snapshot: RunSnapshot, dims: list[int], chain: int = 0, burnin_rows: int = 0, max_points: int = 20000
+) -> tuple[np.ndarray, list[str]]:
     """Stored samples for a dimension subset of one recorded chain.
 
     Returns an (n_points, len(dims)) array (evenly downsampled after
@@ -664,7 +733,9 @@ def corner_matrix(snapshot: RunSnapshot, dims: list[int], chain: int = 0, burnin
     return block[rows], [f'par {dim}' for dim in dims_use]
 
 
-def parameter_trace(snapshot: RunSnapshot, chain: int, dims: list[int], burnin_rows: int = 0, max_points: int = 5000) -> list[Curve]:
+def parameter_trace(
+    snapshot: RunSnapshot, chain: int, dims: list[int], burnin_rows: int = 0, max_points: int = 5000
+) -> list[Curve]:
     """Thinned parameter traces (against iteration) for one recorded chain."""
     start = _store_rows(snapshot, burnin_rows)
     curves: list[Curve] = []
@@ -715,7 +786,7 @@ def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
     de_size = snapshot.proposal_config.get('DEJumpManager', {}).get('de_size', 'default')
     progress = f'{snapshot.n_iterations}/{snapshot.n_steps}' if snapshot.n_steps else str(snapshot.n_iterations)
     if snapshot.n_steps:
-        progress += f' ({100. * snapshot.n_iterations / snapshot.n_steps:.0f}%)'
+        progress += f' ({100.0 * snapshot.n_iterations / snapshot.n_steps:.0f}%)'
 
     if adaptive is None:
         adaptive_desc = 'none (fixed ladder)'
@@ -746,7 +817,7 @@ def header_items(snapshot: RunSnapshot) -> list[tuple[str, str]]:
         ('seed', str(snapshot.attrs.get('run_seed', spec.get('seed', '?')))),
         ('git', git_commit),
         ('host', str(snapshot.attrs.get('hostname', '?'))),
-        ('wall time', _format_wall_seconds(float(snapshot.attrs.get('wall_seconds', 0.)))),
+        ('wall time', _format_wall_seconds(float(snapshot.attrs.get('wall_seconds', 0.0)))),
         ('logL evals', f'{int(snapshot.attrs.get("n_likelihood_evals", 0)):.4g}'.replace('e+0', 'e')),
         ('last flush', str(snapshot.attrs.get('flush_time_utc', '?'))[:19]),
         ('status', _run_status(snapshot)),

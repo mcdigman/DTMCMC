@@ -98,8 +98,10 @@ class BenchmarkTarget:
 
 def _moments_constant(mean: float, var: float):
     """Per-coordinate moments callable for i.i.d.-coordinate targets."""
+
     def moments(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         return np.full(n_par, mean), np.full(n_par, var)
+
     return moments
 
 
@@ -115,8 +117,8 @@ def _moments_banana(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floati
     bananicity = float(banana_module.B)
     means = np.zeros(n_par)
     variances = np.ones(n_par)
-    variances[0] = 100.
-    variances[1] = 1. + bananicity**2 * 2. * 100.**2
+    variances[0] = 100.0
+    variances[1] = 1.0 + bananicity**2 * 2.0 * 100.0**2
     return means, variances
 
 
@@ -127,51 +129,55 @@ def _moments_rosenbrock(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.fl
     The module's [-10, 10] box clips ~0.1% of the y = x^2 tail, so these
     are approximate at the 1e-3 level (the reference draws are exact).
     """
-    means = np.tile([1., 1.5], n_par // 2)
-    var_y = 2. * 0.5**2 + 4. * 1.**2 * 0.5 + 1. / 200.
+    means = np.tile([1.0, 1.5], n_par // 2)
+    var_y = 2.0 * 0.5**2 + 4.0 * 1.0**2 * 0.5 + 1.0 / 200.0
     variances = np.tile([0.5, var_y], n_par // 2)
     return means, variances
 
 
 def _moments_from_modes(centers: NDArray[np.floating], weights: NDArray[np.floating], width: float):
     """Exact per-coordinate moments of an equal-width isotropic Gaussian mixture."""
+
     def moments(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         assert n_par == centers.shape[1]
         means = weights @ centers
         second = weights @ (centers**2) + width**2
         return means, second - means**2
+
     return moments
 
 
 def _numba_stream_draws(gen_draws):
     """Adapt an in-module gen_draws(n_draws, n_par) to the DrawReference signature."""
+
     def draw(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:  # noqa: ARG001 — numba global stream, see module docstring
         return gen_draws(n_draws, n_par)
+
     return draw
 
 
-_WHEEL_WEIGHTS = np.full(9, 1. / 9.)
+_WHEEL_WEIGHTS = np.full(9, 1.0 / 9.0)
 _SHELL_CENTERS = np.vstack([gaussian_shell_module.c1, gaussian_shell_module.c2])
 
 
 def _moments_gaussian_mixture(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Exact moments of the 2-mode mixture: weight 1/3 at +5, 2/3 at -5, unit width."""
-    mean = (1. / 3.) * 5. + (2. / 3.) * -5.
-    second = (1. / 3.) * 25. + (2. / 3.) * 25. + 1.
+    mean = (1.0 / 3.0) * 5.0 + (2.0 / 3.0) * -5.0
+    second = (1.0 / 3.0) * 25.0 + (2.0 / 3.0) * 25.0 + 1.0
     return np.full(n_par, mean), np.full(n_par, second - mean**2)
 
 
 def mixture_mode_centers(n_par: int) -> NDArray[np.floating]:
     """The gaussian_mixture mode centers at the requested dimension."""
-    return np.vstack([np.full(n_par, 5.), np.full(n_par, -5.)])
+    return np.vstack([np.full(n_par, 5.0), np.full(n_par, -5.0)])
 
 
 BENCHMARKS: dict[str, BenchmarkTarget] = {
     'gaussian': BenchmarkTarget(
         likelihood_name='gaussian',
         default_params={'n_par': 4, 'cutoff': 5},
-        draw_reference=lambda n_draws, n_par, rng: draw_truncated_gaussian(n_draws, n_par, 5., rng),
-        reference_moments=_moments_constant(0., 1.),
+        draw_reference=lambda n_draws, n_par, rng: draw_truncated_gaussian(n_draws, n_par, 5.0, rng),
+        reference_moments=_moments_constant(0.0, 1.0),
         notes='moments quoted untruncated; cutoff=5 truncation is negligible',
     ),
     'cake': BenchmarkTarget(
@@ -198,7 +204,7 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         default_params={'n_par': 50},
         draw_reference=_numba_stream_draws(ar1_module.gen_draws),
         uses_numba_stream=True,
-        reference_moments=_moments_constant(0., 1.),
+        reference_moments=_moments_constant(0.0, 1.0),
         notes='stationary AR(1): unit marginal variance every coordinate; 10-sigma box truncation negligible',
     ),
     'banana': BenchmarkTarget(
@@ -214,7 +220,7 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         uses_numba_stream=True,
         reference_moments=_moments_gaussian_mixture,
         mode_centers=mixture_mode_centers(50),
-        mode_weights=np.array([1. / 3., 2. / 3.]),
+        mode_weights=np.array([1.0 / 3.0, 2.0 / 3.0]),
         notes='mode centers quoted at the default n_par; rebuild with mixture_mode_centers for other dims',
     ),
     'gaussian_shell': BenchmarkTarget(
@@ -230,14 +236,16 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         likelihood_name='hyperpyramid',
         default_params={'n_par': 2},
         draw_reference=draw_hyperpyramid,
-        reference_moments=_moments_constant(0., hyperpyramid_marginal_variance()),
+        reference_moments=_moments_constant(0.0, hyperpyramid_marginal_variance()),
     ),
     'random_wheel': BenchmarkTarget(
         likelihood_name='random_wheel',
         default_params={'n_par': 2},
         draw_reference=_numba_stream_draws(random_wheel_module.gen_draws),
         uses_numba_stream=True,
-        reference_moments=_moments_from_modes(np.asarray(random_wheel_module.cs, dtype=np.float64), _WHEEL_WEIGHTS, float(random_wheel_module.w)),
+        reference_moments=_moments_from_modes(
+            np.asarray(random_wheel_module.cs, dtype=np.float64), _WHEEL_WEIGHTS, float(random_wheel_module.w)
+        ),
         mode_centers=np.asarray(random_wheel_module.cs, dtype=np.float64),
         mode_weights=_WHEEL_WEIGHTS,
     ),
@@ -254,7 +262,9 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         default_params={'n_par': 2},
         draw_reference=_numba_stream_draws(spoke_wheel_module.gen_draws),
         uses_numba_stream=True,
-        reference_moments=_moments_from_modes(np.asarray(spoke_wheel_module.cs, dtype=np.float64), _WHEEL_WEIGHTS, float(spoke_wheel_module.w)),
+        reference_moments=_moments_from_modes(
+            np.asarray(spoke_wheel_module.cs, dtype=np.float64), _WHEEL_WEIGHTS, float(spoke_wheel_module.w)
+        ),
         mode_centers=np.asarray(spoke_wheel_module.cs, dtype=np.float64),
         mode_weights=_WHEEL_WEIGHTS,
     ),

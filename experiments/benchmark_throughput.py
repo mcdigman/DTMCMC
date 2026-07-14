@@ -31,7 +31,7 @@ def run_benchmark(spec_path: str) -> float:
         sampler.advance_block()
 
     blocks_per_segment = (spec.n_blocks - WARMUP_BLOCKS) // SEGMENTS
-    best_rate = 0.
+    best_rate = 0.0
     for _ in range(SEGMENTS):
         start = time.perf_counter()
         for _ in range(blocks_per_segment):

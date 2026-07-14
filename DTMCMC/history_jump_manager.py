@@ -27,7 +27,7 @@ class HistoryStrategyParameters:
         """Initialize the object with the prescribed parameters"""
         self.config = config
         config_h = self.config['LadderHistoryJumpManager']
-        self.history_jump_weight = config_h.getfloat('ladder_history_jump_weight', 0.)
+        self.history_jump_weight = config_h.getfloat('ladder_history_jump_weight', 0.0)
 
     def copy(self) -> HistoryStrategyParameters:
         """Copy the object"""
@@ -47,7 +47,15 @@ class LadderHistoryJumpManager(JumpManager):
     at different temperatures
     """
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser, T_ladder_old: TemperatureLadder, logLs_old: NDArray[np.floating], states_old: NDArray[np.floating]) -> None:
+    def __init__(
+        self,
+        T_ladder: TemperatureLadder,
+        like_obj: AbstractLikelihood,
+        config: ConfigParser,
+        T_ladder_old: TemperatureLadder,
+        logLs_old: NDArray[np.floating],
+        states_old: NDArray[np.floating],
+    ) -> None:
         """A blank"""
         self.T_ladder_old: TemperatureLadder = T_ladder_old
         self.states_old: NDArray[np.floating] = states_old
@@ -67,7 +75,7 @@ class LadderHistoryJumpManager(JumpManager):
         jump_weights[:] = self.strategy_params.history_jump_weight
 
         self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""

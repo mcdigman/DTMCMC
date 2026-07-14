@@ -36,7 +36,13 @@ from DTMCMC.temperature_ladder_helpers import (
 from DTMCMC.tracker_manager import TrackerManager
 from experiments.adaptive import AdaptiveLadderController
 from experiments.gates import GateReport, dedup_rows, ladder_entropy_gates, moment_gates, nn_gate, radial_mixture_gates
-from experiments.harness.runner import CountingLikelihood, build_adaptive_controller, build_likelihood, build_sampler, run_from_spec
+from experiments.harness.runner import (
+    CountingLikelihood,
+    build_adaptive_controller,
+    build_likelihood,
+    build_sampler,
+    run_from_spec,
+)
 from experiments.harness.spec import ADAPTIVE_MODES, RunSpec, SpecError
 from experiments.reference_samplers import cake_logL_radial, cake_moment_r2, cake_tempered_cumulants, draw_cake
 from tests.battery_common import adaptive_spec_data, assert_readout_structure, load_post_freeze
@@ -45,8 +51,8 @@ from tests.test_harness import TINY_GAUSSIAN_SPEC, make_tiny_spec
 
 def test_remap_ladder_indices_hand_computed() -> None:
     """Both D6 buffer remap rules on a hand-checkable ladder pair."""
-    Ts_old = np.array([1., 4., 16., np.inf])
-    Ts_new = np.array([1., 2., 10., 64.])
+    Ts_old = np.array([1.0, 4.0, 16.0, np.inf])
+    Ts_new = np.array([1.0, 2.0, 10.0, 64.0])
 
     # nearest in log T: 2 is sqrt(1*4), a log-equidistant tie containing
     # the receiving slot, which therefore keeps its slot (D6); 10 is
@@ -58,10 +64,13 @@ def test_remap_ladder_indices_hand_computed() -> None:
     # at-or-hotter: coolest old rung at or above each new temperature
     assert_array_equal(remap_ladder_indices(Ts_old, Ts_new, 'at_or_hotter'), [0, 1, 2, 3])
     # a new rung hotter than every finite old rung falls back to the hottest
-    assert_array_equal(remap_ladder_indices(np.array([1., 4.]), np.array([16.]), 'at_or_hotter'), [1])
+    assert_array_equal(remap_ladder_indices(np.array([1.0, 4.0]), np.array([16.0]), 'at_or_hotter'), [1])
     # an exact-T tie NOT containing the receiving slot goes to the lowest
     # tied slot (D6): new slot 3 at T=2 ties old duplicate rungs 1 and 2
-    assert_array_equal(remap_ladder_indices(np.array([1., 2., 2., 8.]), np.array([0.5, 0.6, 0.7, 2.]), 'at_or_hotter'), [0, 0, 0, 1])
+    assert_array_equal(
+        remap_ladder_indices(np.array([1.0, 2.0, 2.0, 8.0]), np.array([0.5, 0.6, 0.7, 2.0]), 'at_or_hotter'),
+        [0, 0, 0, 1],
+    )
 
     with pytest.raises(ValueError, match='unknown remap rule'):
         remap_ladder_indices(Ts_old, Ts_new, 'nonsense')
@@ -69,7 +78,7 @@ def test_remap_ladder_indices_hand_computed() -> None:
 
 def test_remap_ladder_indices_identical_is_identity() -> None:
     """An identical ladder — including duplicate temperatures — maps every slot to itself (D6)."""
-    Ts = np.array([1., 1., 2., 4., np.inf])
+    Ts = np.array([1.0, 1.0, 2.0, 4.0, np.inf])
     for rule in ('nearest', 'at_or_hotter'):
         assert_array_equal(remap_ladder_indices(Ts, Ts, rule), np.arange(Ts.size))
 
@@ -93,7 +102,7 @@ def test_apply_ladder_update_rebinds_and_remaps() -> None:
         de_manager.de_buffer[:, itrt, :] = float(itrt)
     n_archives_before = len(sampler.tracker_manager.cycle_archive)
 
-    new_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1., T_min=1., T_max=10., n_inf_final=1)
+    new_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1.0, T_min=1.0, T_max=10.0, n_inf_final=1)
     sampler.apply_ladder_update(new_ladder, 'at_or_hotter')
 
     # aliases rebound to the new ladder's arrays (the stale-alias footgun)
@@ -137,13 +146,25 @@ def test_apply_ladder_update_rebinds_and_remaps() -> None:
 @pytest.mark.usefixtures('fresh_seed_guard')
 def test_apply_ladder_update_identical_ladder_strict_noop() -> None:
     """Acceptance 4: an identical-ladder update (duplicate temperatures, n_cold > 1) is a strict no-op for states, logLs, and DE buffers."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
-    data['ladder'] = {'kind': 'geometric', 'n_chain': 6, 'n_cold': 2, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['ladder'] = {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 2,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    }
     spec = RunSpec.from_dict(data)
     seed_run(spec.seed)
     sampler, _like_obj = build_sampler(spec)
     sampler.advance_block()
-    assert float(np.asarray(sampler.Ts)[0]) == float(np.asarray(sampler.Ts)[1]), 'test premise: duplicate cold temperatures'
+    assert float(np.asarray(sampler.Ts)[0]) == float(np.asarray(sampler.Ts)[1]), (
+        'test premise: duplicate cold temperatures'
+    )
 
     old_states = sampler.samples[0].copy()
     old_logLs = sampler.logLs[0].copy()
@@ -163,14 +184,14 @@ def test_apply_ladder_update_extension_bijection_and_self_inclusion() -> None:
     """Acceptance 4 under cold support extension: state remap stays a bijection and every resourced rung's buffer column contains its current state."""
     spec = make_tiny_spec()
     seed_run(spec.seed)
-    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4., T_min=4., T_max=100., n_inf_final=1)
+    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4.0, T_min=4.0, T_max=100.0, n_inf_final=1)
     sampler, _like_obj = build_sampler(spec, T_ladder=hot_ladder)
     sampler.advance_block()
 
     old_states = sampler.samples[0].copy()
     de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
 
-    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1., T_min=1., T_max=100., n_inf_final=1)
+    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     sampler.apply_ladder_update(extended, 'at_or_hotter')
 
     # bijection: every walker keeps its slot, none cloned or discarded
@@ -245,7 +266,9 @@ def test_post_freeze_bit_exact_equivalence() -> None:
     spec = make_tiny_spec(n_steps=64 * 40, block_size=64)
     seed_run(spec.seed)
 
-    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
+    controller = AdaptiveLadderController(
+        mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
+    )
     like_a = CountingLikelihood(build_likelihood(spec))
     initial_ladder = controller.initial_ladder(like_a, spec.n_chain, spec.n_cold)
     sampler_a, _ = build_sampler(spec, like_obj=like_a, T_ladder=initial_ladder)
@@ -295,7 +318,7 @@ CONVERGENCE_BATTERY_SEEDS = (555, 556, 557, 558, 559, 560)
 # The battery cake uses the same 5D two-tier structure as the default
 # cake, with a wider narrow tier so the slow test can gate sample-space
 # recovery directly.
-BATTERY_CAKE_WIDTHS = (4., 0.15)
+BATTERY_CAKE_WIDTHS = (4.0, 0.15)
 BATTERY_NARROW_R2 = 2.25  # tier-assignment radius^2 (narrow spike sigma 0.4)
 BATTERY_N_BLOCKS = 320
 BATTERY_BUDGET_BLOCKS = 240
@@ -314,7 +337,7 @@ def _battery_entropy_profile() -> tuple[np.ndarray, np.ndarray]:
     stops at T = 4 because hotter temperatures pick up prior-box corner
     variance outside the spherical quadrature approximation.
     """
-    betas = 1. / np.geomspace(0.9, 4., 64)
+    betas = 1.0 / np.geomspace(0.9, 4.0, 64)
     _, vars_quad = cake_tempered_cumulants(betas, 5, widths=BATTERY_CAKE_WIDTHS)
     betas_use, vars_use = standardize_input_vars(betas, vars_quad)
     s_profile = get_spacing_integrated(vars_use, betas_use, False)
@@ -330,11 +353,18 @@ def _cake_battery_gates(run: dict[str, Any], reference: np.ndarray, seed: int) -
     # posterior recovery in sample space
     ref_r2_mean = cake_moment_r2(5, widths=BATTERY_CAKE_WIDTHS)
     ref_narrow = float((((reference**2).sum(axis=1)) < BATTERY_NARROW_R2).mean())
-    report.merge(radial_mixture_gates(
-        cold, r2_threshold=BATTERY_NARROW_R2, narrow_frac_ref=ref_narrow, narrow_frac_tol=0.15,
-        r2_mean_ref=ref_r2_mean, r2_mean_rtol=0.25, min_tier_flips=200,
-    ))
-    per_coord_var = np.full(5, ref_r2_mean / 5.)
+    report.merge(
+        radial_mixture_gates(
+            cold,
+            r2_threshold=BATTERY_NARROW_R2,
+            narrow_frac_ref=ref_narrow,
+            narrow_frac_tol=0.15,
+            r2_mean_ref=ref_r2_mean,
+            r2_mean_rtol=0.25,
+            min_tier_flips=200,
+        )
+    )
+    per_coord_var = np.full(5, ref_r2_mean / 5.0)
     report.merge(moment_gates(cold, np.zeros(5), per_coord_var, mean_tol_sigmas=0.25, var_ratio_bounds=(0.7, 1.3)))
     report.merge(nn_gate(reference, cold_unique, threshold=2.0, n_use=2000, rng=get_rng(seed)))
 
@@ -357,9 +387,13 @@ def test_adaptive_cake_battery_recovers_posterior(tmp_path, seed: int) -> None:
     """Acceptance 2: the cake battery freezes and passes reference gates."""
     reset_seed_guard_for_tests()
     data = adaptive_spec_data(
-        'adaptive_cake_battery', seed,
+        'adaptive_cake_battery',
+        seed,
         {'name': 'cake', 'n_par': 5, 'cutoff': 10, 'widths': list(BATTERY_CAKE_WIDTHS)},
-        n_chain=48, block_size=1024, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        n_chain=48,
+        block_size=1024,
+        n_blocks=BATTERY_N_BLOCKS,
+        budget_blocks=BATTERY_BUDGET_BLOCKS,
         store_thin=BATTERY_STORE_THIN,
     )
     spec = RunSpec.from_dict(data)
@@ -386,10 +420,15 @@ def test_adaptive_cake_battery_whole_run_control(tmp_path) -> None:
     """
     reset_seed_guard_for_tests()
     data = adaptive_spec_data(
-        'adaptive_cake_whole_run', 555,
+        'adaptive_cake_whole_run',
+        555,
         {'name': 'cake', 'n_par': 5, 'cutoff': 10, 'widths': list(BATTERY_CAKE_WIDTHS)},
-        n_chain=48, block_size=1024, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
-        store_thin=BATTERY_STORE_THIN, de_window_blocks=None,
+        n_chain=48,
+        block_size=1024,
+        n_blocks=BATTERY_N_BLOCKS,
+        budget_blocks=BATTERY_BUDGET_BLOCKS,
+        store_thin=BATTERY_STORE_THIN,
+        de_window_blocks=None,
     )
     spec = RunSpec.from_dict(data)
     with pytest.warns(UserWarning, match='never forgets burn-in'):
@@ -419,9 +458,15 @@ def test_adaptive_acceptance_mode_realizes_equal_exchange_rates() -> None:
     equal ladder measured 0.059 vs 0.487 for the lopsided control).
     """
     data = adaptive_spec_data(
-        'acceptance_flatness', 778, {'name': 'gaussian', 'n_par': 4, 'cutoff': 5},
-        n_chain=8, block_size=256, n_blocks=160, budget_blocks=120,
-        t_min_factor=1.0, mode='acceptance',
+        'acceptance_flatness',
+        778,
+        {'name': 'gaussian', 'n_par': 4, 'cutoff': 5},
+        n_chain=8,
+        block_size=256,
+        n_blocks=160,
+        budget_blocks=120,
+        t_min_factor=1.0,
+        mode='acceptance',
     )
     data['adaptive']['cold_cap_links'] = 0
     spec = RunSpec.from_dict(data)
@@ -429,14 +474,18 @@ def test_adaptive_acceptance_mode_realizes_equal_exchange_rates() -> None:
     seed_run(spec.seed)
     controller = build_adaptive_controller(spec.adaptive)
     like_obj = CountingLikelihood(build_likelihood(spec))
-    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    sampler, _ = build_sampler(
+        spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+    )
     for _ in range(spec.n_blocks):
         sampler.advance_block()
         controller.post_block(sampler)
 
     assert controller.frozen, 'acceptance-mode adaptation must freeze within budget'
     ladder = sampler.T_ladder
-    assert isinstance(ladder, AcceptanceTemperatureLadder), 'cap disabled: the frozen ladder is the raw acceptance ladder'
+    assert isinstance(ladder, AcceptanceTemperatureLadder), (
+        'cap disabled: the frozen ladder is the raw acceptance ladder'
+    )
 
     _full, rates, _total = sampler.tracker_manager.get_exchange_rate_summary(0)
     # chains 1..5: both NN links lie among the finite spaced rungs
@@ -453,8 +502,13 @@ def _warm_started_gold_sampler(seed: int, n_blocks: int, de_size: int):
         'name': 'gold_warm',
         'seed': seed,
         'likelihood': {'name': 'cake', 'n_par': 5, 'cutoff': 10},
-        'ladder': {'kind': 'entropy_file', 'n_chain': 12, 'n_cold': 1,
-                   'Ts_file': 'data/Ts_cake_gold.npy', 'vars_file': 'data/vars_cake_gold.npy'},
+        'ladder': {
+            'kind': 'entropy_file',
+            'n_chain': 12,
+            'n_cold': 1,
+            'Ts_file': 'data/Ts_cake_gold.npy',
+            'vars_file': 'data/vars_cake_gold.npy',
+        },
         'run': {'n_steps': 512 * n_blocks, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': n_blocks},
         'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
         'proposals': {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': de_size}},
@@ -481,9 +535,9 @@ def test_gold_ladder_warm_start_preserves_target(seed: int) -> None:
         sampler.advance_block()
     reset_seed_guard_for_tests()
 
-    second_half = sampler.samples_store[sampler.store_size // 2:, 0, :]
+    second_half = sampler.samples_store[sampler.store_size // 2 :, 0, :]
     r2 = (second_half**2).sum(axis=1)
-    narrow_mask = r2 < 1.
+    narrow_mask = r2 < 1.0
     n_flips = int(np.count_nonzero(np.diff(narrow_mask.astype(np.int8))))
 
     assert 1.0 <= float(r2.mean()) <= 13.5, f'E[r^2] {r2.mean():.2f} drifted out of the equilibrium band'
@@ -502,9 +556,9 @@ def test_small_de_buffer_fails_posterior_gate() -> None:
         sampler.advance_block()
     reset_seed_guard_for_tests()
 
-    second_half = sampler.samples_store[sampler.store_size // 2:, 0, :]
+    second_half = sampler.samples_store[sampler.store_size // 2 :, 0, :]
     r2 = (second_half**2).sum(axis=1)
-    narrow_frac = float((r2 < 1.).mean())
+    narrow_frac = float((r2 < 1.0).mean())
 
     # the preservation bands from test_gold_ladder_warm_start_preserves_target
     assert float(r2.mean()) < 1.0, 'the short-buffer negative control no longer fails as expected'
@@ -516,9 +570,13 @@ def test_adaptive_default_cake_structural(tmp_path) -> None:
     """Default cake: adaptation completes and the readout stays nondegenerate."""
     reset_seed_guard_for_tests()
     data = adaptive_spec_data(
-        'adaptive_cake_structural', 558,
+        'adaptive_cake_structural',
+        558,
         {'name': 'cake', 'n_par': 5, 'cutoff': 10},
-        n_chain=12, block_size=512, n_blocks=BATTERY_N_BLOCKS, budget_blocks=BATTERY_BUDGET_BLOCKS,
+        n_chain=12,
+        block_size=512,
+        n_blocks=BATTERY_N_BLOCKS,
+        budget_blocks=BATTERY_BUDGET_BLOCKS,
         store_thin=BATTERY_STORE_THIN,
     )
     spec = RunSpec.from_dict(data)
@@ -529,8 +587,8 @@ def test_adaptive_default_cake_structural(tmp_path) -> None:
     assert_readout_structure(run)
     assert run['n_applied'] >= 5
 
-    r2 = (run['cold']**2).sum(axis=1)
-    narrow_frac = float((r2 < 1.).mean())
+    r2 = (run['cold'] ** 2).sum(axis=1)
+    narrow_frac = float((r2 < 1.0).mean())
     assert narrow_frac <= 0.98, 'spike-tier collapse: the readout no longer leaves the spike'
     assert 0.05 <= float(r2.mean()) <= 15.5
 
@@ -549,9 +607,13 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
     seed_run(spec.seed)
     monkeypatch.setattr(TrackerManager, 'n_cycles', property(lambda self: np.zeros(self.n_chain, dtype=np.int64)))
 
-    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
+    controller = AdaptiveLadderController(
+        mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
+    )
     like_obj = CountingLikelihood(build_likelihood(spec))
-    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    sampler, _ = build_sampler(
+        spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+    )
     for _ in range(spec.n_blocks):
         sampler.advance_block()
         controller.post_block(sampler)
@@ -577,9 +639,13 @@ def test_freeze_requires_trips_in_every_streak_window(monkeypatch) -> None:
     seed_run(spec.seed)
     monkeypatch.setattr(TrackerManager, 'n_cycles', property(lambda self: np.ones(self.n_chain, dtype=np.int64)))
 
-    controller = AdaptiveLadderController(mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6)
+    controller = AdaptiveLadderController(
+        mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
+    )
     like_obj = CountingLikelihood(build_likelihood(spec))
-    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    sampler, _ = build_sampler(
+        spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+    )
     for _ in range(spec.n_blocks):
         sampler.advance_block()
         controller.post_block(sampler)
@@ -595,7 +661,9 @@ def test_budget_freeze_records_reason() -> None:
     seed_run(spec.seed)
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=8, budget_blocks=4)
     like_obj = CountingLikelihood(build_likelihood(spec))
-    sampler, _ = build_sampler(spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold))
+    sampler, _ = build_sampler(
+        spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+    )
     for _ in range(spec.n_blocks):
         sampler.advance_block()
         controller.post_block(sampler)
@@ -612,14 +680,16 @@ def test_budget_freeze_records_reason() -> None:
 def test_eggbox_mode_retention_gate() -> None:
     """Occupied-mode counts among cold-slot DE-buffer columns survive an update."""
     n_par = 2
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     data['name'] = 'eggbox_gate'
     data['likelihood'] = {'name': 'eggbox', 'n_par': n_par}
     data['run'] = {'n_steps': 64 * 8, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4}
     spec = RunSpec.from_dict(data)
     seed_run(spec.seed)
 
-    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4., T_min=4., T_max=100., n_inf_final=1)
+    hot_ladder = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=4.0, T_min=4.0, T_max=100.0, n_inf_final=1)
     sampler, _like_obj = build_sampler(spec, T_ladder=hot_ladder)
     for _ in range(spec.n_blocks):
         sampler.advance_block()
@@ -627,13 +697,13 @@ def test_eggbox_mode_retention_gate() -> None:
     def occupied_modes(buffer_cold_slice: np.ndarray) -> set[tuple[int, ...]]:
         # eggbox maxima sit at x_i = 2 pi k: nearest-mode assignment per row
         rows = buffer_cold_slice.reshape(-1, n_par)
-        return {tuple(mode) for mode in np.round(rows / (2. * np.pi)).astype(int)}
+        return {tuple(mode) for mode in np.round(rows / (2.0 * np.pi)).astype(int)}
 
     de_manager = next(m for m in sampler.proposal_manager.managers if isinstance(m, DEJumpManager))
     n_cold_half = spec.n_chain // 2
     modes_before = occupied_modes(de_manager.de_buffer[:, :n_cold_half, :])
 
-    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1., T_min=1., T_max=100., n_inf_final=1)
+    extended = GeometricTemperatureLadder(spec.n_chain, n_cold=1, T_cold=1.0, T_min=1.0, T_max=100.0, n_inf_final=1)
     sampler.apply_ladder_update(extended, 'at_or_hotter')
     modes_after = occupied_modes(de_manager.de_buffer[:, :n_cold_half, :])
 
@@ -643,26 +713,40 @@ def test_eggbox_mode_retention_gate() -> None:
 
 def test_adaptive_spec_validation() -> None:
     """[adaptive] rejects unknown keys, missing budget_blocks, and out-of-range T_min_factor."""
-    base: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    base: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     base['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8}
     RunSpec.from_dict(base)
 
     # sub-unit T_min_factor is supported now that storage is index-based
     good = dict(base)
     good['adaptive'] = {
-        'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.9,
+        'mode': 'entropy',
+        'budget_blocks': 8,
+        'T_min_factor': 0.9,
         'remap_rule': 'no_remap',
-        'window_extension_factor': 3.0, 'ds_link_cap': 2.0, 'cold_cap_links': 5,
-        'cap_ratio_min': 1.02, 'cap_ratio_max': 1.5, 'var_history_length': 6,
-        'pool_dlog_tol': 0.015, 'discard_blocks_after_update': 2, 'min_updates_at_target': 4,
+        'window_extension_factor': 3.0,
+        'ds_link_cap': 2.0,
+        'cold_cap_links': 5,
+        'cap_ratio_min': 1.02,
+        'cap_ratio_max': 1.5,
+        'var_history_length': 6,
+        'pool_dlog_tol': 0.015,
+        'discard_blocks_after_update': 2,
+        'min_updates_at_target': 4,
     }
     RunSpec.from_dict(good)
 
     bad_tables = (
-        {'mode': 'entropy', 'budget_blocks': 8, 'forgeting': 0.15},    # typo'd key must fail loudly
-        {'mode': 'entropy'},                                           # budget_blocks is required
-        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 1.5},  # target is a multiple of T=1, capped at the readout
-        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.},   # and must be positive
+        {'mode': 'entropy', 'budget_blocks': 8, 'forgeting': 0.15},  # typo'd key must fail loudly
+        {'mode': 'entropy'},  # budget_blocks is required
+        {
+            'mode': 'entropy',
+            'budget_blocks': 8,
+            'T_min_factor': 1.5,
+        },  # target is a multiple of T=1, capped at the readout
+        {'mode': 'entropy', 'budget_blocks': 8, 'T_min_factor': 0.0},  # and must be positive
     )
     for table in bad_tables:
         data = dict(base)
@@ -745,15 +829,19 @@ def test_pessimistic_var_estimator_ratchets_and_ages_out() -> None:
     estimate is inside its rolling window (where the weighted mean has
     already diluted it), and must relax once the window ages it out.
     """
-    Ts_fixed = np.array([1., 2., 4., 8., 16., np.inf])
+    Ts_fixed = np.array([1.0, 2.0, 4.0, 8.0, 16.0, np.inf])
     low = [0.5, 0.5, 0.5, 0.5, 0.5, 0.25]
-    high_cold = [50., 0.5, 0.5, 0.5, 0.5, 0.25]
+    high_cold = [50.0, 0.5, 0.5, 0.5, 0.5, 0.25]
 
     controllers = {}
     for estimator in (0, 1):
         controller = AdaptiveLadderController(
-            mode='entropy', update_every_blocks=1, forgetting=0.,
-            freeze_criterion=(1.e9, 10**6), budget_blocks=10**6, var_estimator=estimator,
+            mode='entropy',
+            update_every_blocks=1,
+            forgetting=0.0,
+            freeze_criterion=(1.0e9, 10**6),
+            budget_blocks=10**6,
+            var_estimator=estimator,
             discard_blocks_after_update=0,
         )
         # huge freeze_dlog holds every rebuild, so the stub's temperatures
@@ -790,19 +878,23 @@ def test_pool_tolerance_preserves_variance_history() -> None:
     matching, a rung drifting 0.5% between segments accumulates history;
     with the tolerance disabled it splits into separate rows.
     """
-    for tol, expect_merged in ((0.02, True), (0., False)):
+    for tol, expect_merged in ((0.02, True), (0.0, False)):
         controller = AdaptiveLadderController(
-            mode='entropy', update_every_blocks=1, freeze_criterion=(1.e9, 10**6),
-            budget_blocks=10**6, pool_dlog_tol=tol, discard_blocks_after_update=0,
+            mode='entropy',
+            update_every_blocks=1,
+            freeze_criterion=(1.0e9, 10**6),
+            budget_blocks=10**6,
+            pool_dlog_tol=tol,
+            discard_blocks_after_update=0,
         )
         controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
-        stub = _StubSampler(np.array([1., 2., 4., 8., 16., np.inf]))
+        stub = _StubSampler(np.array([1.0, 2.0, 4.0, 8.0, 16.0, np.inf]))
         sampler = cast('DTMCMCSampler', stub)
         stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
         controller.post_block(sampler)
         # the coldest rung drifts 0.5% (well under converged link spacing)
-        stub.Ts = np.array([1.005, 2., 4., 8., 16., np.inf])
-        stub.feed_block([9., 0.5, 0.5, 0.5, 0.5, 0.25])
+        stub.Ts = np.array([1.005, 2.0, 4.0, 8.0, 16.0, np.inf])
+        stub.feed_block([9.0, 0.5, 0.5, 0.5, 0.5, 0.25])
         controller.post_block(sampler)
 
         cold_rows = [idx for idx, T_loc in enumerate(controller._pool_Ts) if np.isfinite(T_loc) and T_loc < 1.5]
@@ -810,7 +902,7 @@ def test_pool_tolerance_preserves_variance_history() -> None:
         if expect_merged:
             assert len(cold_rows) == 1
             assert len(histories[0]) == 2
-            assert max(histories[0]) == 9.
+            assert max(histories[0]) == 9.0
         else:
             assert len(cold_rows) == 2
             assert all(len(history) == 1 for history in histories)
@@ -825,13 +917,17 @@ def test_discard_blocks_after_update_drops_transients() -> None:
     segment, including the first segment.
     """
     controller = AdaptiveLadderController(
-        mode='entropy', update_every_blocks=2, freeze_criterion=(1.e9, 10**6),
-        budget_blocks=10**6, discard_blocks_after_update=1, pool_dlog_tol=0.,
+        mode='entropy',
+        update_every_blocks=2,
+        freeze_criterion=(1.0e9, 10**6),
+        budget_blocks=10**6,
+        discard_blocks_after_update=1,
+        pool_dlog_tol=0.0,
     )
     controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
-    stub = _StubSampler(np.array([1., 2., 4., 8., 16., np.inf]))
+    stub = _StubSampler(np.array([1.0, 2.0, 4.0, 8.0, 16.0, np.inf]))
     sampler = cast('DTMCMCSampler', stub)
-    stub.feed_block([999., 999., 999., 999., 999., 999.])  # transient: must not pool
+    stub.feed_block([999.0, 999.0, 999.0, 999.0, 999.0, 999.0])  # transient: must not pool
     controller.post_block(sampler)
     stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
     controller.post_block(sampler)
@@ -853,28 +949,30 @@ def test_resolve_cap_links_scales_with_chain_count() -> None:
 def test_cap_cold_links_skips_readout_pin_and_can_disable() -> None:
     """The cap never moves a rung pinned at T_cold, and cold_cap_links=0 disables it."""
     controller = AdaptiveLadderController(
-        mode='entropy', budget_blocks=8, cap_ratio_bounds=(1.01, 1.02),
+        mode='entropy',
+        budget_blocks=8,
+        cap_ratio_bounds=(1.01, 1.02),
     )
     # pool rows with tiny variance make the measured cap ratio clip to its
     # minimum, so every non-pinned capped link must move
-    for T_loc, var_loc in ((0.9, 1.e-6), (1., 1.e-6), (4., 1.e-6), (64., 1.e-6)):
+    for T_loc, var_loc in ((0.9, 1.0e-6), (1.0, 1.0e-6), (4.0, 1.0e-6), (64.0, 1.0e-6)):
         controller._pool_Ts.append(T_loc)
-        controller._pool_means.append(0.)
+        controller._pool_means.append(0.0)
         controller._pool_vars.append(var_loc)
-        controller._pool_weights.append(1.)
+        controller._pool_weights.append(1.0)
         controller._pool_var_history.append([var_loc])
 
-    ladder = TemperatureLadder(np.array([0.9, 1., 2., 4., 16., np.inf]), T_cold=1., n_cold=1)
+    ladder = TemperatureLadder(np.array([0.9, 1.0, 2.0, 4.0, 16.0, np.inf]), T_cold=1.0, n_cold=1)
     capped = controller._cap_cold_links(ladder, 1)
     capped_Ts = np.asarray(capped.Ts)
     # the readout pin is untouched even though its link violates the cap
     assert 1.0 in capped_Ts
     assert capped.get_arg_cold().size == 1
     # the link above the pin was pulled down to the clipped ratio
-    assert capped_Ts[2] <= 1.0 * 1.02 + 1.e-12
+    assert capped_Ts[2] <= 1.0 * 1.02 + 1.0e-12
     # the pinned link consumes no cap slot: all three resolved cap links
     # land on real links, so the third one (ending at the 16 rung) is capped
-    assert capped_Ts[4] <= capped_Ts[3] * 1.02 + 1.e-12
+    assert capped_Ts[4] <= capped_Ts[3] * 1.02 + 1.0e-12
     # disabling the cap returns the ladder unchanged
     disabled = AdaptiveLadderController(mode='entropy', budget_blocks=8, cold_cap_links=0)
     assert disabled._cap_cold_links(ladder, 1) is ladder
@@ -889,12 +987,20 @@ def test_adaptive_t_min_factor_pins_readout_with_subcold_rungs(tmp_path) -> None
     rungs below them, and the artifact's record map points at the T=1
     chains rather than the coldest ones.
     """
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
     data['name'] = 'tmin_gaussian'
     data['ladder'] = {'kind': 'geometric', 'n_chain': 8, 'n_cold': 1}
     data['run'] = {'n_steps': 64 * 24, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 8}
-    data['adaptive'] = {'mode': 'entropy', 'update_every_blocks': 2, 'freeze_dlog': 0.02,
-                        'freeze_consecutive': 3, 'budget_blocks': 20, 'T_min_factor': 0.9}
+    data['adaptive'] = {
+        'mode': 'entropy',
+        'update_every_blocks': 2,
+        'freeze_dlog': 0.02,
+        'freeze_consecutive': 3,
+        'budget_blocks': 20,
+        'T_min_factor': 0.9,
+    }
     spec = RunSpec.from_dict(data)
 
     artifact_path = run_from_spec(spec, tmp_path)
@@ -905,11 +1011,11 @@ def test_adaptive_t_min_factor_pins_readout_with_subcold_rungs(tmp_path) -> None
         history_indices = np.asarray(hf['store/record_history_indices'])
         t_cold_window = np.asarray(hf['ladder/history/t_cold_window'])
 
-    assert float(t_cold_window[-1]) <= 0.9 + 1.e-12, 'window must reach its sub-unit target within budget'
+    assert float(t_cold_window[-1]) <= 0.9 + 1.0e-12, 'window must reach its sub-unit target within budget'
     finite_Ts = final_Ts[np.isfinite(final_Ts)]
-    assert np.min(finite_Ts) < 1., 'sub-readout rungs must be present'
+    assert np.min(finite_Ts) < 1.0, 'sub-readout rungs must be present'
     assert record_indices.size == 1
-    assert final_Ts[record_indices[0]] == 1., 'the recorded chain is the T=1 readout, not the coldest rung'
+    assert final_Ts[record_indices[0]] == 1.0, 'the recorded chain is the T=1 readout, not the coldest rung'
     assert record_indices[0] > 0, 'the readout chain sits interior to the sorted ladder'
     # the record map tracked the move off index 0 when sub-cold rungs appeared
     assert history_indices[0][0] == 0

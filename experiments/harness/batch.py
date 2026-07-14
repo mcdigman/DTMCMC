@@ -64,7 +64,11 @@ def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec]]:
     if not isinstance(name, str) or not isinstance(base_spec_path, str) or not isinstance(out_dir_raw, str):
         msg = 'sweep file requires string entries: name, base_spec, out'
         raise TypeError(msg)
-    if not isinstance(seeds, list) or not seeds or not all(isinstance(seed, int) and not isinstance(seed, bool) for seed in seeds):
+    if (
+        not isinstance(seeds, list)
+        or not seeds
+        or not all(isinstance(seed, int) and not isinstance(seed, bool) for seed in seeds)
+    ):
         msg = 'sweep file requires a non-empty integer list: seeds'
         raise TypeError(msg)
     if not isinstance(grid, dict) or not all(isinstance(values, list) and values for values in grid.values()):
@@ -100,7 +104,9 @@ def write_batch(sweep_path: str | Path) -> Path:
     for spec in specs:
         spec_path = specs_dir / f'{spec.name}_seed{spec.seed}.toml'
         spec_path.write_text(dumps_toml(spec.to_dict()))
-        manifest_lines.append(f'python -m experiments.harness.run {shlex.quote(str(spec_path))} --out {shlex.quote(str(out_dir))}')
+        manifest_lines.append(
+            f'python -m experiments.harness.run {shlex.quote(str(spec_path))} --out {shlex.quote(str(out_dir))}'
+        )
 
     manifest_path = out_dir / 'manifest.txt'
     manifest_path.write_text('\n'.join(manifest_lines) + '\n')

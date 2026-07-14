@@ -38,20 +38,22 @@ EXCHANGE_STRATEGY_CODES: dict[str, int] = {
     'alternate_sequential': em.ALTERNATE_SEQUENTIAL_TARGETS,
 }
 
-LIKELIHOOD_NAMES: frozenset[str] = frozenset({
-    'gaussian',
-    'cake',
-    'eggbox',
-    'hawaii',
-    'ar1',
-    'banana',
-    'gaussian_mixture',
-    'gaussian_shell',
-    'hyperpyramid',
-    'random_wheel',
-    'rosenbrock',
-    'spoke_wheel',
-})
+LIKELIHOOD_NAMES: frozenset[str] = frozenset(
+    {
+        'gaussian',
+        'cake',
+        'eggbox',
+        'hawaii',
+        'ar1',
+        'banana',
+        'gaussian_mixture',
+        'gaussian_shell',
+        'hyperpyramid',
+        'random_wheel',
+        'rosenbrock',
+        'spoke_wheel',
+    }
+)
 
 LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_file', 'acceptance_file', 'explicit'})
 
@@ -59,24 +61,28 @@ LADDER_KINDS: frozenset[str] = frozenset({'geometric', 'entropy_file', 'length_f
 # loudly rather than be silently dropped. This closes the gap where a legacy
 # run.n_record spec parsed successfully and silently recorded nothing extra
 # (its recording intent lost) after n_record was replaced by arg_record.
-RUN_KEYS: frozenset[str] = frozenset({
-    'n_steps',
-    'n_steps_per_major_report',
-    'block_size',
-    'store_thin',
-    'arg_record',
-    'checkpoint_every_blocks',
-})
+RUN_KEYS: frozenset[str] = frozenset(
+    {
+        'n_steps',
+        'n_steps_per_major_report',
+        'block_size',
+        'store_thin',
+        'arg_record',
+        'checkpoint_every_blocks',
+    }
+)
 
 # the ConfigParser sections the proposal mixture maps onto
-PROPOSAL_SECTIONS: frozenset[str] = frozenset({
-    'FisherJumpManager',
-    'DEJumpManager',
-    'PriorManager',
-    'ProposalManager',
-    'AuxilliaryJumpManager',
-    'LadderHistoryJumpManager',
-})
+PROPOSAL_SECTIONS: frozenset[str] = frozenset(
+    {
+        'FisherJumpManager',
+        'DEJumpManager',
+        'PriorManager',
+        'ProposalManager',
+        'AuxilliaryJumpManager',
+        'LadderHistoryJumpManager',
+    }
+)
 
 # adaptive controller modes; a test pins this to experiments.adaptive's
 # ADAPTIVE_MODES (spec stays a pure-data layer, so no runtime import)
@@ -85,27 +91,29 @@ ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
 # the [adaptive] table's full key set: these knobs feed the paper, so a
 # typo must fail loudly rather than silently run with a default (see
 # build_adaptive_controller for semantics and defaults)
-ADAPTIVE_KEYS: frozenset[str] = frozenset({
-    'mode',
-    'update_every_blocks',
-    'forgetting',
-    'freeze_dlog',
-    'freeze_consecutive',
-    'remap_rule',
-    'T_min_factor',
-    'budget_blocks',
-    'var_estimator',
-    'n_prior_draws',
-    'min_updates_at_target',
-    'window_extension_factor',
-    'ds_link_cap',
-    'cold_cap_links',
-    'cap_ratio_min',
-    'cap_ratio_max',
-    'var_history_length',
-    'pool_dlog_tol',
-    'discard_blocks_after_update',
-})
+ADAPTIVE_KEYS: frozenset[str] = frozenset(
+    {
+        'mode',
+        'update_every_blocks',
+        'forgetting',
+        'freeze_dlog',
+        'freeze_consecutive',
+        'remap_rule',
+        'T_min_factor',
+        'budget_blocks',
+        'var_estimator',
+        'n_prior_draws',
+        'min_updates_at_target',
+        'window_extension_factor',
+        'ds_link_cap',
+        'cold_cap_links',
+        'cap_ratio_min',
+        'cap_ratio_max',
+        'var_history_length',
+        'pool_dlog_tol',
+        'discard_blocks_after_update',
+    }
+)
 
 _BARE_KEY_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
@@ -346,7 +354,11 @@ class RunSpec:
             # declared n_chain would silently run the wrong chain count
             # and embed contradictory provenance (PR #9 review)
             Ts_raw = self.ladder.get('Ts')
-            if not isinstance(Ts_raw, list) or not Ts_raw or not all(isinstance(T_loc, int | float) and not isinstance(T_loc, bool) for T_loc in Ts_raw):
+            if (
+                not isinstance(Ts_raw, list)
+                or not Ts_raw
+                or not all(isinstance(T_loc, int | float) and not isinstance(T_loc, bool) for T_loc in Ts_raw)
+            ):
                 msg = 'explicit ladder requires a non-empty numeric ladder.Ts list'
                 raise SpecError(msg)
             if len(Ts_raw) != n_chain:
@@ -403,9 +415,15 @@ class RunSpec:
                 msg = '[adaptive] requires budget_blocks (hard adaptation cap in blocks, plan Phase 5)'
                 raise SpecError(msg)
             t_min_factor = self.adaptive.get('T_min_factor', 1)
-            if isinstance(t_min_factor, bool) or not isinstance(t_min_factor, int | float) or not 0. < float(t_min_factor) <= 1.:
-                msg = ('adaptive.T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the '
-                       'T=1 readout temperature (sub-unit rungs are supported now that storage is index-based)')
+            if (
+                isinstance(t_min_factor, bool)
+                or not isinstance(t_min_factor, int | float)
+                or not 0.0 < float(t_min_factor) <= 1.0
+            ):
+                msg = (
+                    'adaptive.T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the '
+                    'T=1 readout temperature (sub-unit rungs are supported now that storage is index-based)'
+                )
                 raise SpecError(msg)
             for key, value in self.adaptive.items():
                 _check_toml_value(value, f'adaptive.{key}')
@@ -443,15 +461,19 @@ class RunSpec:
         """Build and validate a RunSpec from parsed TOML data."""
         likelihood = _require_table(data, 'likelihood')
         likelihood_name = _require_str(likelihood, 'name', 'likelihood')
-        likelihood_params = {key: _check_toml_value(value, f'likelihood.{key}') for key, value in likelihood.items() if key != 'name'}
+        likelihood_params = {
+            key: _check_toml_value(value, f'likelihood.{key}') for key, value in likelihood.items() if key != 'name'
+        }
 
         ladder_raw = _require_table(data, 'ladder')
         ladder = {key: _check_toml_value(value, f'ladder.{key}') for key, value in ladder_raw.items()}
 
         run = _require_table(data, 'run')
         if 'n_record' in run:
-            msg = ('run.n_record was replaced by run.arg_record (a list of extra chain indices to '
-                   'record beyond the readout chains); update the spec instead of relying on n_record')
+            msg = (
+                'run.n_record was replaced by run.arg_record (a list of extra chain indices to '
+                'record beyond the readout chains); update the spec instead of relying on n_record'
+            )
             raise SpecError(msg)
         unknown_run_keys = set(run) - RUN_KEYS
         if unknown_run_keys:
@@ -473,7 +495,9 @@ class RunSpec:
             if not isinstance(entries, dict):
                 msg = f'proposals.{section} must be a table'
                 raise SpecError(msg)
-            proposal_overrides[section] = {key: _check_toml_value(value, f'proposals.{section}.{key}') for key, value in entries.items()}
+            proposal_overrides[section] = {
+                key: _check_toml_value(value, f'proposals.{section}.{key}') for key, value in entries.items()
+            }
 
         adaptive_raw = data.get('adaptive')
         adaptive: dict[str, TomlValue] | None = None
@@ -495,7 +519,9 @@ class RunSpec:
             store_thin=_opt_int(run, 'store_thin', 'run', 1),
             arg_record=_opt_int_list(run, 'arg_record', 'run'),
             checkpoint_every_blocks=_opt_int(run, 'checkpoint_every_blocks', 'run', 8),
-            exchange_strategy=_require_str(exchange, 'strategy', 'exchange') if 'strategy' in exchange else 'sequential',
+            exchange_strategy=_require_str(exchange, 'strategy', 'exchange')
+            if 'strategy' in exchange
+            else 'sequential',
             track_full_exchanges=_opt_bool(exchange, 'track_full_exchanges', 'exchange', False),
             proposal_overrides=proposal_overrides,
             adaptive=adaptive,

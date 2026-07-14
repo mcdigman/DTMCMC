@@ -15,24 +15,23 @@ from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
 
 if TYPE_CHECKING:
-
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 @njit()
 def store_sample_helper(
-        samples_store: NDArray[np.floating],
-        logLs_store: NDArray[np.floating],
-        samples_block: NDArray[np.floating],
-        logLs_block: NDArray[np.floating],
-        store_idx_in: int,
-        store_counter_in: int,
-        record_indices: NDArray[np.int64],
-        block_size: int,
-        store_thin: int,
-        read_offset: int,
-    ) -> tuple[int, int]:
+    samples_store: NDArray[np.floating],
+    logLs_store: NDArray[np.floating],
+    samples_block: NDArray[np.floating],
+    logLs_block: NDArray[np.floating],
+    store_idx_in: int,
+    store_counter_in: int,
+    record_indices: NDArray[np.int64],
+    block_size: int,
+    store_thin: int,
+    read_offset: int,
+) -> tuple[int, int]:
     """Write the samples of the record_indices chains to be stored using store_thin
     thinning: store column j holds chain record_indices[j] (duplicates permitted).
     store_idx and store_counter are counters for the index to write into and
@@ -61,14 +60,26 @@ def store_sample_helper(
 
 
 @njit()
-def mcmc_decision_helper(itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], betas: NDArray[np.floating], accept_record: NDArray[np.int64], esd_record: NDArray[np.floating], itrt: int, new_point: NDArray[np.floating], logL_new: float, density_fac: float, idx_jump: int) -> None:
+def mcmc_decision_helper(
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    betas: NDArray[np.floating],
+    accept_record: NDArray[np.int64],
+    esd_record: NDArray[np.floating],
+    itrt: int,
+    new_point: NDArray[np.floating],
+    logL_new: float,
+    density_fac: float,
+    idx_jump: int,
+) -> None:
     """Helper to decide whether mcmc point is accepted or not and process accordingly"""
     # draw to determine if we will accept
-    test: float = np.log(np.random.uniform(0., 1.))
+    test: float = np.log(np.random.uniform(0.0, 1.0))
 
     # squared displacement of the proposal, accumulated per (T, jump type)
     # for the expected-squared-displacement tracker; pure observer, no draws
-    delta_sq: float = 0.
+    delta_sq: float = 0.0
     for itrp in range(new_point.size):
         diff: float = new_point[itrp] - samples[itrb - 1, itrt, itrp]
         delta_sq += diff * diff
@@ -88,7 +99,16 @@ def mcmc_decision_helper(itrb: int, samples: NDArray[np.floating], logLs: NDArra
         accept_record[1, itrt, idx_jump] += 1
 
 
-def advance_step_ptmcmc(itrb: int, samples: NDArray[np.floating], logLs: NDArray[np.floating], T_ladder: TemperatureLadder, accept_record: NDArray[np.int64], esd_record: NDArray[np.floating], proposal_manager: ProposalManager, like_obj: AbstractLikelihood) -> None:
+def advance_step_ptmcmc(
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    T_ladder: TemperatureLadder,
+    accept_record: NDArray[np.int64],
+    esd_record: NDArray[np.floating],
+    proposal_manager: ProposalManager,
+    like_obj: AbstractLikelihood,
+) -> None:
     """Advance a single step step in the ptmcmc chain"""
     n_chain: int = T_ladder.n_chain
     betas: NDArray[np.floating] = T_ladder.betas
@@ -112,11 +132,19 @@ def advance_step_ptmcmc(itrb: int, samples: NDArray[np.floating], logLs: NDArray
             # Failed, ensure the point will not be accepted
             logL_new = -np.inf
 
-        mcmc_decision_helper(itrb, samples, logLs, betas, accept_record, esd_record, itrt, new_point, logL_new, density_fac, idx_jump)
+        mcmc_decision_helper(
+            itrb, samples, logLs, betas, accept_record, esd_record, itrt, new_point, logL_new, density_fac, idx_jump
+        )
 
 
 def advance_block_ptmcmc(
-        T_ladder: TemperatureLadder, logLs: NDArray[np.floating], samples: NDArray[np.floating], chain_track: NDArray[np.int64], proposal_manager: ProposalManager, like_obj: AbstractLikelihood, tracker_manager: TrackerManager
+    T_ladder: TemperatureLadder,
+    logLs: NDArray[np.floating],
+    samples: NDArray[np.floating],
+    chain_track: NDArray[np.int64],
+    proposal_manager: ProposalManager,
+    like_obj: AbstractLikelihood,
+    tracker_manager: TrackerManager,
 ) -> NDArray[np.floating]:
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
     block_size: int = samples.shape[0] - 1
@@ -153,6 +181,7 @@ def advance_block_ptmcmc(
 
     return samples
 
+
 # TODO rename this module
 # TODO add any necessary handlers for block length
 
@@ -160,9 +189,18 @@ def advance_block_ptmcmc(
 class DTMCMCSampler:
     """object to manage the overall chain evolution"""
 
-    def __init__(self, T_ladder_in: TemperatureLadder, like_obj: AbstractLikelihood, block_size: int, store_size: int,
-                 tracker_manager: TrackerManager | None = None, proposal_manager: ProposalManager | None = None, starting_samples: NDArray[np.floating] | None=None,
-                 store_thin: int = 1, arg_record: list[int] | None=None) -> None:
+    def __init__(
+        self,
+        T_ladder_in: TemperatureLadder,
+        like_obj: AbstractLikelihood,
+        block_size: int,
+        store_size: int,
+        tracker_manager: TrackerManager | None = None,
+        proposal_manager: ProposalManager | None = None,
+        starting_samples: NDArray[np.floating] | None = None,
+        store_thin: int = 1,
+        arg_record: list[int] | None = None,
+    ) -> None:
         """Create the chain object
 
         Parameters
@@ -302,7 +340,9 @@ class DTMCMCSampler:
         #    0,
         # )
 
-    def get_stored_flattened(self, n_burnin: int, n_chain_out: int=-1, thin: int=1) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+    def get_stored_flattened(
+        self, n_burnin: int, n_chain_out: int = -1, thin: int = 1
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
         """Get the stored samples flattened, with additional thinning if desired and only the first n_chain_out store columns.
 
         The first n_cold columns are always the ladder's readout chains, so
@@ -336,8 +376,8 @@ class DTMCMCSampler:
 
     def reset_block(self) -> None:
         """Blank all but the first sample"""
-        self.samples[1:, :, :] = 0.
-        self.logLs[1:, :] = 0.
+        self.samples[1:, :, :] = 0.0
+        self.logLs[1:, :] = 0.0
         self.chain_track[1:, :] = 0
 
     def loop_block(self) -> None:
@@ -381,14 +421,20 @@ class DTMCMCSampler:
         # storing them directly as powers allows moments to be calculated later
         # averaging over an arbitrarily long window in a stable way
 
-        self.logL2_means.append((self.logLs[1:]**2).mean(axis=0))
-        self.logL3_means.append((self.logLs[1:]**3).mean(axis=0))
-        self.logL4_means.append((self.logLs[1:]**4).mean(axis=0))
-        self.logL5_means.append((self.logLs[1:]**5).mean(axis=0))
-        self.logL6_means.append((self.logLs[1:]**6).mean(axis=0))
-        self.logL_prod11_means.append((self.logLs[1:, :self.n_chain - 1] * self.logLs[1:, 1:self.n_chain]).mean(axis=0))
-        self.logL_prod21_means.append((self.logLs[1:, :self.n_chain - 1]**2 * self.logLs[1:, 1:self.n_chain]).mean(axis=0))
-        self.logL_prod12_means.append((self.logLs[1:, :self.n_chain - 1] * self.logLs[1:, 1:self.n_chain]**2).mean(axis=0))
+        self.logL2_means.append((self.logLs[1:] ** 2).mean(axis=0))
+        self.logL3_means.append((self.logLs[1:] ** 3).mean(axis=0))
+        self.logL4_means.append((self.logLs[1:] ** 4).mean(axis=0))
+        self.logL5_means.append((self.logLs[1:] ** 5).mean(axis=0))
+        self.logL6_means.append((self.logLs[1:] ** 6).mean(axis=0))
+        self.logL_prod11_means.append(
+            (self.logLs[1:, : self.n_chain - 1] * self.logLs[1:, 1 : self.n_chain]).mean(axis=0)
+        )
+        self.logL_prod21_means.append(
+            (self.logLs[1:, : self.n_chain - 1] ** 2 * self.logLs[1:, 1 : self.n_chain]).mean(axis=0)
+        )
+        self.logL_prod12_means.append(
+            (self.logLs[1:, : self.n_chain - 1] * self.logLs[1:, 1 : self.n_chain] ** 2).mean(axis=0)
+        )
         self.loop_block()
 
     def block_advance_iterators(self) -> None:
@@ -424,8 +470,8 @@ class DTMCMCSampler:
         assert new_ladder.n_cold == self.n_cold
         # the rank remap relies on the sorted-ladder convention (D6);
         # clip infs so duplicate hot anchors do not produce inf - inf
-        assert np.all(np.diff(np.minimum(self.Ts, 1.e300)) >= 0.)
-        assert np.all(np.diff(np.minimum(new_ladder.Ts, 1.e300)) >= 0.)
+        assert np.all(np.diff(np.minimum(self.Ts, 1.0e300)) >= 0.0)
+        assert np.all(np.diff(np.minimum(new_ladder.Ts, 1.0e300)) >= 0.0)
 
         self.tracker_manager.segment_for_ladder_update(self.itrn)
 

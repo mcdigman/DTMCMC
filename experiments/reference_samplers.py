@@ -46,7 +46,9 @@ CAKE_WIDTHS: tuple[float, ...] = tuple(float(width) for width in CAKE_DEFAULT_WI
 CAKE_EXPONENTS: tuple[float, ...] = tuple(float(exponent) for exponent in CAKE_DEFAULT_EXPONENTS)
 
 
-def draw_truncated_gaussian(n_draws: int, n_par: int, cutoff: float, rng: np.random.Generator, T: float = 1.) -> NDArray[np.floating]:
+def draw_truncated_gaussian(
+    n_draws: int, n_par: int, cutoff: float, rng: np.random.Generator, T: float = 1.0
+) -> NDArray[np.floating]:
     """Exact draws from N(0, T·I) truncated to the [-cutoff, cutoff]^n box."""
     scale = np.sqrt(T)
     out = np.zeros((n_draws, n_par))
@@ -55,12 +57,17 @@ def draw_truncated_gaussian(n_draws: int, n_par: int, cutoff: float, rng: np.ran
         batch = rng.standard_normal((max(n_draws - n_got, 64), n_par)) * scale
         keep = batch[np.all(np.abs(batch) <= cutoff, axis=1)]
         n_take = min(keep.shape[0], n_draws - n_got)
-        out[n_got:n_got + n_take] = keep[:n_take]
+        out[n_got : n_got + n_take] = keep[:n_take]
         n_got += n_take
     return out
 
 
-def cake_moment_r2(n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> float:
+def cake_moment_r2(
+    n_par: int,
+    amps: tuple[float, ...] = CAKE_AMPS,
+    widths: tuple[float, ...] = CAKE_WIDTHS,
+    exponents: tuple[float, ...] = CAKE_EXPONENTS,
+) -> float:
     """Analytic E[r^2] of the (untruncated) cake density.
 
     Per tier, r^e/(2 w^e) ~ Gamma(n/e) gives
@@ -69,17 +76,31 @@ def cake_moment_r2(n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tupl
     tail beyond r=10 carries weight ~exp(-760)).
     """
     amps_arr = np.asarray(amps, dtype=np.float64)
-    assert float(amps_arr.sum()) > 0.
+    assert float(amps_arr.sum()) > 0.0
     # the engine accepts arbitrary amps; the posterior tier weights are
     # always amp_i / sum(amps), so normalize rather than assume sum = 1
     weights = amps_arr / amps_arr.sum()
-    total = 0.
+    total = 0.0
     for weight, width, exponent in zip(weights, widths, exponents, strict=True):
-        total += weight * width**2 * 2.**(2. / exponent) * gamma_func((n_par + 2.) / exponent) / gamma_func(n_par / exponent)
+        total += (
+            weight
+            * width**2
+            * 2.0 ** (2.0 / exponent)
+            * gamma_func((n_par + 2.0) / exponent)
+            / gamma_func(n_par / exponent)
+        )
     return float(total)
 
 
-def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float = 10., amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> NDArray[np.floating]:
+def draw_cake(
+    n_draws: int,
+    n_par: int,
+    rng: np.random.Generator,
+    cutoff: float = 10.0,
+    amps: tuple[float, ...] = CAKE_AMPS,
+    widths: tuple[float, ...] = CAKE_WIDTHS,
+    exponents: tuple[float, ...] = CAKE_EXPONENTS,
+) -> NDArray[np.floating]:
     """Exact draws from the cake posterior at T=1 in the [-cutoff, cutoff]^n box.
 
     Tier parameters default to the engine's cake; custom values sample
@@ -91,7 +112,7 @@ def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float 
     amps_arr = np.asarray(amps, dtype=np.float64)
     widths_arr = np.asarray(widths, dtype=np.float64)
     exponents_arr = np.asarray(exponents, dtype=np.float64)
-    assert float(amps_arr.sum()) > 0.
+    assert float(amps_arr.sum()) > 0.0
     tier_cdf = np.cumsum(amps_arr / amps_arr.sum())
 
     out = np.zeros((n_draws, n_par))
@@ -103,18 +124,24 @@ def draw_cake(n_draws: int, n_par: int, rng: np.random.Generator, cutoff: float 
         widths_pick = widths_arr[tier]
         exponents_pick = exponents_arr[tier]
         s = rng.gamma(n_par / exponents_pick)
-        r = (2. * s)**(1. / exponents_pick) * widths_pick
+        r = (2.0 * s) ** (1.0 / exponents_pick) * widths_pick
         directions = rng.standard_normal((n_want, n_par))
         directions /= np.linalg.norm(directions, axis=1)[:, np.newaxis]
         batch = directions * r[:, np.newaxis]
         keep = batch[np.all(np.abs(batch) <= cutoff, axis=1)]
         n_take = min(keep.shape[0], n_draws - n_got)
-        out[n_got:n_got + n_take] = keep[:n_take]
+        out[n_got : n_got + n_take] = keep[:n_take]
         n_got += n_take
     return out
 
 
-def cake_logL_radial(r: NDArray[np.floating], n_par: int, amps: tuple[float, ...] = CAKE_AMPS, widths: tuple[float, ...] = CAKE_WIDTHS, exponents: tuple[float, ...] = CAKE_EXPONENTS) -> NDArray[np.floating]:
+def cake_logL_radial(
+    r: NDArray[np.floating],
+    n_par: int,
+    amps: tuple[float, ...] = CAKE_AMPS,
+    widths: tuple[float, ...] = CAKE_WIDTHS,
+    exponents: tuple[float, ...] = CAKE_EXPONENTS,
+) -> NDArray[np.floating]:
     """Vectorized engine cake logL as a function of radius.
 
     The cake density is isotropic, so logL depends on r alone; this
@@ -123,22 +150,24 @@ def cake_logL_radial(r: NDArray[np.floating], n_par: int, amps: tuple[float, ...
     test_cake_constants_match_engine).
     """
     r_arr = np.asarray(r, dtype=np.float64)
-    dim_part = gamma_func(1. + n_par / 2.) / np.pi**(n_par / 2.)
+    dim_part = gamma_func(1.0 + n_par / 2.0) / np.pi ** (n_par / 2.0)
     out = np.full(r_arr.shape, -np.inf)
     for amp, width, exponent in zip(amps, widths, exponents, strict=True):
-        tier_log = np.log(amp * dim_part / (2.**(n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))) - r_arr**exponent / (2. * width**exponent)
+        tier_log = np.log(
+            amp * dim_part / (2.0 ** (n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))
+        ) - r_arr**exponent / (2.0 * width**exponent)
         out = np.logaddexp(out, tier_log)
     return out
 
 
 def cake_tempered_cumulants(
-        betas: NDArray[np.floating],
-        n_par: int,
-        amps: tuple[float, ...] = CAKE_AMPS,
-        widths: tuple[float, ...] = CAKE_WIDTHS,
-        exponents: tuple[float, ...] = CAKE_EXPONENTS,
-        r_max: float = 10.,
-        n_grid: int = 16384,
+    betas: NDArray[np.floating],
+    n_par: int,
+    amps: tuple[float, ...] = CAKE_AMPS,
+    widths: tuple[float, ...] = CAKE_WIDTHS,
+    exponents: tuple[float, ...] = CAKE_EXPONENTS,
+    r_max: float = 10.0,
+    n_grid: int = 16384,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Exact tempered logL cumulants (E, Var) of an isotropic cake by radial quadrature.
 
@@ -157,9 +186,9 @@ def cake_tempered_cumulants(
     in the tests.
     """
     betas_arr = np.asarray(betas, dtype=np.float64)
-    r_grid = np.linspace(1.e-9, r_max, n_grid)
+    r_grid = np.linspace(1.0e-9, r_max, n_grid)
     logL_grid = cake_logL_radial(r_grid, n_par, amps, widths, exponents)
-    log_shell = (n_par - 1.) * np.log(r_grid)
+    log_shell = (n_par - 1.0) * np.log(r_grid)
 
     means = np.zeros(betas_arr.size)
     variances = np.zeros(betas_arr.size)
@@ -170,7 +199,7 @@ def cake_tempered_cumulants(
         mean = np.trapezoid(weight * logL_grid, r_grid) / norm
         second = np.trapezoid(weight * logL_grid**2, r_grid) / norm
         means[itrb] = mean
-        variances[itrb] = max(second - mean**2, 0.)
+        variances[itrb] = max(second - mean**2, 0.0)
     return means, variances
 
 
@@ -196,11 +225,11 @@ def draw_banana(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[n
     while n_got < n_draws:
         n_want = max(n_draws - n_got, 64)
         batch = rng.standard_normal((n_want, n_par))
-        batch[:, 0] *= 10.
-        batch[:, 1] += 100. * bananicity - bananicity * batch[:, 0]**2
+        batch[:, 0] *= 10.0
+        batch[:, 1] += 100.0 * bananicity - bananicity * batch[:, 0] ** 2
         keep = batch[np.all((batch >= low_lims) & (batch <= high_lims), axis=1)]
         n_take = min(keep.shape[0], n_draws - n_got)
-        out[n_got:n_got + n_take] = keep[:n_take]
+        out[n_got : n_got + n_take] = keep[:n_take]
         n_got += n_take
     return out
 
@@ -219,8 +248,8 @@ def hyperpyramid_marginal_variance() -> float:
     sigma = float(hyperpyramid_module.sigma)
     shape = n_par * s_exp
     # E[m^2] = sigma^2 E[t^(2s)] for t ~ Gamma(shape)
-    moment_m2 = sigma**2 * gamma_func(shape + 2. * s_exp) / gamma_func(shape)
-    return float(moment_m2 * (1. / 2. + 1. / 6.))
+    moment_m2 = sigma**2 * gamma_func(shape + 2.0 * s_exp) / gamma_func(shape)
+    return float(moment_m2 * (1.0 / 2.0 + 1.0 / 6.0))
 
 
 def draw_hyperpyramid(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:
@@ -245,14 +274,14 @@ def draw_hyperpyramid(n_draws: int, n_par: int, rng: np.random.Generator) -> NDA
     n_got = 0
     while n_got < n_draws:
         n_want = max(n_draws - n_got, 64)
-        m = sigma * rng.gamma(n_par * s_exp, size=n_want)**s_exp
+        m = sigma * rng.gamma(n_par * s_exp, size=n_want) ** s_exp
         face = rng.integers(0, 2 * n_par, size=n_want)
-        batch = rng.uniform(-1., 1., size=(n_want, n_par)) * m[:, np.newaxis]
+        batch = rng.uniform(-1.0, 1.0, size=(n_want, n_par)) * m[:, np.newaxis]
         batch[np.arange(n_want), face % n_par] = np.where(face < n_par, m, -m)
         batch += center
         keep = batch[np.all(np.abs(batch - center) <= bound, axis=1)]
         n_take = min(keep.shape[0], n_draws - n_got)
-        out[n_got:n_got + n_take] = keep[:n_take]
+        out[n_got : n_got + n_take] = keep[:n_take]
         n_got += n_take
     return out
 
@@ -273,9 +302,9 @@ def _eggbox_envelope_slope(n_par: int, betap: float) -> float:
     (2^beta - (1+e^-u)^beta)/u is minimized numerically on a dense grid
     with a multiplicative safety margin.
     """
-    u_max = n_par * (np.pi / 2.)**2 / 2.
-    us = np.linspace(1.e-6, u_max, 20001)
-    slope = float(np.min((2.**betap - (1. + np.exp(-us))**betap) / us))
+    u_max = n_par * (np.pi / 2.0) ** 2 / 2.0
+    us = np.linspace(1.0e-6, u_max, 20001)
+    slope = float(np.min((2.0**betap - (1.0 + np.exp(-us)) ** betap) / us))
     return 0.999 * slope
 
 
@@ -289,19 +318,21 @@ def eggbox_cells(n_par: int) -> EggboxCells:
     centers = np.array(list(itertools.product(per_dim, repeat=n_par)))
     signs = np.cos(centers).round().astype(np.int64)
     even_mask = signs.prod(axis=1) > 0
-    return EggboxCells(centers=centers, even_mask=even_mask, envelope_slope=_eggbox_envelope_slope(n_par, eggbox_module.betap))
+    return EggboxCells(
+        centers=centers, even_mask=even_mask, envelope_slope=_eggbox_envelope_slope(n_par, eggbox_module.betap)
+    )
 
 
 def eggbox_logL(samples: NDArray[np.floating]) -> NDArray[np.floating]:
     """Vectorized eggbox log-likelihood, tested against eggbox.get_loglike."""
-    return (np.cos(samples).prod(axis=1) + 1.)**eggbox_module.betap
+    return (np.cos(samples).prod(axis=1) + 1.0) ** eggbox_module.betap
 
 
 def draw_eggbox(n_draws: int, n_par: int, rng: np.random.Generator, max_batches: int = 100000) -> NDArray[np.floating]:
     """Exact draws from the eggbox posterior at T=1 over its full box."""
     cells = eggbox_cells(n_par)
     betap = eggbox_module.betap
-    log_peak = 2.**betap
+    log_peak = 2.0**betap
     slope = cells.envelope_slope
 
     n_even = int(np.count_nonzero(cells.even_mask))
@@ -311,8 +342,8 @@ def draw_eggbox(n_draws: int, n_par: int, rng: np.random.Generator, max_batches:
 
     # envelope integrals decide the cell-type mixture: Gaussian envelope
     # over even cells, constant envelope exp(1 - 2^beta) over odd cells
-    integral_even = n_even * (2. * np.pi / slope)**(n_par / 2.)
-    integral_odd = n_odd * np.exp(1. - log_peak) * np.pi**n_par
+    integral_even = n_even * (2.0 * np.pi / slope) ** (n_par / 2.0)
+    integral_odd = n_odd * np.exp(1.0 - log_peak) * np.pi**n_par
     p_even = integral_even / (integral_even + integral_odd)
 
     out = np.zeros((n_draws, n_par))
@@ -327,27 +358,31 @@ def draw_eggbox(n_draws: int, n_par: int, rng: np.random.Generator, max_batches:
         # even cells: Gaussian proposal, rejected outside the cell, then
         # accepted with f/envelope = exp((p+1)^beta - 2^beta + slope*u)
         offsets = rng.standard_normal((n_batch_even, n_par)) / np.sqrt(slope)
-        in_cell = np.all(np.abs(offsets) <= np.pi / 2., axis=1)
-        u = (offsets**2).sum(axis=1) / 2.
+        in_cell = np.all(np.abs(offsets) <= np.pi / 2.0, axis=1)
+        u = (offsets**2).sum(axis=1) / 2.0
         prod_cos = np.cos(offsets).prod(axis=1)
-        log_accept = (prod_cos + 1.)**betap - log_peak + slope * u
+        log_accept = (prod_cos + 1.0) ** betap - log_peak + slope * u
         accept_even = in_cell & (np.log(rng.random(n_batch_even)) < log_accept)
         centers_even = even_centers[rng.integers(0, n_even, size=n_batch_even)]
         kept_even = centers_even[accept_even] + offsets[accept_even]
 
         # odd cells: uniform proposal, accept with exp((p+1)^beta - 1) <= 1
         n_batch_odd = batch_size - n_batch_even
-        offsets_odd = rng.uniform(-np.pi / 2., np.pi / 2., size=(n_batch_odd, n_par))
+        offsets_odd = rng.uniform(-np.pi / 2.0, np.pi / 2.0, size=(n_batch_odd, n_par))
         prod_cos_odd = np.cos(offsets_odd).prod(axis=1)
         # odd-parity cells flip the product's sign relative to offsets
-        log_accept_odd = (-prod_cos_odd + 1.)**betap - 1.
+        log_accept_odd = (-prod_cos_odd + 1.0) ** betap - 1.0
         accept_odd = np.log(rng.random(n_batch_odd)) < log_accept_odd
-        centers_odd = odd_centers[rng.integers(0, max(n_odd, 1), size=n_batch_odd)] if n_odd > 0 else np.zeros((n_batch_odd, n_par))
+        centers_odd = (
+            odd_centers[rng.integers(0, max(n_odd, 1), size=n_batch_odd)]
+            if n_odd > 0
+            else np.zeros((n_batch_odd, n_par))
+        )
         kept_odd = (centers_odd[accept_odd] + offsets_odd[accept_odd]) if n_odd > 0 else np.zeros((0, n_par))
 
         kept = np.vstack([kept_even, kept_odd])
         n_take = min(kept.shape[0], n_draws - n_got)
-        out[n_got:n_got + n_take] = kept[:n_take]
+        out[n_got : n_got + n_take] = kept[:n_take]
         n_got += n_take
     if n_got < n_draws:
         msg = f'eggbox rejection sampler produced only {n_got}/{n_draws} draws in {max_batches} batches'

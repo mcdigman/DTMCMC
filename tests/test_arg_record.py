@@ -34,7 +34,15 @@ TINY_ARG_RECORD_SPEC: dict[str, Any] = {
     'name': 'tiny_arg_record_test',
     'seed': 42,
     'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
-    'ladder': {'kind': 'geometric', 'n_chain': 6, 'n_cold': 1, 'T_cold': 1.0, 'T_min': 1.0, 'T_max': 100.0, 'n_inf_final': 1},
+    'ladder': {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 1,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    },
     'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'arg_record': [0, 5], 'checkpoint_every_blocks': 2},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
@@ -94,13 +102,24 @@ def test_store_sample_helper_maps_columns_with_duplicates() -> None:
     n_chain = 5
     n_par = 2
     record_indices = [3, 0, 3]
-    samples_block = np.arange((block_size + 1) * n_chain * n_par, dtype=np.float64).reshape(block_size + 1, n_chain, n_par)
+    samples_block = np.arange((block_size + 1) * n_chain * n_par, dtype=np.float64).reshape(
+        block_size + 1, n_chain, n_par
+    )
     logLs_block = np.arange((block_size + 1) * n_chain, dtype=np.float64).reshape(block_size + 1, n_chain)
     samples_store = np.zeros((block_size, len(record_indices), n_par))
     logLs_store = np.zeros((block_size, len(record_indices)))
 
     store_idx, store_counter = store_sample_helper(
-        samples_store, logLs_store, samples_block, logLs_block, 0, 0, np.asarray(record_indices), block_size, 1, 1,
+        samples_store,
+        logLs_store,
+        samples_block,
+        logLs_block,
+        0,
+        0,
+        np.asarray(record_indices),
+        block_size,
+        1,
+        1,
     )
     assert (store_idx, store_counter) == (0, 0)
     for row, itrk in enumerate(range(1, block_size + 1)):
@@ -195,7 +214,9 @@ def test_spec_arg_record_roundtrip_and_validation() -> None:
     assert round_tripped == spec
 
     for bad_value in ([6], [-1], [1.5], [True], 3):
-        data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+        data: dict[str, Any] = {
+            key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()
+        }
         data['run'] = dict(data['run'])
         data['run']['arg_record'] = bad_value
         with pytest.raises(SpecError, match='arg_record'):
@@ -204,7 +225,9 @@ def test_spec_arg_record_roundtrip_and_validation() -> None:
 
 def test_spec_rejects_legacy_n_record() -> None:
     """A legacy run.n_record spec fails loudly instead of silently dropping it."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()
+    }
     data['run'] = dict(data['run'])
     del data['run']['arg_record']
     data['run']['n_record'] = 4
@@ -214,7 +237,9 @@ def test_spec_rejects_legacy_n_record() -> None:
 
 def test_spec_rejects_unknown_run_key() -> None:
     """An unknown [run] key fails loudly rather than being silently ignored."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()
+    }
     data['run'] = dict(data['run'])
     data['run']['n_steps_typo'] = 128
     with pytest.raises(SpecError, match='unknown \\[run\\] keys'):
@@ -223,7 +248,9 @@ def test_spec_rejects_unknown_run_key() -> None:
 
 def test_spec_arg_record_defaults_empty() -> None:
     """Omitting arg_record records only the readout chains."""
-    data: dict[str, Any] = {key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()}
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_ARG_RECORD_SPEC.items()
+    }
     data['run'] = dict(data['run'])
     del data['run']['arg_record']
     spec = RunSpec.from_dict(data)

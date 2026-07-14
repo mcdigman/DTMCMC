@@ -50,7 +50,7 @@ ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
 
 # cold-window extension factor per update: each rebuild reaches up to 4x
 # colder until the target is hit, then refinement continues in place
-WINDOW_EXTENSION_FACTOR = 4.
+WINDOW_EXTENSION_FACTOR = 4.0
 
 # per-link dS budget throttling the extension: the window only descends
 # while the pooled spacing integral stays within ds_link_cap nats per
@@ -60,7 +60,7 @@ DS_LINK_CAP = 2.5
 # candidate partial extension factors tried when the full factor blows
 # the budget; factors above the configured window_extension_factor are
 # skipped, so the config caps the schedule without editing this tuple
-_EXTENSION_CANDIDATES = (4., 3., 2., 1.5, 1.25, 1.1)
+_EXTENSION_CANDIDATES = (4.0, 3.0, 2.0, 1.5, 1.25, 1.1)
 
 # cold-edge cap: the coldest cold_cap_links links are pulled to at most
 # exp(ds_link_cap / C) in temperature ratio, with C the measured local
@@ -72,7 +72,7 @@ _MIN_AUTO_CAP_LINKS = 3
 CAP_RATIO_BOUNDS = (1.05, 1.35)
 
 # var_estimator switch values (integer to leave room for future rules)
-VAR_ESTIMATOR_MEAN = 0         # forgetting-weighted mean of segment estimates
+VAR_ESTIMATOR_MEAN = 0  # forgetting-weighted mean of segment estimates
 VAR_ESTIMATOR_PESSIMISTIC = 1  # max over the recent segment estimates (default)
 _KNOWN_VAR_ESTIMATORS = frozenset({VAR_ESTIMATOR_MEAN, VAR_ESTIMATOR_PESSIMISTIC})
 
@@ -93,7 +93,7 @@ POOL_DLOG_TOL = 0.02
 DISCARD_BLOCKS_AFTER_UPDATE = 1
 
 # the readout temperature the T_min_factor target is expressed against
-_T_READOUT = 1.
+_T_READOUT = 1.0
 
 
 @dataclass
@@ -181,14 +181,14 @@ class AdaptiveLadderController:
 
     mode: str = 'entropy'
     update_every_blocks: int = 8
-    forgetting: float = 0.
+    forgetting: float = 0.0
     freeze_criterion: tuple[float, int] = (0.02, 3)
     # no_remap preserves DE-buffer columns by slot on ladder updates and
     # lets each column re-burn-in under its new temperature; the cloning
     # rules ('at_or_hotter', 'nearest') are retained for tests of the old
     # behavior and for pilot A/Bs
     remap_rule: str = 'no_remap'
-    T_min_factor: float = 1.
+    T_min_factor: float = 1.0
     budget_blocks: int = -1
     var_estimator: int = VAR_ESTIMATOR_PESSIMISTIC
     n_prior_draws: int = 256
@@ -226,10 +226,10 @@ class AdaptiveLadderController:
         if self.mode not in ADAPTIVE_MODES:
             msg = f'unknown adaptive mode {self.mode!r}; known: {sorted(ADAPTIVE_MODES)}'
             raise ValueError(msg)
-        if self.update_every_blocks < 1 or not 0. <= self.forgetting < 1.:
+        if self.update_every_blocks < 1 or not 0.0 <= self.forgetting < 1.0:
             msg = 'invalid adaptive controller parameters'
             raise ValueError(msg)
-        if not 0. < self.T_min_factor <= 1.:
+        if not 0.0 < self.T_min_factor <= 1.0:
             msg = 'T_min_factor must be in (0, 1]: the cold-edge target is a multiple of the T=1 readout'
             raise ValueError(msg)
         if self.budget_blocks < 1:
@@ -241,16 +241,16 @@ class AdaptiveLadderController:
         if self.remap_rule not in {'at_or_hotter', 'nearest', 'no_remap'}:
             msg = f'unknown remap_rule {self.remap_rule!r}'
             raise ValueError(msg)
-        if self.window_extension_factor <= 1.:
+        if self.window_extension_factor <= 1.0:
             msg = 'window_extension_factor must be > 1'
             raise ValueError(msg)
-        if self.ds_link_cap <= 0. or self.var_history_length < 1 or self.pool_dlog_tol < 0.:
+        if self.ds_link_cap <= 0.0 or self.var_history_length < 1 or self.pool_dlog_tol < 0.0:
             msg = 'invalid adaptive controller parameters'
             raise ValueError(msg)
         if self.cold_cap_links < COLD_CAP_LINKS_AUTO:
             msg = 'cold_cap_links must be >= 0, or COLD_CAP_LINKS_AUTO (-1) for the chain-scaled default'
             raise ValueError(msg)
-        if not 1. < self.cap_ratio_bounds[0] <= self.cap_ratio_bounds[1]:
+        if not 1.0 < self.cap_ratio_bounds[0] <= self.cap_ratio_bounds[1]:
             msg = 'cap_ratio_bounds must satisfy 1 < min <= max'
             raise ValueError(msg)
         if not 0 <= self.discard_blocks_after_update < self.update_every_blocks:
@@ -295,8 +295,8 @@ class AdaptiveLadderController:
         prior_mean = float(prior_logLs.mean())
         prior_var = float(prior_logLs.var())
 
-        t_hot = max(2. * np.sqrt(prior_var), 10.)
-        self._t_cold_window = max(t_hot / 8., self.t_cold_target)
+        t_hot = max(2.0 * np.sqrt(prior_var), 10.0)
+        self._t_cold_window = max(t_hot / 8.0, self.t_cold_target)
         # the first segment starts from prior draws, a transient like any
         # post-update segment: discard its head blocks from the pool too
         self._pending_discard = self.discard_blocks_after_update
@@ -305,12 +305,16 @@ class AdaptiveLadderController:
         self._pool_Ts.append(np.inf)
         self._pool_means.append(prior_mean)
         self._pool_vars.append(prior_var)
-        self._pool_weights.append(1.)
+        self._pool_weights.append(1.0)
         self._pool_var_history.append([prior_var])
 
         return GeometricTemperatureLadder(
-            n_chain=n_chain, n_cold=n_cold, T_cold=self._t_cold_window, T_min=self._t_cold_window,
-            T_max=t_hot, n_inf_final=self.n_inf_final,
+            n_chain=n_chain,
+            n_cold=n_cold,
+            T_cold=self._t_cold_window,
+            T_min=self._t_cold_window,
+            T_max=t_hot,
+            n_inf_final=self.n_inf_final,
         )
 
     def _pool_match(self, T_loc: float) -> int | None:
@@ -365,11 +369,11 @@ class AdaptiveLadderController:
 
         weight = float(e1_blocks.shape[0])
         seg_means = e1_blocks.mean(axis=0)
-        seg_vars = np.maximum(e2_blocks.mean(axis=0) - seg_means**2, 0.)
+        seg_vars = np.maximum(e2_blocks.mean(axis=0) - seg_means**2, 0.0)
         self._blocks_seen = len(sampler.logL_means)
 
-        if self.forgetting > 0.:
-            self._pool_weights = [w * (1. - self.forgetting) for w in self._pool_weights]
+        if self.forgetting > 0.0:
+            self._pool_weights = [w * (1.0 - self.forgetting) for w in self._pool_weights]
 
         for itrt in range(seg_means.size):
             T_loc = float(sampler.Ts[itrt])
@@ -381,7 +385,7 @@ class AdaptiveLadderController:
                 self._pool_vars[idx] = (w_old * self._pool_vars[idx] + w_new * float(seg_vars[itrt])) / total
                 self._pool_weights[idx] = total
                 self._pool_var_history[idx].append(float(seg_vars[itrt]))
-                del self._pool_var_history[idx][:-self.var_history_length]
+                del self._pool_var_history[idx][: -self.var_history_length]
             else:
                 self._pool_Ts.append(T_loc)
                 self._pool_means.append(float(seg_means[itrt]))
@@ -419,8 +423,8 @@ class AdaptiveLadderController:
         vars_pool = self._effective_pool_vars()
         keep = self._pool_keep_mask(window)
         if int(np.count_nonzero(keep)) < 2:
-            return 0.
-        p_exp, q_exp = (0.5, 0.) if self.mode == 'length' else (1., 1.)
+            return 0.0
+        p_exp, q_exp = (0.5, 0.0) if self.mode == 'length' else (1.0, 1.0)
         betas_use, vars_use = standardize_input_vars(Ts_to_betas(Ts_pool[keep]), vars_pool[keep])
         total = float(get_spacing_integrated(vars_use, betas_use, False, p=p_exp, q=q_exp)[-1])
         return total / n_links
@@ -428,7 +432,10 @@ class AdaptiveLadderController:
     def _extend_window(self, n_chain: int, n_cold: int) -> None:
         """Descend the cold window as far as the per-link dS budget allows."""
         n_links = max(n_chain - n_cold - self.n_inf_final, 1)
-        candidates = (self.window_extension_factor, *(c for c in _EXTENSION_CANDIDATES if c < self.window_extension_factor))
+        candidates = (
+            self.window_extension_factor,
+            *(c for c in _EXTENSION_CANDIDATES if c < self.window_extension_factor),
+        )
         for factor in candidates:
             candidate = max(self.t_cold_target, self._t_cold_window / factor)
             if self._pooled_ds_per_link(candidate, n_links) <= self.ds_link_cap:
@@ -468,7 +475,7 @@ class AdaptiveLadderController:
             c_local = var_local / T_at**2
             # clip the exponent before exponentiating: a tiny measured C
             # would otherwise overflow exp() on its way to the ratio clip
-            log_ratio = min(self.ds_link_cap / max(c_local, 1.e-8), np.log(self.cap_ratio_bounds[1]) + 1.)
+            log_ratio = min(self.ds_link_cap / max(c_local, 1.0e-8), np.log(self.cap_ratio_bounds[1]) + 1.0)
             return float(np.clip(np.exp(log_ratio), *self.cap_ratio_bounds))
 
         Ts = np.sort(np.asarray(ladder.Ts).copy())
@@ -490,7 +497,7 @@ class AdaptiveLadderController:
             max_allowed = capped[itrt - 1] * local_ratio_cap(float(capped[itrt - 1]))
             if capped[itrt] > max_allowed:
                 capped[itrt] = max_allowed
-        if np.allclose(capped, finite_Ts, rtol=1.e-12):
+        if np.allclose(capped, finite_Ts, rtol=1.0e-12):
             return ladder
         Ts[finite] = capped
         return TemperatureLadder(Ts, n_cold=n_cold, T_cold=ladder.T_cold)
@@ -521,11 +528,24 @@ class AdaptiveLadderController:
         # rung; identical to nearest whenever no rung sits below T_cold.
         ladder: TemperatureLadder
         if self.mode == 'entropy':
-            ladder = EntropyTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
+            ladder = EntropyTemperatureLadder(
+                n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1
+            )
         elif self.mode == 'length':
-            ladder = LengthTemperatureLadder(n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
+            ladder = LengthTemperatureLadder(
+                n_chain, Ts_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1
+            )
         else:
-            ladder = AcceptanceTemperatureLadder(n_chain, Ts_use, means_use, vars_use, n_cold=n_cold, T_cold=t_cold_build, n_inf_final=self.n_inf_final, snap_mode=1)
+            ladder = AcceptanceTemperatureLadder(
+                n_chain,
+                Ts_use,
+                means_use,
+                vars_use,
+                n_cold=n_cold,
+                T_cold=t_cold_build,
+                n_inf_final=self.n_inf_final,
+                snap_mode=1,
+            )
         return self._cap_cold_links(ladder, n_cold)
 
     def post_block(self, sampler: DTMCMCSampler) -> bool:
@@ -587,7 +607,12 @@ class AdaptiveLadderController:
         # stability criterion.
         if at_target_before:
             self._updates_at_target += 1
-        if at_target_before and self._updates_at_target > self.min_updates_at_target and not applied and window_trips >= 1:
+        if (
+            at_target_before
+            and self._updates_at_target > self.min_updates_at_target
+            and not applied
+            and window_trips >= 1
+        ):
             self._consecutive_small += 1
         else:
             self._consecutive_small = 0
@@ -596,13 +621,15 @@ class AdaptiveLadderController:
             self.frozen = True
             self.frozen_by = 'criterion'
 
-        self.history.append(LadderUpdateRecord(
-            block_index=blocks_done,
-            Ts=np.asarray(new_ladder.Ts).copy(),
-            applied=applied,
-            t_cold_window=self._t_cold_window,
-            max_dlog_t=max_dlog,
-            n_pool_points=len(self._pool_Ts),
-            frozen_after=self.frozen,
-        ))
+        self.history.append(
+            LadderUpdateRecord(
+                block_index=blocks_done,
+                Ts=np.asarray(new_ladder.Ts).copy(),
+                applied=applied,
+                t_cold_window=self._t_cold_window,
+                max_dlog_t=max_dlog,
+                n_pool_points=len(self._pool_Ts),
+                frozen_after=self.frozen,
+            )
+        )
         return applied

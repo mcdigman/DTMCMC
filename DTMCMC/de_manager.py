@@ -1,6 +1,7 @@
 """C 2023 Matthew C. Digman
 Module to manage differential evoultion jumps
 """
+
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -17,7 +18,14 @@ if TYPE_CHECKING:
 
 
 @njit()
-def apply_de_helper(de_buffer: NDArray[np.floating], de_subspace_frac: float, itrt: int, sample_point: NDArray[np.floating], do_subspace: bool, do_big: bool) -> tuple[NDArray[np.floating], float, bool]:
+def apply_de_helper(
+    de_buffer: NDArray[np.floating],
+    de_subspace_frac: float,
+    itrt: int,
+    sample_point: NDArray[np.floating],
+    do_subspace: bool,
+    do_big: bool,
+) -> tuple[NDArray[np.floating], float, bool]:
     """Apply the differential evolution jump"""
     de_size: int = de_buffer.shape[0]
     n_par: int = de_buffer.shape[2]
@@ -26,17 +34,17 @@ def apply_de_helper(de_buffer: NDArray[np.floating], de_subspace_frac: float, it
     itrd2: int = np.random.randint(0, de_size)
 
     if do_big:
-        alpha: float = 1.
+        alpha: float = 1.0
     else:
-        alpha = 1.68 / np.sqrt(n_par) * np.random.normal(0., 1.)
+        alpha = 1.68 / np.sqrt(n_par) * np.random.normal(0.0, 1.0)
 
     delta: NDArray[np.floating] = de_buffer[itrd1, itrt, :] - de_buffer[itrd2, itrt, :]
     count: int = n_par
     if do_subspace:
         safe_itrp = np.random.randint(n_par)
         for itrp in range(n_par):
-            if np.random.uniform(0., 1.) > de_subspace_frac and itrp != safe_itrp:
-                delta[itrp] = 0.
+            if np.random.uniform(0.0, 1.0) > de_subspace_frac and itrp != safe_itrp:
+                delta[itrp] = 0.0
                 count -= 1
         assert count > 0
 
@@ -44,10 +52,10 @@ def apply_de_helper(de_buffer: NDArray[np.floating], de_subspace_frac: float, it
     new_point: NDArray[np.floating] = sample_point + alpha * delta
 
     # make sure something changed or else flag the jump as trivial
-    nontrivial: bool = not np.all(delta == 0.) and alpha != 0.
+    nontrivial: bool = not np.all(delta == 0.0) and alpha != 0.0
 
     # density factor is 0 for differential evolution jumps
-    return new_point, 0., nontrivial
+    return new_point, 0.0, nontrivial
 
 
 class DEStandardFullJump(AbstractJump):
@@ -102,7 +110,9 @@ class DEBigRandomSubspaceJump(AbstractJump):
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
 
 
-def initialize_de_helper(de_buffer: NDArray[np.floating], de_size: int, n_chain: int, like_obj: AbstractLikelihood) -> None:
+def initialize_de_helper(
+    de_buffer: NDArray[np.floating], de_size: int, n_chain: int, like_obj: AbstractLikelihood
+) -> None:
     """Helper to initialize the differential evolution buffer with prior draws"""
     for itrd in range(de_size):
         for itrt in range(n_chain):
@@ -110,7 +120,9 @@ def initialize_de_helper(de_buffer: NDArray[np.floating], de_size: int, n_chain:
 
 
 @njit()
-def write_de_helper(itrde_count: int, itrde_write: int, de_buffer: NDArray[np.floating], samples: NDArray[np.floating]) -> None:
+def write_de_helper(
+    itrde_count: int, itrde_write: int, de_buffer: NDArray[np.floating], samples: NDArray[np.floating]
+) -> None:
     """Helper to write to the differential evolution buffer"""
     if itrde_count == 0:
         de_buffer[itrde_write, :] = samples
@@ -131,9 +143,9 @@ class DEStrategyParameters:
         # how often to do the big differential evolution jump
         self.big_de_prob = config_de.getfloat('big_de_prob', 0.5)
         # what fraction of dimensions to include in de subspace jumps
-        self.de_subspace_frac = config_de.getfloat('de_subspace_frac', 1.)
+        self.de_subspace_frac = config_de.getfloat('de_subspace_frac', 1.0)
         # how often to not do subspace jumps when doing a de jump
-        self.de_full_d_frac = config_de.getfloat('de_full_d_frac', 1.)
+        self.de_full_d_frac = config_de.getfloat('de_full_d_frac', 1.0)
         # size of differential evolution buffer
         self.de_size = config_de.getint('de_size', 1000)
         # how much to thin the differential evolution buffer by
@@ -157,6 +169,7 @@ class DEStrategyParameters:
         config_de['de_size'] = str(self.de_size)
         config_de['de_thin'] = str(self.de_thin)
 
+
 # TODO apply a global default jump weight
 # TODO fix name lengths
 
@@ -172,7 +185,12 @@ class DEJumpManager(JumpManager):
         self.de_size: int = self.strategy_params.de_size
         self.de_subspace_frac: float = self.strategy_params.de_subspace_frac
 
-        jumps: list[AbstractJump] = [DEStandardFullJump(self), DEStandardRandomSubspaceJump(self), DEBigFullJump(self), DEBigRandomSubspaceJump(self)]
+        jumps: list[AbstractJump] = [
+            DEStandardFullJump(self),
+            DEStandardRandomSubspaceJump(self),
+            DEBigFullJump(self),
+            DEBigRandomSubspaceJump(self),
+        ]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
@@ -201,22 +219,22 @@ class DEJumpManager(JumpManager):
         n_cold: int = self.T_ladder.n_cold
 
         cold_de_weight: float = self.strategy_params.cold_de_weight  # weight of de in cold proposals
-        hot_de_weight: float = self.strategy_params.hot_de_weight    # weight of de in hot proposals
-        de_full_frac: float = self.strategy_params.de_full_d_frac    # fraction of time not to do a subspace jump
-        big_de_prob: float = self.strategy_params.big_de_prob        # probability of doing a full length de jump
+        hot_de_weight: float = self.strategy_params.hot_de_weight  # weight of de in hot proposals
+        de_full_frac: float = self.strategy_params.de_full_d_frac  # fraction of time not to do a subspace jump
+        big_de_prob: float = self.strategy_params.big_de_prob  # probability of doing a full length de jump
 
         jump_weights = np.zeros((n_chain, self.n_jump_types))
         # just a default equal weight
         jump_weights[:] = 0.333
 
-        standard_prob = 1 - self.strategy_params.big_de_prob    # probability of doing a standard jump
-        subspace_prob = 1. - de_full_frac                       # probability of doing a subspace jump
+        standard_prob = 1 - self.strategy_params.big_de_prob  # probability of doing a standard jump
+        subspace_prob = 1.0 - de_full_frac  # probability of doing a subspace jump
 
-        standard_full_prob = standard_prob * de_full_frac       # probability of doing a standard full jump
+        standard_full_prob = standard_prob * de_full_frac  # probability of doing a standard full jump
         standard_subspace_prob = standard_prob * subspace_prob  # probability of doing a standard subspace jump
 
-        big_subspace_prob = big_de_prob * subspace_prob         # probability of doing a full length jump in a subspace
-        big_full_prob = big_de_prob * de_full_frac              # probability of doing a full length jump in a subspace
+        big_subspace_prob = big_de_prob * subspace_prob  # probability of doing a full length jump in a subspace
+        big_full_prob = big_de_prob * de_full_frac  # probability of doing a full length jump in a subspace
 
         # get the indices of the jump types we need to assign probabilities for
         de_standard_full_idx = -1
@@ -251,7 +269,7 @@ class DEJumpManager(JumpManager):
         jump_weights[n_cold:, de_big_subspace_idx] = hot_de_weight * big_subspace_prob
 
         self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
     def post_step_update(self, samples: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual step of all temperatures;

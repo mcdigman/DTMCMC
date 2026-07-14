@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 
 
 class PriorFullJump(AbstractJump):
-
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
         AbstractJump.__init__(self, 'Prior All-D')
@@ -85,13 +84,15 @@ class PriorManager(JumpManager):
 
         assert idx_prior_full >= -1
 
-        jump_weights[n_chain - 1, :] = 0.
-        jump_weights[n_chain - 1, idx_prior_full] = 1.
-        jump_weights[n_cold:n_chain - 1, idx_prior_full] = np.linspace(cold_prior_weight, hot_prior_weight, n_chain - n_cold)[1:]
+        jump_weights[n_chain - 1, :] = 0.0
+        jump_weights[n_chain - 1, idx_prior_full] = 1.0
+        jump_weights[n_cold : n_chain - 1, idx_prior_full] = np.linspace(
+            cold_prior_weight, hot_prior_weight, n_chain - n_cold
+        )[1:]
         jump_weights[:n_cold, idx_prior_full] = cold_prior_weight
 
         self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.)
+        assert np.all(self.jump_weights >= 0.0)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""

@@ -17,7 +17,11 @@ from scipy.special import gamma as gamma_func
 from DTMCMC.likelihoods import eggbox as eggbox_module
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
-from DTMCMC.temperature_ladder_helpers import AcceptanceTemperatureLadder, EntropyTemperatureLadder, GeometricTemperatureLadder
+from DTMCMC.temperature_ladder_helpers import (
+    AcceptanceTemperatureLadder,
+    EntropyTemperatureLadder,
+    GeometricTemperatureLadder,
+)
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
 from experiments.harness.paths import resolve
 from experiments.harness.runner import build_sampler
@@ -51,7 +55,7 @@ from experiments.reference_samplers import (
     eggbox_logL,
 )
 
-GAUSSIAN_INVARIANT_TS = [1., 1.4142135623730951, 2., 2.8284271247461903, 4., 5.656854249492381, 8.]
+GAUSSIAN_INVARIANT_TS = [1.0, 1.4142135623730951, 2.0, 2.8284271247461903, 4.0, 5.656854249492381, 8.0]
 
 GAUSSIAN_INVARIANT_SPEC: dict[str, object] = {
     'name': 'gaussian_invariant',
@@ -63,7 +67,7 @@ GAUSSIAN_INVARIANT_SPEC: dict[str, object] = {
     # neighbor's Var(logL) estimator (observed as a +25% outlier at the
     # hottest tested rung on the CI platform's realization without it)
     'likelihood': {'name': 'gaussian', 'n_par': 4, 'cutoff': 12},
-    'ladder': {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [*GAUSSIAN_INVARIANT_TS, 16., float('inf')]},
+    'ladder': {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [*GAUSSIAN_INVARIANT_TS, 16.0, float('inf')]},
     'run': {'n_steps': 49152, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 96},
     'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
     'proposals': {
@@ -90,7 +94,7 @@ def measured_logL_vars(sampler, n_burn_blocks: int) -> np.ndarray:
     """Stationary per-chain Var(logL) from the stored block moments."""
     logL_means = np.asarray(sampler.logL_means)[n_burn_blocks:]
     logL2_means = np.asarray(sampler.logL2_means)[n_burn_blocks:]
-    return logL2_means.mean(axis=0) - logL_means.mean(axis=0)**2
+    return logL2_means.mean(axis=0) - logL_means.mean(axis=0) ** 2
 
 
 def test_gaussian_heat_capacity_invariant(gaussian_invariant_run) -> None:
@@ -101,13 +105,13 @@ def test_gaussian_heat_capacity_invariant(gaussian_invariant_run) -> None:
 
     vars_measured = measured_logL_vars(sampler, n_burn_blocks)
     Ts = np.asarray(GAUSSIAN_INVARIANT_TS)
-    betas = 1. / Ts
-    heat_capacity = betas**2 * vars_measured[:Ts.size]
+    betas = 1.0 / Ts
+    heat_capacity = betas**2 * vars_measured[: Ts.size]
 
     # Var(logL) itself grows as n_par * T^2 / 2; C(T) is flat at n_par/2.
     # Tolerance covers per-platform realization noise (trajectories diverge
     # chaotically across libm implementations even at fixed seed)
-    assert_allclose(heat_capacity, np.full(Ts.size, n_par / 2.), rtol=0.2)
+    assert_allclose(heat_capacity, np.full(Ts.size, n_par / 2.0), rtol=0.2)
 
 
 def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) -> None:
@@ -115,10 +119,10 @@ def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) ->
     sampler = gaussian_invariant_run
     n_burn_blocks = sampler.itrn // sampler.block_size // 2
     Ts = np.asarray(GAUSSIAN_INVARIANT_TS)
-    vars_measured = measured_logL_vars(sampler, n_burn_blocks)[:Ts.size]
+    vars_measured = measured_logL_vars(sampler, n_burn_blocks)[: Ts.size]
 
-    entropy_ladder = EntropyTemperatureLadder(Ts.size, Ts, vars_measured, n_cold=1, T_cold=1., n_inf_final=0)
-    geometric_ladder = GeometricTemperatureLadder(Ts.size, 1, 1., 1., float(Ts[-1]), n_inf_final=0)
+    entropy_ladder = EntropyTemperatureLadder(Ts.size, Ts, vars_measured, n_cold=1, T_cold=1.0, n_inf_final=0)
+    geometric_ladder = GeometricTemperatureLadder(Ts.size, 1, 1.0, 1.0, float(Ts[-1]), n_inf_final=0)
 
     assert_allclose(np.log(entropy_ladder.Ts), np.log(geometric_ladder.Ts), atol=0.1)
 
@@ -139,9 +143,15 @@ def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run)
     means_measured = np.asarray(sampler_stage1.logL_means)[n_burn_blocks:].mean(axis=0)
     vars_measured = measured_logL_vars(sampler_stage1, n_burn_blocks)
 
-    Ts_in = np.asarray([*GAUSSIAN_INVARIANT_TS, 16.])
+    Ts_in = np.asarray([*GAUSSIAN_INVARIANT_TS, 16.0])
     ladder = AcceptanceTemperatureLadder(
-        9, Ts_in, means_measured[:Ts_in.size], vars_measured[:Ts_in.size], n_cold=1, T_cold=1., n_inf_final=1,
+        9,
+        Ts_in,
+        means_measured[: Ts_in.size],
+        vars_measured[: Ts_in.size],
+        n_cold=1,
+        T_cold=1.0,
+        n_inf_final=1,
     )
 
     data = {key: dict(value) if isinstance(value, dict) else value for key, value in GAUSSIAN_INVARIANT_SPEC.items()}
@@ -177,16 +187,19 @@ def test_cake_constants_match_engine() -> None:
     n_par = 5
     like_obj = CakeLikelihood(n_par=n_par, cutoff=10)
     rng = get_rng(23)
-    points = rng.uniform(-9., 9., size=(64, n_par))
+    points = rng.uniform(-9.0, 9.0, size=(64, n_par))
 
-    dim_part = gamma_func(1. + n_par / 2.) / np.pi**(n_par / 2.)
+    dim_part = gamma_func(1.0 + n_par / 2.0) / np.pi ** (n_par / 2.0)
     for point in points:
         r2 = float((point**2).sum())
         tier_logs = [
-            np.log(amp * dim_part / (2.**(n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))) - r2**(exponent / 2.) / (2. * width**exponent)
+            np.log(
+                amp * dim_part / (2.0 ** (n_par / exponent) * width**n_par * gamma_func((exponent + n_par) / exponent))
+            )
+            - r2 ** (exponent / 2.0) / (2.0 * width**exponent)
             for amp, width, exponent in zip(CAKE_AMPS, CAKE_WIDTHS, CAKE_EXPONENTS, strict=True)
         ]
-        assert like_obj.get_loglike(point) == pytest.approx(np.logaddexp(tier_logs[0], tier_logs[1]), rel=1.e-12)
+        assert like_obj.get_loglike(point) == pytest.approx(np.logaddexp(tier_logs[0], tier_logs[1]), rel=1.0e-12)
 
 
 def test_cake_radial_logL_matches_engine() -> None:
@@ -199,11 +212,11 @@ def test_cake_radial_logL_matches_engine() -> None:
     n_par = 5
     like_obj = CakeLikelihood(n_par=n_par, cutoff=10)
     rng = get_rng(29)
-    points = rng.uniform(-9., 9., size=(64, n_par))
+    points = rng.uniform(-9.0, 9.0, size=(64, n_par))
     radii = np.linalg.norm(points, axis=1)
     radial = cake_logL_radial(radii, n_par)
     for point, expected in zip(points, radial, strict=True):
-        assert like_obj.get_loglike(point) == pytest.approx(expected, rel=1.e-12)
+        assert like_obj.get_loglike(point) == pytest.approx(expected, rel=1.0e-12)
 
 
 def test_cake_tempered_cumulants_match_measured_gold() -> None:
@@ -218,8 +231,8 @@ def test_cake_tempered_cumulants_match_measured_gold() -> None:
     """
     Ts_gold = np.load(resolve('data/Ts_cake_gold.npy'))
     vars_gold = np.load(resolve('data/vars_cake_gold.npy'))
-    keep = np.isfinite(Ts_gold) & (Ts_gold >= 1.) & (Ts_gold <= 4.)
-    betas = 1. / Ts_gold[keep]
+    keep = np.isfinite(Ts_gold) & (Ts_gold >= 1.0) & (Ts_gold <= 4.0)
+    betas = 1.0 / Ts_gold[keep]
     _means, vars_quad = cake_tempered_cumulants(betas, 5)
     ratio = vars_quad / vars_gold[keep]
     assert np.all((ratio > 0.9) & (ratio < 1.1)), ratio
@@ -228,9 +241,9 @@ def test_cake_tempered_cumulants_match_measured_gold() -> None:
 def test_truncated_gaussian_reference() -> None:
     """Moments of the truncated-Gaussian reference match the target."""
     rng = get_rng(11)
-    draws = draw_truncated_gaussian(8000, 4, 12., rng)
+    draws = draw_truncated_gaussian(8000, 4, 12.0, rng)
     assert draws.shape == (8000, 4)
-    assert np.all(np.abs(draws) <= 12.)
+    assert np.all(np.abs(draws) <= 12.0)
     assert_allclose(draws.mean(axis=0), np.zeros(4), atol=0.05)
     assert_allclose(draws.var(axis=0), np.ones(4), rtol=0.06)
 
@@ -241,7 +254,7 @@ def test_cake_reference_moments() -> None:
     draws = draw_cake(20000, 5, rng)
     r2 = (draws**2).sum(axis=1)
     assert_allclose(r2.mean(), cake_moment_r2(5), rtol=0.05)
-    assert np.all(np.abs(draws) <= 10.)
+    assert np.all(np.abs(draws) <= 10.0)
     # both tiers must be represented: the narrow tier concentrates near r ~ 0.1
     assert np.count_nonzero(r2 < 0.1) > 20000 * 0.3
 
@@ -257,7 +270,7 @@ def test_eggbox_reference_draws() -> None:
     # vectorized logL used by the sampler machinery matches the engine's
     points = rng.uniform(eggbox_module.low_lim, eggbox_module.high_lim, size=(64, n_par))
     engine_logL = np.array([eggbox_module.get_loglike(point, n_par) for point in points])
-    assert_allclose(eggbox_logL(points), engine_logL, rtol=1.e-12)
+    assert_allclose(eggbox_logL(points), engine_logL, rtol=1.0e-12)
 
     # cell decomposition agrees with the engine's mode enumeration
     cells = eggbox_cells(n_par)
@@ -266,11 +279,11 @@ def test_eggbox_reference_draws() -> None:
 
     # occupancy across the 13 modes is uniform (chi^2 against uniform)
     even_centers = cells.centers[cells.even_mask]
-    nearest = np.argmin(((draws[:, np.newaxis, :] - even_centers[np.newaxis, :, :])**2).sum(axis=2), axis=1)
+    nearest = np.argmin(((draws[:, np.newaxis, :] - even_centers[np.newaxis, :, :]) ** 2).sum(axis=2), axis=1)
     counts = np.bincount(nearest, minlength=even_centers.shape[0])
     expected = draws.shape[0] / even_centers.shape[0]
-    chi2 = float(((counts - expected)**2 / expected).sum())
-    assert chi2 < 3. * even_centers.shape[0]
+    chi2 = float(((counts - expected) ** 2 / expected).sum())
+    assert chi2 < 3.0 * even_centers.shape[0]
 
 
 def test_reference_samplers_nn_kl_self() -> None:
@@ -279,7 +292,7 @@ def test_reference_samplers_nn_kl_self() -> None:
     # |self-KL| bounded by estimator noise: worst observed is the cake's
     # two-scale geometry (~0.3 at n=2000); genuine mismatch measures ~+6
     for draw in (
-        lambda n: draw_truncated_gaussian(n, 3, 8., rng),
+        lambda n: draw_truncated_gaussian(n, 3, 8.0, rng),
         lambda n: draw_cake(n, 5, rng),
         lambda n: draw_eggbox(n, 2, rng),
     ):
@@ -287,25 +300,33 @@ def test_reference_samplers_nn_kl_self() -> None:
         assert abs(kl) < 0.4
 
     # and the estimator resolves genuinely different distributions
-    kl_cross = nn_kl(draw_cake(2000, 5, rng), draw_truncated_gaussian(2000, 5, 10., rng), 2000, rng)
-    assert kl_cross > 3.
+    kl_cross = nn_kl(draw_cake(2000, 5, rng), draw_truncated_gaussian(2000, 5, 10.0, rng), 2000, rng)
+    assert kl_cross > 3.0
 
 
 def test_round_trip_statistics_synthetic() -> None:
     """Round-trip utilities on the hand-computed scenario-A event log."""
-    events = np.array([
-        [0, 3, RT_ARRIVED_COLD], [3, 3, RT_ARRIVED_HOT],
-        [3, 4, RT_ARRIVED_COLD], [0, 4, RT_ARRIVED_HOT],
-        [0, 5, RT_ARRIVED_COLD], [3, 5, RT_ARRIVED_HOT],
-        [3, 7, RT_ARRIVED_COLD], [0, 7, RT_ARRIVED_HOT],
-        [0, 8, RT_ARRIVED_COLD], [3, 8, RT_ARRIVED_HOT],
-    ], dtype=np.int64)
+    events = np.array(
+        [
+            [0, 3, RT_ARRIVED_COLD],
+            [3, 3, RT_ARRIVED_HOT],
+            [3, 4, RT_ARRIVED_COLD],
+            [0, 4, RT_ARRIVED_HOT],
+            [0, 5, RT_ARRIVED_COLD],
+            [3, 5, RT_ARRIVED_HOT],
+            [3, 7, RT_ARRIVED_COLD],
+            [0, 7, RT_ARRIVED_HOT],
+            [0, 8, RT_ARRIVED_COLD],
+            [3, 8, RT_ARRIVED_HOT],
+        ],
+        dtype=np.int64,
+    )
     n_chain = 4
 
     assert_allclose(round_trip_counts(events, n_chain), [2, 0, 0, 2])
     assert fraction_walkers_with_round_trip(events, n_chain) == pytest.approx(0.5)
     # 4 trips / 4 walkers / (8 iterations * 4 chains / 1e6)
-    assert round_trip_rate(events, n_chain, 8) == pytest.approx(4. / 4. / (32. / 1.e6))
+    assert round_trip_rate(events, n_chain, 8) == pytest.approx(4.0 / 4.0 / (32.0 / 1.0e6))
 
     # walker 0 cold arrivals at 3, 5, 8 -> gaps [2, 3]; walker 3 at 4, 7 -> [3]
     cold_times, hot_times = round_trip_times(events, n_chain)
@@ -320,33 +341,42 @@ def test_round_trip_metrics_do_not_pair_across_segments() -> None:
     restarted walker id count as one complete round trip only when
     segmentation is absent.
     """
-    events = np.array([
-        [0, 10, RT_ARRIVED_HOT],   # before the ladder update
-        [0, 20, RT_ARRIVED_COLD],  # after: walker labels restarted
-    ], dtype=np.int64)
+    events = np.array(
+        [
+            [0, 10, RT_ARRIVED_HOT],  # before the ladder update
+            [0, 20, RT_ARRIVED_COLD],  # after: walker labels restarted
+        ],
+        dtype=np.int64,
+    )
 
     # unsegmented (fixed-ladder) behavior pairs them
     assert int(round_trip_counts(events, 1).sum()) == 1
     # a segment boundary between the arrivals forbids the pairing
     boundaries = np.array([15], dtype=np.int64)
     assert int(round_trip_counts(events, 1, boundaries).sum()) == 0
-    assert fraction_walkers_with_round_trip(events, 1, boundaries) == 0.
-    assert round_trip_rate(events, 1, 20, boundaries) == 0.
+    assert fraction_walkers_with_round_trip(events, 1, boundaries) == 0.0
+    assert round_trip_rate(events, 1, 20, boundaries) == 0.0
 
     # an event exactly at the boundary iteration belongs to the closing
     # segment (the update happens after the block's last step)
-    events_at_boundary = np.array([
-        [0, 10, RT_ARRIVED_HOT],
-        [0, 15, RT_ARRIVED_COLD],
-    ], dtype=np.int64)
+    events_at_boundary = np.array(
+        [
+            [0, 10, RT_ARRIVED_HOT],
+            [0, 15, RT_ARRIVED_COLD],
+        ],
+        dtype=np.int64,
+    )
     assert int(round_trip_counts(events_at_boundary, 1, boundaries).sum()) == 1
 
     # same-direction gaps never span a boundary either
-    events_gaps = np.array([
-        [0, 3, RT_ARRIVED_COLD],
-        [0, 10, RT_ARRIVED_COLD],
-        [0, 20, RT_ARRIVED_COLD],
-    ], dtype=np.int64)
+    events_gaps = np.array(
+        [
+            [0, 3, RT_ARRIVED_COLD],
+            [0, 10, RT_ARRIVED_COLD],
+            [0, 20, RT_ARRIVED_COLD],
+        ],
+        dtype=np.int64,
+    )
     cold_times, _hot_times = round_trip_times(events_gaps, 1, boundaries)
     assert sorted(cold_times.tolist()) == [7]
 
@@ -363,10 +393,10 @@ def test_flow_fraction_normalization() -> None:
 
 def test_knee_fits_recover_synthetic_knee() -> None:
     """Both knee estimators locate a clean piecewise-linear knee."""
-    x = np.linspace(0., 10., 21)
-    y = np.minimum(x, 4.)
-    assert fit_knee_piecewise_linear(x, y) == pytest.approx(4., abs=0.51)
-    assert fit_knee_max_curvature(x, y) == pytest.approx(4., abs=0.51)
+    x = np.linspace(0.0, 10.0, 21)
+    y = np.minimum(x, 4.0)
+    assert fit_knee_piecewise_linear(x, y) == pytest.approx(4.0, abs=0.51)
+    assert fit_knee_max_curvature(x, y) == pytest.approx(4.0, abs=0.51)
 
 
 def test_scramble_block_n_eff_calibration() -> None:
@@ -377,13 +407,13 @@ def test_scramble_block_n_eff_calibration() -> None:
 
     white = rng.standard_normal((n_rows, n_cold, n_par))
     n_eff_white = scramble_block_n_eff(white, 64, 256, get_rng(16))
-    assert np.all(n_eff_white > n_tot / 2.)
-    assert np.all(n_eff_white < n_tot * 2.)
+    assert np.all(n_eff_white > n_tot / 2.0)
+    assert np.all(n_eff_white < n_tot * 2.0)
 
     # strong autocorrelation: 64-row constant stretches -> n_eff ~ n_tot/64
     repeat = np.repeat(rng.standard_normal((n_rows // 64, n_cold, n_par)), 64, axis=0)
     n_eff_corr = scramble_block_n_eff(repeat, 64, 256, get_rng(17))
-    assert np.all(n_eff_corr < n_tot / 8.)
+    assert np.all(n_eff_corr < n_tot / 8.0)
 
     # the frozen C1 aggregation (plan §6): minimum over parameters, per run
     assert scramble_block_n_eff_min(white, 64, 256, get_rng(16)) == pytest.approx(float(n_eff_white.min()))
@@ -416,7 +446,7 @@ def test_de_spectrum_and_effective_rank() -> None:
     eig_collapsed = de_buffer_difference_spectrum(collapsed, 256, get_rng(20))
     assert np.all(effective_rank(eig_collapsed) < 1.5)
 
-    assert effective_rank(np.zeros((2, n_par)))[0] == pytest.approx(0.)
+    assert effective_rank(np.zeros((2, n_par)))[0] == pytest.approx(0.0)
 
 
 def test_apparent_super_efficiency_detector() -> None:
@@ -426,12 +456,12 @@ def test_apparent_super_efficiency_detector() -> None:
     base = rng.standard_normal((n_rows, 1))
 
     # anticorrelated pair: pooled means cancel -> apparent super-efficiency
-    anti = np.stack([base, -base + 1.e-3 * rng.standard_normal((n_rows, 1))], axis=1)
+    anti = np.stack([base, -base + 1.0e-3 * rng.standard_normal((n_rows, 1))], axis=1)
     result_anti = detect_apparent_super_efficiency(anti, block_size=32)
     assert bool(result_anti.flags[0])
-    assert result_anti.n_eff_with_cross[0] > 3. * result_anti.n_eff_auto[0]
+    assert result_anti.n_eff_with_cross[0] > 3.0 * result_anti.n_eff_auto[0]
 
     # independent white-noise chains: no strong super-efficiency claim
     indep = rng.standard_normal((n_rows, 2, 1))
     result_indep = detect_apparent_super_efficiency(indep, block_size=32)
-    assert result_indep.n_eff_with_cross[0] < 3. * result_indep.n_eff_auto[0]
+    assert result_indep.n_eff_with_cross[0] < 3.0 * result_indep.n_eff_auto[0]

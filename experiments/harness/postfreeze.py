@@ -86,10 +86,10 @@ def readout_structure_violations(run: dict[str, Any], *, require_below_readout: 
     if run['n_applied'] < 2:
         violations.append('adaptation never applied an update')
     readout_T = float(run['final_Ts'][int(run['record_indices'][0])])
-    if readout_T != 1.:
+    if readout_T != 1.0:
         violations.append(f'readout chain sits at T={readout_T}, not the T=1 target')
     if require_below_readout:
-        if int((run['final_Ts'] < 1.).sum()) < 1:
+        if int((run['final_Ts'] < 1.0).sum()) < 1:
             violations.append('no sub-readout rungs despite T_min_factor < 1')
         if int(run['record_indices'][0]) <= 0:
             violations.append('readout should sit interior to the sorted ladder')

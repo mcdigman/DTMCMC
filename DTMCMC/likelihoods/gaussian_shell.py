@@ -1,27 +1,28 @@
 """two shell likelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/Examples%20--%20Gaussian%20Shells.ipynb"""
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
-#constants
-low_lim = -40.
-high_lim = 40.
+# constants
+low_lim = -40.0
+high_lim = 40.0
 
-r = 2.  # radius
+r = 2.0  # radius
 w = 0.1  # width
 r1 = 3.5
-c1 = np.array([-r1, 0.])  # center of shell 1
-c2 = np.array([r1, 0.])  # center of shell 2
-const = np.log(1. / np.sqrt(2. * np.pi * w**2))  # normalization constant
+c1 = np.array([-r1, 0.0])  # center of shell 1
+c2 = np.array([r1, 0.0])  # center of shell 2
+const = np.log(1.0 / np.sqrt(2.0 * np.pi * w**2))  # normalization constant
 
 
 @njit()
 def logcirc(theta: NDArray[np.floating], c: NDArray[np.floating]) -> float:
     """Helper function for log likelihood of a single shell"""
-    d = np.sqrt(np.sum((theta - c)**2, axis=-1))
-    return const - (d - r)**2 / (2. * w**2)
+    d = np.sqrt(np.sum((theta - c) ** 2, axis=-1))
+    return const - (d - r) ** 2 / (2.0 * w**2)
 
 
 @njit()
@@ -38,16 +39,17 @@ def draw_shell_radius() -> float:
     Rejection sampling with an N(r, w) proposal and acceptance probability d/d_cap
     supplies the polar Jacobian factor d that a bare N(r, w) draw omits.
     """
-    d_cap = r + 8. * w
+    d_cap = r + 8.0 * w
     while True:
         d = np.random.normal(r, w)
-        if 0. < d <= d_cap and np.random.uniform(0., 1.) < d / d_cap:
+        if 0.0 < d <= d_cap and np.random.uniform(0.0, 1.0) < d / d_cap:
             return d
 
 
 class GaussianShellLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-    def __init__(self, n_par: int=2) -> None:
+
+    def __init__(self, n_par: int = 2) -> None:
         """Create the class and store any object specific variables"""
         if n_par != 2:
             msg = 'GaussianShellLikelihood is 2D; n_par must be 2'
@@ -57,32 +59,32 @@ class GaussianShellLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self,params_in: NDArray[np.floating]) -> float:
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
 
 @njit()
-def gen_draws(n_draws: int,n_par: int,attempt_lim: int=10000) -> NDArray[np.floating]:
+def gen_draws(n_draws: int, n_par: int, attempt_lim: int = 10000) -> NDArray[np.floating]:
     """Get posterior draws"""
     low_lims = np.full(n_par, low_lim)
     high_lims = np.full(n_par, high_lim)
-    draws = np.zeros((n_draws,n_par))
+    draws = np.zeros((n_draws, n_par))
     for itrk in range(n_draws):
         itra = 0
         while True:
-            mode_select = np.random.randint(0,2)
-            draw_phase = np.random.uniform(0.,2*np.pi)
+            mode_select = np.random.randint(0, 2)
+            draw_phase = np.random.uniform(0.0, 2 * np.pi)
             draw_dist = draw_shell_radius()
-            draw_coord = np.array([np.cos(draw_phase)*draw_dist,np.sin(draw_phase)*draw_dist])
-            if mode_select==0:
-                draw_loc = draw_coord+c1
+            draw_coord = np.array([np.cos(draw_phase) * draw_dist, np.sin(draw_phase) * draw_dist])
+            if mode_select == 0:
+                draw_loc = draw_coord + c1
             else:
-                draw_loc = draw_coord+c2
+                draw_loc = draw_coord + c2
             if check_bounds_rectangular(draw_loc, low_lims, high_lims):
                 break
             itra += 1
-            if itra==attempt_lim:
+            if itra == attempt_lim:
                 msg = 'Failed to find valid posterior point.'
                 raise RuntimeError(msg)
         draws[itrk] = draw_loc

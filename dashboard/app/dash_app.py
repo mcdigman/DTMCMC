@@ -19,7 +19,17 @@ from dash import Dash, Input, Output, State, dcc, html, no_update
 if TYPE_CHECKING:
     from pathlib import Path
 
-from dashboard.core.checks import CHECKS, STATUS_ALERT, STATUS_NA, STATUS_OK, STATUS_WARN, CheckResult, evaluate_checks, status_counts, worst_status
+from dashboard.core.checks import (
+    CHECKS,
+    STATUS_ALERT,
+    STATUS_NA,
+    STATUS_OK,
+    STATUS_WARN,
+    CheckResult,
+    evaluate_checks,
+    status_counts,
+    worst_status,
+)
 from dashboard.core.diagnostics import header_items, store_column_label
 from dashboard.core.reader import ArtifactWatcher, RunSnapshot, list_artifacts
 from dashboard.figures.options import ViewOptions
@@ -51,10 +61,10 @@ class DashboardConfig:
     artifact: Path
     host: str = '127.0.0.1'
     port: int = 8050
-    poll_seconds: float = 5.
+    poll_seconds: float = 5.0
     theme: str = 'light'
     layout: str = 'default'
-    stale_after_seconds: float = 600.
+    stale_after_seconds: float = 600.0
     load_store: bool = True
     debug: bool = False
 
@@ -103,7 +113,9 @@ def _theme_css_block(theme: Theme) -> str:
 def _index_css() -> str:
     """Page CSS generated from the Theme definitions (single source of truth)."""
     theme_blocks = ''.join(_theme_css_block(theme) for theme in THEMES.values())
-    return theme_blocks + """
+    return (
+        theme_blocks
+        + """
     body { margin: 0; background: var(--page); color: var(--ink);
            font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
     .dashboard-root { min-height: 100vh; background: var(--page); }
@@ -169,6 +181,7 @@ def _index_css() -> str:
     /* radio/checkbox option labels inside a control (the caption is .control > label) */
     .control div label { color: var(--ink-secondary); font-size: 12px; }
     """
+    )
 
 
 def _control(label: str, component: Any, *, wide: bool = False) -> html.Div:
@@ -178,43 +191,101 @@ def _control(label: str, component: Any, *, wide: bool = False) -> html.Div:
 
 def _controls_row(config: DashboardConfig, artifact_options: list[str]) -> html.Div:
     """The single filter row every tab shares."""
-    return html.Div([
-        _control('artifact', dcc.Dropdown(
-            id='artifact-select', options=artifact_options, value=artifact_options[0] if artifact_options else None,
-            clearable=False, className='dash-dropdown'), wide=True),
-        _control('theme', dcc.RadioItems(
-            id='theme-select', options=[{'label': name, 'value': name} for name in THEMES],
-            value=config.theme if config.theme in THEMES else 'light',
-            inline=True, style={'fontSize': '12px'})),
-        _control('burn-in blocks', dcc.Input(id='burnin-blocks', type='number', value=1, min=0, step=1, debounce=True)),
-        _control('rate window', dcc.Dropdown(
-            id='rate-window',
-            options=[
-                # 'current ladder' is the default: every count sits on the
-                # ladder now in effect, so adaptive runs stay uncluttered;
-                # 'whole run' bins each slice at its own segment's
-                # temperatures (union axis on adaptive runs)
-                {'label': 'current ladder', 'value': 'segment'},
-                {'label': 'whole run', 'value': 'total'},
-                {'label': 'since last archive', 'value': 'latest'},
-            ],
-            value='segment', clearable=False, className='dash-dropdown')),
-        _control('history stride', dcc.Input(id='segment-stride', type='number', value=1, min=1, step=1, debounce=True)),
-        _control('chain', dcc.Dropdown(id='chain-select', options=[0], value=0, clearable=False, className='dash-dropdown')),
-        _control('chains (ACF/trace)', dcc.Dropdown(id='chains-select', options=[0], value=[0], multi=True, className='dash-dropdown'), wide=True),
-        _control('dims (corner/ACF)', dcc.Dropdown(id='dims-select', options=[0, 1, 2], value=[0, 1, 2], multi=True, className='dash-dropdown'), wide=True),
-        _control('ESD normalization', dcc.RadioItems(
-            id='esd-normalization', options=[{'label': 'per proposal', 'value': 'proposal'}, {'label': 'per accepted', 'value': 'accepted'}],
-            value='proposal', inline=True, style={'fontSize': '12px'})),
-        _control('max lag (rows)', dcc.Input(id='max-lag', type='number', value=256, min=8, step=8, debounce=True)),
-        # silencing a light removes it from the Status tab and the header
-        # badge; persistence keeps the selection across polls and reloads
-        _control('status checks', dcc.Dropdown(
-            id='status-checks',
-            options=[{'label': spec.title, 'value': check_id} for check_id, spec in CHECKS.items()],
-            value=list(CHECKS), multi=True, persistence=True, persistence_type='session',
-            className='dash-dropdown'), wide=True),
-    ], className='controls')
+    return html.Div(
+        [
+            _control(
+                'artifact',
+                dcc.Dropdown(
+                    id='artifact-select',
+                    options=artifact_options,
+                    value=artifact_options[0] if artifact_options else None,
+                    clearable=False,
+                    className='dash-dropdown',
+                ),
+                wide=True,
+            ),
+            _control(
+                'theme',
+                dcc.RadioItems(
+                    id='theme-select',
+                    options=[{'label': name, 'value': name} for name in THEMES],
+                    value=config.theme if config.theme in THEMES else 'light',
+                    inline=True,
+                    style={'fontSize': '12px'},
+                ),
+            ),
+            _control(
+                'burn-in blocks', dcc.Input(id='burnin-blocks', type='number', value=1, min=0, step=1, debounce=True)
+            ),
+            _control(
+                'rate window',
+                dcc.Dropdown(
+                    id='rate-window',
+                    options=[
+                        # 'current ladder' is the default: every count sits on the
+                        # ladder now in effect, so adaptive runs stay uncluttered;
+                        # 'whole run' bins each slice at its own segment's
+                        # temperatures (union axis on adaptive runs)
+                        {'label': 'current ladder', 'value': 'segment'},
+                        {'label': 'whole run', 'value': 'total'},
+                        {'label': 'since last archive', 'value': 'latest'},
+                    ],
+                    value='segment',
+                    clearable=False,
+                    className='dash-dropdown',
+                ),
+            ),
+            _control(
+                'history stride', dcc.Input(id='segment-stride', type='number', value=1, min=1, step=1, debounce=True)
+            ),
+            _control(
+                'chain',
+                dcc.Dropdown(id='chain-select', options=[0], value=0, clearable=False, className='dash-dropdown'),
+            ),
+            _control(
+                'chains (ACF/trace)',
+                dcc.Dropdown(id='chains-select', options=[0], value=[0], multi=True, className='dash-dropdown'),
+                wide=True,
+            ),
+            _control(
+                'dims (corner/ACF)',
+                dcc.Dropdown(
+                    id='dims-select', options=[0, 1, 2], value=[0, 1, 2], multi=True, className='dash-dropdown'
+                ),
+                wide=True,
+            ),
+            _control(
+                'ESD normalization',
+                dcc.RadioItems(
+                    id='esd-normalization',
+                    options=[
+                        {'label': 'per proposal', 'value': 'proposal'},
+                        {'label': 'per accepted', 'value': 'accepted'},
+                    ],
+                    value='proposal',
+                    inline=True,
+                    style={'fontSize': '12px'},
+                ),
+            ),
+            _control('max lag (rows)', dcc.Input(id='max-lag', type='number', value=256, min=8, step=8, debounce=True)),
+            # silencing a light removes it from the Status tab and the header
+            # badge; persistence keeps the selection across polls and reloads
+            _control(
+                'status checks',
+                dcc.Dropdown(
+                    id='status-checks',
+                    options=[{'label': spec.title, 'value': check_id} for check_id, spec in CHECKS.items()],
+                    value=list(CHECKS),
+                    multi=True,
+                    persistence=True,
+                    persistence_type='session',
+                    className='dash-dropdown',
+                ),
+                wide=True,
+            ),
+        ],
+        className='controls',
+    )
 
 
 def _status_chip(snapshot: RunSnapshot | None, error: str, stale_after_seconds: float) -> html.Span:
@@ -226,10 +297,10 @@ def _status_chip(snapshot: RunSnapshot | None, error: str, stale_after_seconds: 
     flush_age = ''
     try:
         flushed = datetime.fromisoformat(str(snapshot.attrs.get('flush_time_utc', '')))
-        age_seconds = max(0., (datetime.now(tz=UTC) - flushed).total_seconds())
+        age_seconds = max(0.0, (datetime.now(tz=UTC) - flushed).total_seconds())
         flush_age = f' ({age_seconds:.0f}s ago)'
     except ValueError:
-        age_seconds = 0.
+        age_seconds = 0.0
     # the artifact's finalized flag marks any major-report flush; only a
     # run that reached its requested length is displayed as finalized
     if snapshot.run_complete:
@@ -249,13 +320,18 @@ def _checks_badge(results: list[CheckResult]) -> html.Span:
         detail = f'✖ {counts[STATUS_ALERT]} alert' + (f', {counts[STATUS_WARN]} warn' if counts[STATUS_WARN] else '')
         return html.Span(detail, className='status-chip status-error')
     if worst == STATUS_WARN:
-        return html.Span(f'⚠ {counts[STATUS_WARN]} warning{"s" if counts[STATUS_WARN] > 1 else ""}', className='status-chip status-stale')
+        return html.Span(
+            f'⚠ {counts[STATUS_WARN]} warning{"s" if counts[STATUS_WARN] > 1 else ""}',
+            className='status-chip status-stale',
+        )
     if worst == STATUS_OK:
         return html.Span('● checks ok', className='status-chip status-live')
     return html.Span('○ checks n/a', className='status-chip status-na')
 
 
-def _header_children(snapshot: RunSnapshot | None, error: str, stale_after_seconds: float, check_results: list[CheckResult] | None = None) -> list[Any]:
+def _header_children(
+    snapshot: RunSnapshot | None, error: str, stale_after_seconds: float, check_results: list[CheckResult] | None = None
+) -> list[Any]:
     """Header contents: run name, status chips, config key-values."""
     title = snapshot.name if snapshot is not None else 'DTMCMC dashboard'
     children: list[Any] = [html.H1(title), _status_chip(snapshot, error, stale_after_seconds)]
@@ -263,8 +339,7 @@ def _header_children(snapshot: RunSnapshot | None, error: str, stale_after_secon
         if check_results is not None:
             children.append(_checks_badge(check_results))
         children.extend(
-            html.Span([html.B(f'{label}: '), value], className='header-item')
-            for label, value in header_items(snapshot)
+            html.Span([html.B(f'{label}: '), value], className='header-item') for label, value in header_items(snapshot)
         )
     return children
 
@@ -278,23 +353,43 @@ def status_tab_children(snapshot: RunSnapshot | None, enabled: list[str]) -> lis
     cards: list[html.Div] = []
     for result in results:
         icon, word = _LIGHT_BADGES.get(result.status, ('○', result.status))
-        cards.append(html.Div([
-            html.Div([
-                html.Span(icon, className='light-dot'),
-                html.Span(result.title, className='light-title'),
-                html.Span(word, className='light-word'),
-            ], className='light-head'),
-            html.Div(result.message, className='light-message'),
-            html.Div(result.description, className='light-desc'),
-        ], className=f'light-card light-{result.status}'))
+        cards.append(
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Span(icon, className='light-dot'),
+                            html.Span(result.title, className='light-title'),
+                            html.Span(word, className='light-word'),
+                        ],
+                        className='light-head',
+                    ),
+                    html.Div(result.message, className='light-message'),
+                    html.Div(result.description, className='light-desc'),
+                ],
+                className=f'light-card light-{result.status}',
+            )
+        )
     if n_silenced:
-        cards.append(html.Div(f'{n_silenced} check{"s" if n_silenced > 1 else ""} silenced via the status checks control', className='plot-desc light-silenced'))
+        cards.append(
+            html.Div(
+                f'{n_silenced} check{"s" if n_silenced > 1 else ""} silenced via the status checks control',
+                className='plot-desc light-silenced',
+            )
+        )
     if not results:
-        cards.append(html.Div('every check is silenced — re-enable some in the status checks control', className='plot-desc light-silenced'))
+        cards.append(
+            html.Div(
+                'every check is silenced — re-enable some in the status checks control',
+                className='plot-desc light-silenced',
+            )
+        )
     return cards
 
 
-def _tab_children(snapshot: RunSnapshot | None, plot_ids: tuple[str, ...], opts: ViewOptions, theme: Theme) -> list[html.Div]:
+def _tab_children(
+    snapshot: RunSnapshot | None, plot_ids: tuple[str, ...], opts: ViewOptions, theme: Theme
+) -> list[html.Div]:
     """Figure cards for one tab."""
     if snapshot is None:
         return [html.Div('no artifact loaded yet', className='plot-desc')]
@@ -304,11 +399,20 @@ def _tab_children(snapshot: RunSnapshot | None, plot_ids: tuple[str, ...], opts:
         figure = build_figure(plot_id, snapshot, opts, theme)
         # preserve zoom/pan across live updates of the same plot
         figure.update_layout(uirevision=plot_id)
-        cards.append(html.Div([
-            html.Div(spec.title, className='plot-title'),
-            html.Div(spec.description, className='plot-desc'),
-            dcc.Graph(figure=figure, config=GRAPH_CONFIG, style={'height': f'{getattr(figure.layout, "height", None) or 380}px'}),
-        ], className='plot-card wide' if spec.wide else 'plot-card'))
+        cards.append(
+            html.Div(
+                [
+                    html.Div(spec.title, className='plot-title'),
+                    html.Div(spec.description, className='plot-desc'),
+                    dcc.Graph(
+                        figure=figure,
+                        config=GRAPH_CONFIG,
+                        style={'height': f'{getattr(figure.layout, "height", None) or 380}px'},
+                    ),
+                ],
+                className='plot-card wide' if spec.wide else 'plot-card',
+            )
+        )
     return cards
 
 
@@ -320,21 +424,31 @@ def create_app(config: DashboardConfig) -> Dash:
     app = Dash(__name__, title='DTMCMC dashboard')
     app.index_string = app.index_string.replace('</head>', f'<style>{_index_css()}</style></head>')
 
-    app.layout = html.Div([
-        dcc.Interval(id='poll', interval=int(config.poll_seconds * 1000)),
-        dcc.Store(id='snapshot-token'),
-        html.Div(id='header', className='header'),
-        _controls_row(config, artifact_options),
-        dcc.Tabs(
-            id='tab-select', value=STATUS_TAB, className='tab-bar',
-            children=[
-                dcc.Tab(label=tab_name, value=tab_name, className='tab', selected_className='tab--selected')
-                for tab_name in (STATUS_TAB, *tabs_layout)
-            ],
-        ),
-        html.Div(id='tab-content', className='plot-grid'),
-        html.Div(f'polling every {config.poll_seconds:g}s — artifacts are read server-side; only plot data reaches the browser', className='poll-note'),
-    ], id='root', className='dashboard-root', **cast('dict[str, Any]', {'data-theme': config.theme if config.theme in THEMES else 'light'}))
+    app.layout = html.Div(
+        [
+            dcc.Interval(id='poll', interval=int(config.poll_seconds * 1000)),
+            dcc.Store(id='snapshot-token'),
+            html.Div(id='header', className='header'),
+            _controls_row(config, artifact_options),
+            dcc.Tabs(
+                id='tab-select',
+                value=STATUS_TAB,
+                className='tab-bar',
+                children=[
+                    dcc.Tab(label=tab_name, value=tab_name, className='tab', selected_className='tab--selected')
+                    for tab_name in (STATUS_TAB, *tabs_layout)
+                ],
+            ),
+            html.Div(id='tab-content', className='plot-grid'),
+            html.Div(
+                f'polling every {config.poll_seconds:g}s — artifacts are read server-side; only plot data reaches the browser',
+                className='poll-note',
+            ),
+        ],
+        id='root',
+        className='dashboard-root',
+        **cast('dict[str, Any]', {'data-theme': config.theme if config.theme in THEMES else 'light'}),
+    )
 
     @app.callback(
         Output('snapshot-token', 'data'),
@@ -349,21 +463,43 @@ def create_app(config: DashboardConfig) -> Dash:
         State('snapshot-token', 'data'),
         State('artifact-select', 'options'),
     )
-    def poll_artifact(_n_intervals: int, artifact_value: str | None, enabled_checks: list[str] | None, previous_token: str | None, previous_options: list[str] | None):
+    def poll_artifact(
+        _n_intervals: int,
+        artifact_value: str | None,
+        enabled_checks: list[str] | None,
+        previous_token: str | None,
+        previous_options: list[str] | None,
+    ):
         """Re-read the artifact only when its flush changed; bump the token."""
         # pick up run artifacts created after server start
         current_options = _served_artifacts(config)
         options_out = current_options if current_options != (previous_options or []) else no_update
         artifact_value = _allowed_artifact(config, artifact_value, current_options)
         if not artifact_value:
-            return no_update, _header_children(None, 'no artifact selected (or selection not under the served root)', config.stale_after_seconds), no_update, no_update, no_update, options_out
+            return (
+                no_update,
+                _header_children(
+                    None, 'no artifact selected (or selection not under the served root)', config.stale_after_seconds
+                ),
+                no_update,
+                no_update,
+                no_update,
+                options_out,
+            )
         watcher = _watcher(artifact_value, config.load_store)
         snapshot = watcher.poll()
         token = f'{artifact_value}:{snapshot.stat_token if snapshot is not None else "none"}'
         check_results = evaluate_checks(snapshot, enabled_checks or []) if snapshot is not None else None
         header = _header_children(snapshot, watcher.last_error, config.stale_after_seconds, check_results)
         if token == previous_token or snapshot is None:
-            return (no_update if token == previous_token else token), header, no_update, no_update, no_update, options_out
+            return (
+                (no_update if token == previous_token else token),
+                header,
+                no_update,
+                no_update,
+                no_update,
+                options_out,
+            )
         # selector values are store columns; label each with the chain it
         # currently records (readout chains first, then arg_record extras)
         chain_options = [
@@ -391,10 +527,18 @@ def create_app(config: DashboardConfig) -> Dash:
         State('artifact-select', 'value'),
     )
     def render_tab(
-        _token: str | None, tab_name: str, theme_name: str,
-        burnin_blocks: int | None, rate_window: str, segment_stride: int | None,
-        chain: int | None, chains: list[int] | None, dims: list[int] | None,
-        esd_normalization: str, max_lag: int | None, enabled_checks: list[str] | None,
+        _token: str | None,
+        tab_name: str,
+        theme_name: str,
+        burnin_blocks: int | None,
+        rate_window: str,
+        segment_stride: int | None,
+        chain: int | None,
+        chains: list[int] | None,
+        dims: list[int] | None,
+        esd_normalization: str,
+        max_lag: int | None,
+        enabled_checks: list[str] | None,
         artifact_value: str | None,
     ):
         """Rebuild the active tab's figures (or status lights) from the snapshot."""

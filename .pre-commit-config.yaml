@@ -24,7 +24,7 @@ repos:
   - id: pretty-format-json
     args: [--autofix]
   - id: requirements-txt-fixer
-  # Additional regression guards (verified to pass on the current tree)
+  # Additional regression guards
   - id: check-merge-conflict
   - id: check-builtin-literals
   - id: check-illegal-windows-names
@@ -49,8 +49,9 @@ repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.15.18
   hooks:
-  - id: ruff
+  - id: ruff-check
     args: [--fix]
+  - id: ruff-format
 
 - repo: https://github.com/facebook/pyrefly-pre-commit
   rev: 1.1.1
@@ -67,6 +68,8 @@ repos:
       - matplotlib>=3.11
       - pytest>=9.0
       - scipy-stubs
+      - types-setuptools
+      - plotly-stubs
       - h5py-stubs
       - pandas-stubs
       - types-PyYAML

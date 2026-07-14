@@ -8,7 +8,7 @@ from integ_box_filt import cumulants_from_Ts
 Ts_in = np.load('data/Ts_cake_gold.npy')
 cumulants_in = np.load('data/cumulants_cake_gold.npy')
 
-betas_got, Ts_got = entropy_spaced_betas(32, 1, Ts_in, cumulants_in[1], n_inf_final=1, T_cold=1., correct_last=True)
+betas_got, Ts_got = entropy_spaced_betas(32, 1, Ts_in, cumulants_in[1], n_inf_final=1, T_cold=1.0, correct_last=True)
 cumulants_got = cumulants_from_Ts(Ts_got)
 
 print(np.diff(cumulative_trapezoid(cumulants_got[1][::-1] * betas_got[::-1], betas_got[::-1], initial=0))[::-1])

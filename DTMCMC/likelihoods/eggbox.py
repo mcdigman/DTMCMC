@@ -1,4 +1,5 @@
 """the eggbox likelihood in n dimensions"""
+
 # see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
 import numba as nb
 import numpy as np
@@ -10,11 +11,11 @@ from DTMCMC.correction_helpers import reflect_into_range
 
 tmax = 5.0 * np.pi
 
-Tp = 2.e-1
-betap = 1. / Tp
+Tp = 2.0e-1
+betap = 1.0 / Tp
 
-low_lim = -(5 * np.pi / 2.)
-high_lim = (5 * np.pi / 2.)
+low_lim = -(5 * np.pi / 2.0)
+high_lim = 5 * np.pi / 2.0
 
 n_pi_range = np.int64((high_lim - low_lim) / np.pi)
 
@@ -22,10 +23,10 @@ n_pi_range = np.int64((high_lim - low_lim) / np.pi)
 @njit()
 def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
     """Get the eggbox likelihood in n dimensions"""
-    prod = 1.
+    prod = 1.0
     for itrp in range(n_par):
-        prod *= (np.cos(x[itrp]))
-    return (prod + 1.)**betap
+        prod *= np.cos(x[itrp])
+    return (prod + 1.0) ** betap
 
 
 @njit()
@@ -43,7 +44,7 @@ def prior_factor(_v: NDArray[np.floating], _n_par: int) -> float:
     prior_factor raise a TypingError, which left the eggbox jitclass
     unable to run through the default proposal mixture at all
     """
-    return 0.
+    return 0.0
 
 
 @njit()
@@ -64,10 +65,10 @@ def check_bounds(v: NDArray[np.floating]) -> bool:
 
 
 @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # pyright: ignore[reportCallIssue]
-class Likelihood():
+class Likelihood:
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    def __init__(self, n_par: int=5, eps_default: float=1.e-3) -> None:
+    def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default
@@ -103,13 +104,23 @@ def get_labels(n_par: int) -> list[str]:
     return [r'$v_' + str(itrp) + '$' for itrp in range(n_par)]
 
 
-def format_samples_output(samples: NDArray[np.floating], params_fid: NDArray[np.floating]) -> tuple[NDArray[np.floating], NDArray[np.floating], list[str]]:
+def format_samples_output(
+    samples: NDArray[np.floating], params_fid: NDArray[np.floating]
+) -> tuple[NDArray[np.floating], NDArray[np.floating], list[str]]:
     labels_loc = get_labels(params_fid.size)
     return samples.copy(), params_fid.copy(), labels_loc
 
 
 @njit()
-def mode_matcher(n_cold: int, samples_store: NDArray[np.floating], itrn: int, mode_first_idx: NDArray[np.int64], mode_last_idx: NDArray[np.int64], n_par: int, modes_canonical: NDArray[np.int64]) -> NDArray[np.bool_]:
+def mode_matcher(
+    n_cold: int,
+    samples_store: NDArray[np.floating],
+    itrn: int,
+    mode_first_idx: NDArray[np.int64],
+    mode_last_idx: NDArray[np.int64],
+    n_par: int,
+    modes_canonical: NDArray[np.int64],
+) -> NDArray[np.bool_]:
     """Guess which mode each sample is in"""
     mode_all = np.full(samples_store.shape[0], True, dtype=np.bool_)
     for itrl in range(samples_store.shape[0]):
@@ -146,7 +157,7 @@ def mode_matcher(n_cold: int, samples_store: NDArray[np.floating], itrn: int, mo
     return mode_all
 
 
-def gen_nd_modelist(n_par: int=5) -> tuple[NDArray[np.floating], NDArray[np.int64], NDArray[np.int64]]:
+def gen_nd_modelist(n_par: int = 5) -> tuple[NDArray[np.floating], NDArray[np.int64], NDArray[np.int64]]:
     """Get the full list of modes for nd eggbox"""
     mode_loc: list[NDArray[np.floating]] = []
     mode_int_loc: list[NDArray[np.int64]] = []
