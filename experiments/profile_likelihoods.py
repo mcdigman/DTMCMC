@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 # functions profiled, in table-column order
-FUNCTIONS = ('prior_draw', 'get_loglike', 'correct_bounds')
+FUNCTIONS = ('prior_draw', 'get_loglike', 'check_bounds', 'correct_bounds')
 
 WARMUP_CALLS = 5
 DEFAULT_REPEATS = 7
@@ -94,6 +94,7 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     for _ in range(WARMUP_CALLS):
         like.prior_draw()
         like.get_loglike(point)
+        like.check_bounds(point)
         like.correct_bounds(pool[0].copy())
 
     # correct_bounds mutates its argument, so cycle distinct copies; the copy
@@ -113,6 +114,9 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     results: dict[str, float | None] = {}
     results['prior_draw'] = _best_seconds_per_call(like.prior_draw, repeats) * 1e6
     results['get_loglike'] = _best_seconds_per_call(lambda: like.get_loglike(point), repeats) * 1e6
+    # check_bounds is read-only; timing the valid point measures the full-scan
+    # (in-bounds) path that dominates a typical accepted-proposal step
+    results['check_bounds'] = _best_seconds_per_call(lambda: like.check_bounds(point), repeats) * 1e6
     net = _best_seconds_per_call(call_correct_bounds, repeats) - _best_seconds_per_call(copy_baseline, repeats)
     results['correct_bounds'] = max(net, 0.0) * 1e6
     return results, int(like.n_par)
