@@ -4,7 +4,7 @@ in order to be properly recognized by the framework
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 from numba import njit
@@ -20,26 +20,13 @@ if TYPE_CHECKING:
 # TODO jump name length check
 
 
-class AbstractJump(ABC):
-    """An object that performs a single proposal from its __call__ method"""
+class AbstractJump(Protocol):
+    """An object that performs a single proposal from its __call__ method."""
 
-    def __init__(self, print_name: str) -> None:
-        """Create the jump object:
-        inputs:
-            print_name: a string to print as the formatted name of this jump
-        """
-        self.print_name: str = print_name
+    print_name: str
 
-    def get_print_name(self) -> str:
-        """Retrieve the formatted name of the jump
-        Outputs:
-            print_name: a string to print as the formatted name of this jump
-        """
-        return self.print_name
-
-    @abstractmethod
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        """Perform and MCMC proposal
+        """Generate the MCMC proposal.
         inputs:
             sample_point: a numpy array with the current point
             itrt: the index of the requested temperature chain
@@ -49,7 +36,7 @@ class AbstractJump(ABC):
                 if no proposal density factor is needed can just be set to 0.
             success: a boolean, whether generating the proposal succeeded
         """
-        return np.zeros(sample_point.size), 0.0, True
+        ...
 
 
 @njit()
@@ -84,7 +71,7 @@ class JumpManager(ABC):
         self.jump_weights: NDArray[np.floating] = np.zeros((self.n_chain, self.n_jump_types))
 
         # self.jump_labels_array = np.array([jump_labels_dict.get(name, name) for name in jump_names])
-        self.jump_labels_array: list[str] = [jump.get_print_name() for jump in self.jumps]
+        self.jump_labels_array: list[str] = [jump.print_name for jump in self.jumps]
 
         self.name_to_idx: dict[str, int] = {}
         for itrm, name in enumerate(self.jump_labels_array):

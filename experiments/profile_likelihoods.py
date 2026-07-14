@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
     from numpy.typing import NDArray
 
+    from DTMCMC.likelihood import AbstractLikelihood
+
 # functions profiled, in table-column order; validate_bounds is split by
 # input: an already-in-bounds point (check passes) vs one needing correction
 FUNCTIONS = (
@@ -70,7 +72,7 @@ def _best_seconds_per_call(func: Callable[[], Any], repeats: int) -> float:
     return best / number
 
 
-def _build_perturb_pool(like: Any, seed: int) -> NDArray[np.floating]:
+def _build_perturb_pool(like: AbstractLikelihood, seed: int) -> NDArray[np.floating]:
     """Build a pool of prior draws perturbed off their valid points.
 
     Fresh points are needed because ``correct_bounds`` reflects in place, so
@@ -82,7 +84,7 @@ def _build_perturb_pool(like: Any, seed: int) -> NDArray[np.floating]:
     return base
 
 
-def _out_of_bounds_pool(like: Any, pool: NDArray[np.floating]) -> NDArray[np.floating]:
+def _out_of_bounds_pool(like: AbstractLikelihood, pool: NDArray[np.floating]) -> NDArray[np.floating]:
     """Subset of ``pool`` whose points fail check_bounds and so need correction.
 
     validate_bounds only runs its correct-and-recheck branch on
@@ -103,9 +105,7 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     """
     target = BENCHMARKS[name]
     builder = LIKELIHOOD_BUILDERS[name]
-    # Any: validate_bounds is a concrete AbstractLikelihood method the
-    # sampler does not use, so it is absent from the LikelihoodLike protocol
-    like: Any = builder(**target.default_params)
+    like: AbstractLikelihood = builder(**target.default_params)
 
     # a valid point for get_loglike, and a fresh pool for correct_bounds
     point = np.asarray(like.prior_draw(), dtype=np.float64)

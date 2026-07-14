@@ -2,7 +2,7 @@
 abstract class to hold a likelihood object
 """
 
-from abc import ABC, abstractmethod
+from typing import Protocol
 
 import numpy as np
 from numba import njit
@@ -11,93 +11,72 @@ from numpy.typing import NDArray
 from DTMCMC.correction_helpers import reflect_into_range
 
 
-class AbstractLikelihood(ABC):
-    """abstract likelihood object"""
+class AbstractLikelihood(Protocol):
+    """Structural interface the engine requires of a likelihood object."""
+
+    n_par: int
+    n_evals: int
 
     def __init__(self, n_par: int) -> None:
-        """Initialize the likelihood
+        """Initialize the likelihood.
         input: n_par integer, how many dimensions in the parameter space
         """
-        self.n_par: int = n_par
+        ...
 
-    @abstractmethod
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Get the log likelihood at the specified parameters:
+    def get_loglike(self, params_in: NDArray[np.floating], /) -> float:
+        """Get the log likelihood at the specified parameters.
         input:
             params_in: a 1D float array of parameters
         output:
             logL: a scalar float likelihood
         """
-        del params_in
-        return 0.0
+        ...
 
-    @abstractmethod
     def prior_draw(self) -> NDArray[np.floating]:
-        """Get a draw from the priors for this likelihood
+        """Get a draw from the priors for this likelihood.
         output:
             params: a 1D float array of parameters
         """
-        return np.zeros(1)
+        ...
 
-    @abstractmethod
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        """Get the prior density factor for the input parameters
+    def prior_factor(self, params_in: NDArray[np.floating], /) -> float:
+        """Get the prior density factor for the input parameters.
         input:
             params_in: the parameters to consider
         output:
             prior_factor: a scalar density factor for the prior draw
         """
-        del params_in
-        return 0.0
+        ...
 
-    @abstractmethod
-    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Correct the bounds for the input parameters to be within the prior range, if possible:
+    def correct_bounds(self, params_in: NDArray[np.floating], /) -> NDArray[np.floating]:
+        """Correct the bounds for the input parameters to be within the prior range.
         input:
             params_in: the point with possibly incorrect parameters
         output:
             params_out: the point with corrected parameters
         """
-        return np.zeros(params_in.size)
+        ...
 
-    @abstractmethod
-    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
+    def check_bounds(self, params_in: NDArray[np.floating], /) -> bool:
         """Check if the specified point is within the prior volume
         input:
             params_in: the point to be checkout
         output:
             valid: a scalar boolean which is True is the point is valid in the prior volume and false otherwise
         """
-        del params_in
-        return True
+        ...
 
-    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
-        """Check if the specified point is within the prior volume, correct if not.
-        input:
-            params_in: the point to be checkout
-        output:
-            params_out: the point with corrected parameters
-            valid: a scalar boolean which is True is the corrected point is valid in the prior volume and false otherwise
-        """
-        success: bool = self.check_bounds(params_in)
-        if not success:
-            # try to make the point in bounds and fail if unsuccesful
-            new_point = self.correct_bounds(params_in)
-            success = self.check_bounds(params_in)
-        else:
-            new_point = params_in
-        return new_point, success
+    def validate_bounds(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], bool]:
+        """Check if the specified point is within the prior volume, try to correct if not."""
+        ...
 
-    def get_epsilons(self) -> NDArray[np.floating]:
-        """Special helper for FisherJumpManager
-        if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
-        otherwise just return zeros
-        """
-        return np.zeros(self.n_par)
+    def get_epsilons(self, /) -> NDArray[np.floating]:
+        """Get epsilons by dimension for fisher matrix computation."""
+        ...
 
     def get_labels(self) -> list[str]:
         """Get formatted axis labels for corner plots"""
-        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
+        ...
 
     def format_samples_output(
         self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
@@ -107,7 +86,7 @@ class AbstractLikelihood(ABC):
         look nice, for example converting some dimension the raw parameter
         to Delta that parameter, or changing the units, we can do that here
         """
-        return samples_store.copy(), params_fid.copy()
+        ...
 
 
 @njit()
@@ -169,7 +148,8 @@ class RectangularLikelihood(AbstractLikelihood):
         assert self.low_lims.size == n_par
         assert self.high_lims.size == n_par
 
-        AbstractLikelihood.__init__(self, n_par)
+        self.n_par = n_par
+        self.n_evals = 0
 
     def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct bounds for rectangular walls"""
@@ -191,3 +171,24 @@ class RectangularLikelihood(AbstractLikelihood):
     def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
         """Check the parameters and correct if required."""
         return validate_bounds_rectangular(params_in, self.low_lims, self.high_lims)
+
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Special helper for FisherJumpManager
+        if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
+        otherwise just return zeros
+        """
+        return np.zeros(self.n_par)
+
+    def get_labels(self) -> list[str]:
+        """Get formatted axis labels for corner plots"""
+        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
+
+    def format_samples_output(
+        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Purely a convenience function for making corner plots:
+        if we desire to do any adjustments to input samples to make corner plots
+        look nice, for example converting some dimension the raw parameter
+        to Delta that parameter, or changing the units, we can do that here
+        """
+        return samples_store.copy(), params_fid.copy()

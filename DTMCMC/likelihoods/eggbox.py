@@ -6,6 +6,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
+from DTMCMC.likelihood import RectangularLikelihood
 
 tmax: float = 5.0 * np.pi
 
@@ -71,16 +72,18 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
 
 
 # @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-class Likelihood:
+class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default
+        self.n_evals = 0
 
     def get_loglike(self, v: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
+        self.n_evals += 1
         return get_loglike(v, self.n_par)
 
     def prior_draw(self) -> NDArray[np.floating]:
@@ -92,21 +95,25 @@ class Likelihood:
         v_out = prior_draw(self.n_par)
         return v_out, prior_factor(v_in, self.n_par) - prior_factor(v_out, self.n_par), True
 
-    def prior_factor(self, v: NDArray[np.floating]) -> float:
+    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         """Get the density factor for prior draws, if the prior draws are not uniform"""
-        return prior_factor(v, self.n_par)
+        return prior_factor(params_in, self.n_par)
 
-    def correct_bounds(self, v: NDArray[np.floating]) -> NDArray[np.floating]:
+    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct the bounds of a draw to be in range, if allowed for this likelihood"""
-        return correct_bounds(v, self.n_par)
+        return correct_bounds(params_in, self.n_par)
 
-    def check_bounds(self, v: NDArray[np.floating]) -> bool:
+    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
         """Check if the bounds of a draw are in the prior range but do not change them"""
-        return check_bounds(v)
+        return check_bounds(params_in)
 
     def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
         """Check the parameters and correct if required."""
         return validate_bounds(params_in)
+
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Get epsilons for fisher matrix calculation."""
+        return self.epsilons
 
 
 def get_labels(n_par: int) -> list[str]:

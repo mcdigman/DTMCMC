@@ -137,6 +137,7 @@ class CakeLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
+        self.n_evals += 1
         res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
         # r2_got: float = 0.0
         # for itrp in range(params_in.shape[0]):

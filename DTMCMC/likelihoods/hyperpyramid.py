@@ -36,4 +36,5 @@ class HyperpyramidLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
+        self.n_evals += 1
         return get_loglike(params_in)

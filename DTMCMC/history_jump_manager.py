@@ -88,7 +88,7 @@ class LadderHistoryJump(AbstractJump):
     def __init__(self, manager: LadderHistoryJumpManager) -> None:
         """Get the object to propose ladder history draws"""
         self.manager: LadderHistoryJumpManager = manager
-        AbstractJump.__init__(self, 'Ladder History')
+        self.print_name = 'Ladder History'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Draw a future point from the stored set of past points"""
