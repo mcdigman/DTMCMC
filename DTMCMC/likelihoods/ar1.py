@@ -7,19 +7,19 @@ from numpy.typing import NDArray
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 # constants
-low_lim = -10.0
-high_lim = 10.0
-alpha = 0.9
-beta = np.sqrt(1 - alpha**2)
-const = np.log(1.0 / np.sqrt(2.0 * np.pi * beta**2))  # conditional-term normalization constant
-const0 = np.log(1.0 / np.sqrt(2.0 * np.pi))  # first-term (unit-variance stationary) normalization constant
+low_lim: float = -10.0
+high_lim: float = 10.0
+alpha: float = 0.9
+beta: float = np.sqrt(1 - alpha**2)
+const: float = np.log(1.0 / np.sqrt(2.0 * np.pi * beta**2))  # conditional-term normalization constant
+const0: float = np.log(1.0 / np.sqrt(2.0 * np.pi))  # first-term (unit-variance stationary) normalization constant
 
 
 @njit()
 def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
     """Get the likelihood for ar1"""
-    res = 0.0
-    x_next = 0.0
+    res: float = 0.0
+    x_next: float = 0.0
     res += const0 - 1 / 2 * (v[0] - x_next) ** 2
     x_next = alpha * v[0]
 

@@ -10,12 +10,13 @@ from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
-from DTMCMC.proposal_manager_helper import ProposalManager, get_default_proposal_manager
+from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
 
 if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.proposal_manager import ProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 

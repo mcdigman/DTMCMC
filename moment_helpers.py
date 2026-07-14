@@ -1,7 +1,14 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-def get_averaged_means(mcc, length, cut=0):
+    from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+
+
+def get_averaged_means(mcc: DTMCMCSampler, length: int, cut: int = 0) -> list[NDArray[np.floating]]:
     l1_means = np.array(mcc.logL_means)
     l2_means = np.array(mcc.logL2_means)
     l3_means = np.array(mcc.logL3_means)
@@ -18,7 +25,7 @@ def get_averaged_means(mcc, length, cut=0):
     return [l1_avg, l2_avg, l3_avg, l4_avg, l5_avg, l6_avg]
 
 
-def get_cumulants(l_means):
+def get_cumulants(l_means: list[NDArray[np.floating]]) -> list[NDArray[np.floating]]:
     l1_means = l_means[0]  # np.array(mcc.logL_means)
     l2_means = l_means[1]  # np.array(mcc.logL2_means)
     l3_means = l_means[2]  # np.array(mcc.logL3_means)
@@ -59,25 +66,27 @@ def get_cumulants(l_means):
     return [l_cum1, l_cum2, l_cum3, l_cum4, l_cum5, l_cum6]
 
 
-def get_averaged_adjacents(mcc, length, cut=0):
+def get_averaged_adjacents(mcc: DTMCMCSampler, length: int, cut: int = 0) -> list[NDArray[np.floating]]:
     l_p11_means = np.array(mcc.logL_prod11_means)
     l_p21_means = np.array(mcc.logL_prod21_means)
     l_p12_means = np.array(mcc.logL_prod12_means)
 
-    l_p11_avg = np.mean(
+    l_p11_avg: NDArray[np.floating] = np.mean(
         l_p11_means[cut:].reshape(((l_p11_means.shape[0] - cut) // length, length, l_p11_means.shape[1])), axis=1
     )
-    l_p21_avg = np.mean(
+    l_p21_avg: NDArray[np.floating] = np.mean(
         l_p21_means[cut:].reshape(((l_p11_means.shape[0] - cut) // length, length, l_p21_means.shape[1])), axis=1
     )
-    l_p12_avg = np.mean(
+    l_p12_avg: NDArray[np.floating] = np.mean(
         l_p12_means[cut:].reshape(((l_p11_means.shape[0] - cut) // length, length, l_p12_means.shape[1])), axis=1
     )
 
     return [l_p11_avg, l_p21_avg, l_p12_avg]
 
 
-def get_corr_quantities(l_means, l_adjacents):
+def get_corr_quantities(
+    l_means: list[NDArray[np.floating]], l_adjacents: list[NDArray[np.floating]]
+) -> tuple[list[NDArray[np.floating]], list[NDArray[np.floating]]]:
     l_p11 = l_adjacents[0]
     l_p21 = l_adjacents[1]
     l_p12 = l_adjacents[2]

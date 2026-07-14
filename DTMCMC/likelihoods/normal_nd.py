@@ -10,8 +10,8 @@ from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 # @njit()
 def get_loglike(v: NDArray[np.floating]) -> float:
     """Get an n dimensional gaussian likelihood"""
-    const = np.log(1.0 / np.sqrt(2.0 * np.pi))  # normalization constant
-    res = v.shape[0] * const
+    const: float = np.log(1.0 / np.sqrt(2.0 * np.pi))  # normalization constant
+    res: float = v.shape[0] * const
     for itrp in range(v.shape[0]):
         res += -1 / 2 * v[itrp] ** 2
     return res

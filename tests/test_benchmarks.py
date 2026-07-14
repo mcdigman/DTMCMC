@@ -199,7 +199,9 @@ def test_family_compare_summarize_ranks_pass_rate_before_efficiency() -> None:
     passes).
     """
 
-    def run_result(passed: bool, n_eff_per_eval: float, violations: list[str] | None = None) -> dict:
+    def run_result(
+        passed: bool, n_eff_per_eval: float, violations: list[str] | None = None
+    ) -> dict[str, list[str] | float | bool | str]:
         return {
             'passed': passed,
             'n_eff_per_eval': n_eff_per_eval,

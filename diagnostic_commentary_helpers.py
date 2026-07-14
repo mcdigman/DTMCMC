@@ -1,12 +1,17 @@
 """helper to print some diagnostic commentary about chain performance"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import scipy
 
 import DTMCMC.temperature_ladder_helpers as th
 
+if TYPE_CHECKING:
+    from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 
-def print_diagnostic_commentary(mcc) -> None:
+
+def print_diagnostic_commentary(mcc: DTMCMCSampler) -> None:
     print('==========Descriptive Summary===========')
     print('Sampler has %5d chains, of which %5d are cold' % (mcc.n_chain, mcc.n_cold))
     print('Sampler reports having run for %10d iterations' % (mcc.itrn))

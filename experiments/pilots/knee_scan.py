@@ -7,6 +7,8 @@ seed-bootstrap stability comparison — the data that freezes the knee
 estimator and places the production n_chain grid.
 """
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from DTMCMC.rng_helpers import get_rng
@@ -24,6 +26,11 @@ from experiments.pilots.common import (
     write_specs,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from numpy.typing import NDArray
+
 N_CHAIN_GRID = [6, 8, 10, 12, 16, 24, 32]
 SEEDS = [1101, 1102, 1103]
 N_STEPS = 262144
@@ -40,7 +47,13 @@ def gold_total_entropy() -> float:
     return float(get_spacing_integrated(vars_use, betas_use, False)[-1])
 
 
-def bootstrap_knee_sd(x: np.ndarray, rates: np.ndarray, fit, rng: np.random.Generator, n_boot: int = 500) -> float:
+def bootstrap_knee_sd(
+    x: np.ndarray,
+    rates: np.ndarray,
+    fit: Callable[[NDArray[np.floating], NDArray[np.floating]], float],
+    rng: np.random.Generator,
+    n_boot: int = 500,
+) -> float:
     """Seed-bootstrap the per-point rates and return the knee-location sd."""
     _n_points, n_seeds = rates.shape
     knees = np.zeros(n_boot)

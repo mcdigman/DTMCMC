@@ -62,10 +62,19 @@ exclude = [
     "^\\.venv/",
 ]
 
+# Strict except in tests
+strict = true
+
 [[tool.mypy.overrides]]
 # Needed to follow plotly imports
 module = ["_plotly_utils", "_plotly_utils.*"]
 follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests", "tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
 
 [tool.pytest.ini_options]
 # Only tests/ holds real unit tests. Without this, pytest's default collection

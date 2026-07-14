@@ -12,13 +12,15 @@ if TYPE_CHECKING:
 
 
 def get_cake_tier_logL(v: NDArray[np.floating], amp: float, width: float, exponent: int | float) -> float:
-    n_par = v.shape[0]
+    n_par: int = v.shape[0]
 
-    dim_part = gamma(1 + n_par / 2) / (np.pi ** (n_par / 2))
-    res = np.log(amp * dim_part / (2 ** (n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent)))
+    dim_part: float = gamma(1 + n_par / 2) / (np.pi ** (n_par / 2))
+    res: float = np.log(
+        amp * dim_part / (2 ** (n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent))
+    )
 
     # get the squared distance from the center
-    r2_got = 0.0
+    r2_got: float = 0.0
     for itrp in range(v.shape[0]):
         r2_got += v[itrp] ** 2
 
@@ -31,9 +33,9 @@ def get_cake_tier_logL(v: NDArray[np.floating], amp: float, width: float, expone
 
 # default two-tier cake: a wide flat-topped tier and a narrow Gaussian
 # spike, equal mixture weights (each tier integrates to exactly its amp)
-CAKE_DEFAULT_AMPS = (0.5, 0.5)
-CAKE_DEFAULT_WIDTHS = (4.0, 0.1)
-CAKE_DEFAULT_EXPONENTS = (8, 2)
+CAKE_DEFAULT_AMPS: tuple[float, float] = (0.5, 0.5)
+CAKE_DEFAULT_WIDTHS: tuple[float, float] = (4.0, 0.1)
+CAKE_DEFAULT_EXPONENTS: tuple[int, int] = (8, 2)
 
 
 # @njit()
@@ -99,11 +101,11 @@ class CakeLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        r2_got = 0.0
+        r2_got: float = 0.0
         for itrp in range(params_in.shape[0]):
             r2_got += params_in[itrp] ** 2
 
-        res = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
+        res: float = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
         for itrm in range(1, len(self.amps)):
             res = np.logaddexp(
                 res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]

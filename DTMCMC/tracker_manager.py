@@ -292,7 +292,8 @@ class TrackerManager:
     @property
     def n_cycles(self) -> NDArray[np.int64]:
         """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone."""
-        return np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
+        res: NDArray[np.int64] = np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
+        return res
 
     def print_tracker_summary(
         self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: ProposalManager, last_itrn: int = -1

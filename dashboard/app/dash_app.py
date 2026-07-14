@@ -469,7 +469,7 @@ def create_app(config: DashboardConfig) -> Dash:
         enabled_checks: list[str] | None,
         previous_token: str | None,
         previous_options: list[str] | None,
-    ):
+    ) -> tuple[Any, Any, Any, Any, Any, Any]:
         """Re-read the artifact only when its flush changed; bump the token."""
         # pick up run artifacts created after server start
         current_options = _served_artifacts(config)
@@ -540,7 +540,7 @@ def create_app(config: DashboardConfig) -> Dash:
         max_lag: int | None,
         enabled_checks: list[str] | None,
         artifact_value: str | None,
-    ):
+    ) -> tuple[list[html.Div], str]:
         """Rebuild the active tab's figures (or status lights) from the snapshot."""
         artifact_value = _allowed_artifact(config, artifact_value)
         snapshot = _watcher(artifact_value, config.load_store).snapshot if artifact_value else None

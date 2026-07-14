@@ -7,6 +7,7 @@ thresholds without dominating checkpoint cost.
 """
 
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -14,6 +15,11 @@ from DTMCMC.rng_helpers import get_rng
 from experiments.metrics import nn_kl
 from experiments.pilots.common import save_summary
 from experiments.reference_samplers import draw_cake, draw_eggbox, draw_truncated_gaussian
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from numpy.typing import NDArray
 
 SNAPSHOT_SIZES = [1000, 2000, 5000, 10000]
 N_REPEATS = 16
@@ -23,7 +29,7 @@ RNG_SEED = 41
 def main() -> int:
     """Measure self-KL noise and timing across snapshot sizes."""
     rng = get_rng(RNG_SEED)
-    references = {
+    references: dict[str, Callable[[int], NDArray[np.floating]]] = {
         'gaussian5d': lambda n: draw_truncated_gaussian(n, 5, 10.0, rng),
         'cake5d': lambda n: draw_cake(n, 5, rng),
         'eggbox5d': lambda n: draw_eggbox(n, 5, rng),

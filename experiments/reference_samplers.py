@@ -325,7 +325,8 @@ def eggbox_cells(n_par: int) -> EggboxCells:
 
 def eggbox_logL(samples: NDArray[np.floating]) -> NDArray[np.floating]:
     """Vectorized eggbox log-likelihood, tested against eggbox.get_loglike."""
-    return (np.cos(samples).prod(axis=1) + 1.0) ** eggbox_module.betap
+    res: NDArray[np.floating] = (np.cos(samples).prod(axis=1) + 1.0) ** eggbox_module.betap
+    return res
 
 
 def draw_eggbox(n_draws: int, n_par: int, rng: np.random.Generator, max_batches: int = 100000) -> NDArray[np.floating]:
