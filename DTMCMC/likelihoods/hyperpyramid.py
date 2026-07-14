@@ -7,16 +7,18 @@ from numpy.typing import NDArray
 from DTMCMC.likelihood import RectangularLikelihood
 
 # constants
-low_lim = -15.0
-high_lim = 15.0
-s, sigma = 0.5, 1.0
-center = 0.0
+low_lim: float = -15.0
+high_lim: float = 15.0
+s: float = 0.5
+sigma: float = 1.0
+center: float = 0.0
 
 
 @njit()
 def get_loglike(x: NDArray[np.floating]) -> float:
     """Get the likelihood"""
-    return -(max(np.abs((x - center) / sigma)) ** (1.0 / s))
+    res: float = -(max(np.abs((x - center) / sigma)) ** (1.0 / s))
+    return res
 
 
 class HyperpyramidLikelihood(RectangularLikelihood):

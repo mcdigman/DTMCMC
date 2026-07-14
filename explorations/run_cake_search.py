@@ -25,7 +25,7 @@ import DTMCMC.exchange_manager as eh
 # import likelihood_gb as trial_likelihood
 import DTMCMC.likelihoods.cake_likelihood as trial_likelihood
 import DTMCMC.temperature_ladder_helpers as th
-import integ_box_filt as ibf
+import explorations.integ_box_filt as ibf
 import moment_helpers
 from DTMCMC.corr_summary_helpers import CorrelationSummary
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
@@ -934,7 +934,7 @@ if __name__ == '__main__':
 
     from scipy.interpolate import InterpolatedUnivariateSpline
 
-    import integ_box_filt as ibf
+    import explorations.integ_box_filt as ibf
 
     rs_stack = np.hstack(rs_save)[n_burnin:]
 

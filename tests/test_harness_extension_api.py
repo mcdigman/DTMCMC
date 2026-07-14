@@ -71,7 +71,7 @@ def test_initialize_jumps_builds_manager_from_base_drawn_samples(monkeypatch) ->
     golden digest are preserved).
     """
     captured: dict[str, np.ndarray] = {}
-    real = runner_mod.get_default_proposal_manager
+    real = runner_mod.get_default_proposal_manager  # type: ignore[attr-defined]
 
     def spy(T_ladder, like_obj, *, starting_samples, **kwargs):
         captured['starting_samples'] = starting_samples
@@ -145,7 +145,7 @@ def test_teardown_flushes_each_segment_and_marks_major_reports(monkeypatch, tmp_
     boundary, and the sampler never compares itrn against a run total.
     """
     finalized_flags: list[bool] = []
-    real = runner_mod.write_artifact
+    real = runner_mod.write_artifact  # type: ignore[attr-defined]
 
     def spy(*args, **kwargs):
         finalized_flags.append(bool(kwargs['finalized']))

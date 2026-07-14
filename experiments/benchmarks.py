@@ -96,7 +96,7 @@ class BenchmarkTarget:
     notes: str = ''
 
 
-def _moments_constant(mean: float, var: float):
+def _moments_constant(mean: float, var: float) -> Callable[[int], tuple[NDArray[np.floating], NDArray[np.floating]]]:
     """Per-coordinate moments callable for i.i.d.-coordinate targets."""
 
     def moments(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
@@ -135,7 +135,9 @@ def _moments_rosenbrock(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.fl
     return means, variances
 
 
-def _moments_from_modes(centers: NDArray[np.floating], weights: NDArray[np.floating], width: float):
+def _moments_from_modes(
+    centers: NDArray[np.floating], weights: NDArray[np.floating], width: float
+) -> Callable[[int], tuple[NDArray[np.floating], NDArray[np.floating]]]:
     """Exact per-coordinate moments of an equal-width isotropic Gaussian mixture."""
 
     def moments(n_par: int) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
@@ -147,7 +149,7 @@ def _moments_from_modes(centers: NDArray[np.floating], weights: NDArray[np.float
     return moments
 
 
-def _numba_stream_draws(gen_draws):
+def _numba_stream_draws(gen_draws: Callable[[int, int], NDArray[np.floating]]) -> DrawReference:
     """Adapt an in-module gen_draws(n_draws, n_par) to the DrawReference signature."""
 
     def draw(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:  # noqa: ARG001 — numba global stream, see module docstring
@@ -275,4 +277,5 @@ def mode_occupancy(samples: NDArray[np.floating], centers: NDArray[np.floating])
     """Fraction of samples nearest each mode center (Euclidean assignment)."""
     distances = np.linalg.norm(samples[:, np.newaxis, :] - centers[np.newaxis, :, :], axis=2)
     nearest = np.argmin(distances, axis=1)
-    return np.bincount(nearest, minlength=centers.shape[0]) / samples.shape[0]
+    res: NDArray[np.floating] = np.bincount(nearest, minlength=centers.shape[0]) / samples.shape[0]
+    return res

@@ -4,29 +4,31 @@
 import numba as nb
 import numpy as np
 from numba import njit
-from numba.experimental import jitclass  # pyright: ignore[reportPrivateImportUsage]
+from numba.experimental import jitclass  # type: ignore[attr-defined] # pyright: ignore[reportPrivateImportUsage]
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
 
-tmax = 5.0 * np.pi
+tmax: float = 5.0 * np.pi
 
-Tp = 2.0e-1
-betap = 1.0 / Tp
+Tp: float = 2.0e-1
+betap: float = 1.0 / Tp
 
-low_lim = -(5 * np.pi / 2.0)
-high_lim = 5 * np.pi / 2.0
+low_lim: float = -(5 * np.pi / 2.0)
+high_lim: float = 5 * np.pi / 2.0
 
-n_pi_range = np.int64((high_lim - low_lim) / np.pi)
+n_pi_range: np.int64 = np.int64((high_lim - low_lim) / np.pi)
 
 
 @njit()
 def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
     """Get the eggbox likelihood in n dimensions"""
-    prod = 1.0
+    prod: float = 1.0
     for itrp in range(n_par):
         prod *= np.cos(x[itrp])
-    return (prod + 1.0) ** betap
+    # note prod can never be <-1.0, so res will be a float
+    res: float = (prod + 1.0) ** betap
+    return res
 
 
 @njit()
@@ -64,7 +66,7 @@ def check_bounds(v: NDArray[np.floating]) -> bool:
     return True
 
 
-@jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # pyright: ignore[reportCallIssue]
+@jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
 class Likelihood:
     """class to manage the likelihood-specific essential functions for the sampler"""
 

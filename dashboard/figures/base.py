@@ -51,7 +51,7 @@ def ordinal_colors(theme: Theme, n_steps: int) -> list[str]:
     if n_steps == 1:
         return [ramp[len(ramp) // 2]]
     positions = np.linspace(0.0, 1.0, n_steps)
-    return [str(pcolors.sample_colorscale(ramp, float(pos), colortype='rgb')[0]) for pos in positions]
+    return [str(pcolors.sample_colorscale(ramp, float(pos), colortype='rgb')[0]) for pos in positions]  # type: ignore[no-untyped-call]
 
 
 def sequential_colorscale(theme: Theme) -> list[tuple[float, str]]:

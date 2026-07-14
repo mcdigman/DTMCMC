@@ -1,8 +1,15 @@
+from typing import TYPE_CHECKING
+
 import numpy as np
 from scipy.special import factorial
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-def cumulant_integrand(cumulants, betas):
+
+def cumulant_integrand(
+    cumulants: list[NDArray[np.floating]], betas: NDArray[np.floating]
+) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     n_chain = betas.size
     integrand_left = np.zeros(n_chain - 1)
     integrand_right = np.zeros(n_chain - 1)
@@ -33,7 +40,9 @@ def cumulant_integrand(cumulants, betas):
     return integrand_left, integrand_right, integrand_avg
 
 
-def cumulant_heat_cap_interp(cumulants, betas_orig, betas_new):
+def cumulant_heat_cap_interp(
+    cumulants: NDArray[np.floating], betas_orig: NDArray[np.floating], betas_new: NDArray[np.floating]
+) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     n_chain = betas_orig.size
     assert np.all(np.diff(betas_orig) < 0.0)
     assert np.all(np.diff(betas_new) < 0.0)

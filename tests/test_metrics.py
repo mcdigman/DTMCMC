@@ -94,7 +94,8 @@ def measured_logL_vars(sampler, n_burn_blocks: int) -> np.ndarray:
     """Stationary per-chain Var(logL) from the stored block moments."""
     logL_means = np.asarray(sampler.logL_means)[n_burn_blocks:]
     logL2_means = np.asarray(sampler.logL2_means)[n_burn_blocks:]
-    return logL2_means.mean(axis=0) - logL_means.mean(axis=0) ** 2
+    res: np.ndarray = logL2_means.mean(axis=0) - logL_means.mean(axis=0) ** 2
+    return res
 
 
 def test_gaussian_heat_capacity_invariant(gaussian_invariant_run) -> None:

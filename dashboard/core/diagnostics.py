@@ -269,11 +269,14 @@ def window_counts(record: np.ndarray, archive: np.ndarray, window: str | int) ->
     if window == 'latest':
         if archive_arr.shape[0] == 0:
             return record_arr
-        return record_arr - archive_arr[-1]
+        res: np.ndarray = record_arr - archive_arr[-1]
+        return res
     idx = int(window)
     if idx == 0:
-        return archive_arr[0]
-    return archive_arr[idx] - archive_arr[idx - 1]
+        res = archive_arr[0]
+        return res
+    res = archive_arr[idx] - archive_arr[idx - 1]
+    return res
 
 
 def _ladder_timeline(snapshot: RunSnapshot) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -583,7 +586,8 @@ def normalized_acf(series: np.ndarray, max_lag: int) -> np.ndarray:
     if acov[0] <= 0.0:
         return np.ones(1)
     lags_keep = min(int(max_lag) + 1, n_samples)
-    return acov[:lags_keep] / acov[0]
+    res: np.ndarray = acov[:lags_keep] / acov[0]
+    return res
 
 
 def integrated_autocorr_time(rho: np.ndarray, window_factor: float = 5.0) -> float:

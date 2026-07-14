@@ -7,20 +7,20 @@ from numpy.typing import NDArray
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
 
 # constants
-low_lim = -10.0
-high_lim = 10.0
+low_lim: float = -10.0
+high_lim: float = 10.0
 
 
 @njit()
 def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
     """Get likelihood for gaussian mixture"""
-    res1 = np.log(1.0 / (3 * (2.0 * np.pi) ** (n_par / 2)))
-    res2 = np.log(2.0 / (3 * (2.0 * np.pi) ** (n_par / 2)))
+    res1: float = np.log(1.0 / (3 * (2.0 * np.pi) ** (n_par / 2)))
+    res2: float = np.log(2.0 / (3 * (2.0 * np.pi) ** (n_par / 2)))
     for itrp in range(n_par):
         res1 += -((v[itrp] - 5) ** 2) / 2
         res2 += -((v[itrp] + 5) ** 2) / 2
 
-    res = np.logaddexp(res1, res2)
+    res: float = np.logaddexp(res1, res2)
 
     return res
 
