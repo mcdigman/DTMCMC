@@ -3,7 +3,7 @@ import numpy as np
 from scipy.integrate import cumulative_trapezoid
 
 from DTMCMC.temperature_ladder_helpers import entropy_spaced_betas
-from integ_box_filt import cumulants_from_Ts
+from explorations.integ_box_filt import cumulants_from_Ts
 
 Ts_in = np.load('data/Ts_cake_gold.npy')
 cumulants_in = np.load('data/cumulants_cake_gold.npy')
