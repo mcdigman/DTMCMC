@@ -20,20 +20,26 @@ def mcmc_decision_helper(
     idx_jump: int,
 ) -> None:
     """Decide whether an MCMC proposal is accepted and update observers."""
+    # draw to determine if we will accept
     test: float = np.log(np.random.uniform(0.0, 1.0))
 
+    # squared displacement of the proposal, accumulated per (T, jump type)
+    # for the expected-squared-displacement tracker; pure observer, no draws
     delta_sq: float = 0.0
     for itrp in range(new_point.size):
         diff: float = new_point[itrp] - samples[itrb - 1, itrt, itrp]
         delta_sq += diff * diff
     esd_record[0, itrt, idx_jump] += delta_sq
 
+    # process acceptance or rejection
     if betas[itrt] * (logL_new - logLs[itrb - 1, itrt]) + density_fac > test:
+        # the draw was accepted, assign its parameters
         samples[itrb, itrt] = new_point
         logLs[itrb, itrt] = logL_new
         accept_record[0, itrt, idx_jump] += 1
         esd_record[1, itrt, idx_jump] += delta_sq
     else:
+        # the draw was rejected, assign the old parameters
         samples[itrb, itrt] = samples[itrb - 1, itrt]
         logLs[itrb, itrt] = logLs[itrb - 1, itrt]
         accept_record[1, itrt, idx_jump] += 1
