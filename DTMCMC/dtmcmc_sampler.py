@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
-from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
+from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper as _mcmc_decision_helper
 from DTMCMC.numba_backend import try_advance_block_numba_serial
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
@@ -20,6 +20,10 @@ if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.proposal_manager import ProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
+
+# Backward-compatible public import location used by existing tests/extensions.
+mcmc_decision_helper = _mcmc_decision_helper
 
 
 @njit()
