@@ -393,6 +393,38 @@ def test_builder_registries_match_spec_names() -> None:
     assert set(LADDER_BUILDERS) == set(LADDER_KINDS)
 
 
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_uniform_likelihood_gaussian_prior_has_known_harness_target() -> None:
+    """The harness can exercise a non-uniform prior with analytic moments."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = 'uniform_gaussian_prior_moments'
+    data['seed'] = 20260715
+    data['likelihood'] = {
+        'name': 'uniform_gaussian_prior',
+        'n_par': 3,
+        'prior_mean': 1.5,
+        'prior_std': 0.75,
+    }
+    data['run'] = {'n_steps': 2048, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4}
+    data['proposals'] = {
+        'FisherJumpManager': {'verbose_fisher': False},
+        'DEJumpManager': {'de_size': 256},
+    }
+    spec = RunSpec.from_dict(data)
+
+    seed_run(spec.seed)
+    sampler, like_obj = build_sampler(spec, kernel_backend='numba')
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+
+    assert like_obj.prior_factor(np.full(3, 1.5)) > like_obj.prior_factor(np.zeros(3))
+    cold_samples = sampler.samples_store[:, 0, :]
+    np.testing.assert_allclose(cold_samples.mean(axis=0), 1.5, atol=0.08)
+    np.testing.assert_allclose(cold_samples.var(axis=0), 0.75**2, atol=0.12)
+
+
 def _explicit_ladder_data(n_chain: int, Ts: list[float]) -> dict[str, Any]:
     """Copy the tiny spec with an explicit ladder of the given geometry."""
     data: dict[str, Any] = {

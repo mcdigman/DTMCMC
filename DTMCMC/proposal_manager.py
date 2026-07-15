@@ -4,21 +4,69 @@ Manager object to handle all dispatching of proposals.
 C 2023 Matthew C. Digman
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
 import DTMCMC.prior_manager as ph
-from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager, JumpManager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
     from numpy.typing import NDArray
 
-    from DTMCMC.exchange_manager import ExchangeManager
+    from DTMCMC.exchange_manager import AbstractExchangeManager
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
+
+class AbstractProposalManager(Protocol):
+    """Structural aggregate proposal interface required by sampler kernels."""
+
+    n_jump_types: int
+    jump_labels_array: list[str]
+    T_ladder: TemperatureLadder
+
+    @property
+    def managers(self) -> tuple[AbstractJumpManager, ...]:
+        """Ordered component proposal managers."""
+        ...
+
+    @property
+    def jumps(self) -> list[AbstractJump]:
+        """Identity-preserving flattening of component-manager jumps."""
+        ...
+
+    @property
+    def jump_probs(self) -> NDArray[np.floating]:
+        """Aggregate conditional jump probabilities by temperature."""
+        ...
+
+    @property
+    def exchange_manager(self) -> AbstractExchangeManager:
+        """Exchange scheduler and executor."""
+        ...
+
+    def get_jump_labels(self) -> list[str]:
+        """Return aggregate labels in flattened jump order."""
+        ...
+
+    def dispatch_jump(
+        self, sample_point: NDArray[np.floating], itrt: int, choose: int = -1
+    ) -> tuple[NDArray[np.floating], float, bool, int]:
+        """Dispatch one local proposal."""
+        ...
+
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:
+        """Update all component managers after a sampler step."""
+        ...
+
+    def post_block_update(
+        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
+    ) -> None:
+        """Update all component managers after a sampler block."""
+        ...
 
 
 class ProposalManager(JumpManager):
@@ -28,8 +76,8 @@ class ProposalManager(JumpManager):
         self,
         T_ladder: TemperatureLadder,
         like_obj: AbstractLikelihood,
-        managers: tuple[JumpManager, ...],
-        exchange_manager: ExchangeManager,
+        managers: tuple[AbstractJumpManager, ...],
+        exchange_manager: AbstractExchangeManager,
         config: ConfigParser,
     ) -> None:
         """Create the core proposal manager object.
@@ -53,11 +101,11 @@ class ProposalManager(JumpManager):
 
         # self.T_ladder = T_ladder
 
-        self.managers: tuple[JumpManager, ...] = managers
+        self.managers: tuple[AbstractJumpManager, ...] = managers
         self.n_managers: int = len(self.managers)
         self.n_jumps_managers: NDArray[np.int64] = np.zeros(self.n_managers, dtype=np.int64)
 
-        self.exchange_manager: ExchangeManager = exchange_manager
+        self.exchange_manager: AbstractExchangeManager = exchange_manager
 
         jump_labels_temp: list[str] = []
         jumps_temp: list[AbstractJump] = []

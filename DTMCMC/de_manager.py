@@ -2,13 +2,16 @@
 Module to manage differential evoultion jumps
 """
 
-from typing import TYPE_CHECKING
+from copy import copy
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.numba_backend import NativeLikelihoodState, jittable_jump, jittable_jump_manager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -58,6 +61,56 @@ def apply_de_helper(
     return new_point, 0.0, nontrivial
 
 
+class DENativeState(NamedTuple):
+    """Numba-compatible runtime state for differential-evolution jumps."""
+
+    de_buffer: NDArray[np.floating]
+    de_subspace_frac: float
+    de_thin: int
+    counters: NDArray[np.int64]
+
+
+@njit(inline='always')
+def _de_standard_full_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, False)
+
+
+@njit(inline='always')
+def _de_standard_subspace_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, False)
+
+
+@njit(inline='always')
+def _de_big_full_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, True)
+
+
+@njit(inline='always')
+def _de_big_subspace_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, True)
+
+
+@jittable_jump(_de_standard_full_native)
 class DEStandardFullJump(AbstractJump):
     """apply a jump with standard random size in all dimensions
     null proposals are marked as failures
@@ -71,6 +124,7 @@ class DEStandardFullJump(AbstractJump):
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
 
 
+@jittable_jump(_de_standard_subspace_native)
 class DEStandardRandomSubspaceJump(AbstractJump):
     """apply a jump with standard random size in a random subspace
     null proposals are marked as failures
@@ -84,6 +138,7 @@ class DEStandardRandomSubspaceJump(AbstractJump):
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
 
 
+@jittable_jump(_de_big_full_native)
 class DEBigFullJump(AbstractJump):
     """apply the full length differential evolution jump in all dimensions
     null proposals are marked as failures
@@ -97,6 +152,7 @@ class DEBigFullJump(AbstractJump):
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
 
 
+@jittable_jump(_de_big_subspace_native)
 class DEBigRandomSubspaceJump(AbstractJump):
     """apply the full length differential evolution jump in a random subspace
     null proposals are marked as failures
@@ -120,21 +176,64 @@ def initialize_de_helper(
 
 
 @njit()
-def write_de_helper(
-    itrde_count: int, itrde_write: int, de_buffer: NDArray[np.floating], samples: NDArray[np.floating]
-) -> None:
-    """Helper to write to the differential evolution buffer"""
+def advance_de_state_helper(
+    itrde_count: int,
+    itrde_write: int,
+    de_thin: int,
+    de_buffer: NDArray[np.floating],
+    samples: NDArray[np.floating],
+) -> tuple[int, int]:
+    """Write one DE state when due and advance its write/thinning counters."""
     if itrde_count == 0:
         de_buffer[itrde_write, :] = samples
+        itrde_write += 1
+        if itrde_write == de_buffer.shape[0]:
+            itrde_write = 0
+    itrde_count += 1
+    if itrde_count >= de_thin:
+        itrde_count = 0
+    return itrde_write, itrde_count
 
 
+def _get_de_native_state(manager: Any) -> DENativeState:
+    counters = np.asarray((manager.itrde_write, manager.itrde_count), dtype=np.int64)
+    return DENativeState(manager.de_buffer, manager.de_subspace_frac, manager.de_thin, counters)
+
+
+def _set_de_native_state(manager: Any, state: DENativeState) -> None:
+    manager.itrde_write = int(state.counters[0])
+    manager.itrde_count = int(state.counters[1])
+
+
+@njit(inline='always')
+def _post_de_native_state(state: DENativeState, samples: NDArray[np.floating]) -> DENativeState:
+    write, count = advance_de_state_helper(
+        int(state.counters[1]),
+        int(state.counters[0]),
+        state.de_thin,
+        state.de_buffer,
+        samples,
+    )
+    state.counters[0] = write
+    state.counters[1] = count
+    return state
+
+
+@dataclass(init=False)
 class DEStrategyParameters:
     """container to store some parameters related to the strategy of differential evolution proposal generation"""
 
+    cold_de_weight: float
+    hot_de_weight: float
+    big_de_prob: float
+    de_subspace_frac: float
+    de_full_d_frac: float
+    de_size: int
+    de_thin: int
+
     def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config: ConfigParser = config
-        config_de = self.config['DEJumpManager']
+        config_de = config['DEJumpManager']
 
         # how often to do de draws in the cold chains
         self.cold_de_weight = config_de.getfloat('cold_de_weight', 0.333)
@@ -153,7 +252,7 @@ class DEStrategyParameters:
 
     def copy(self) -> DEStrategyParameters:
         """Copy the object"""
-        return DEStrategyParameters(self.config)
+        return copy(self)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
@@ -174,6 +273,11 @@ class DEStrategyParameters:
 # TODO fix name lengths
 
 
+@jittable_jump_manager(
+    state_getter=_get_de_native_state,
+    state_setter=_set_de_native_state,
+    post_step=_post_de_native_state,
+)
 class DEJumpManager(JumpManager):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
@@ -202,16 +306,13 @@ class DEJumpManager(JumpManager):
 
     def write_de(self, samples: NDArray[np.floating]) -> None:
         """Write to the differential evolution buffer"""
-        if self.itrde_count == 0:
-            write_de_helper(self.itrde_count, self.itrde_write, self.de_buffer, samples)
-            # wrap write index
-            self.itrde_write += 1
-            if self.itrde_write == self.de_size:
-                self.itrde_write = 0
-        self.itrde_count += 1
-        # wrap counter for whether to write
-        if self.itrde_count >= self.de_thin:
-            self.itrde_count = 0
+        self.itrde_write, self.itrde_count = advance_de_state_helper(
+            self.itrde_count,
+            self.itrde_write,
+            self.de_thin,
+            self.de_buffer,
+            samples,
+        )
 
     def set_jump_weights(self) -> None:
         """Set the conditional probabilities of the different jump types"""

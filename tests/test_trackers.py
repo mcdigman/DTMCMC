@@ -12,7 +12,7 @@ import pytest
 from numpy.testing import assert_array_equal
 
 import DTMCMC.exchange_manager as em
-from DTMCMC.dtmcmc_sampler import mcmc_decision_helper
+from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT, TrackerManager
 from experiments.harness.runner import build_sampler

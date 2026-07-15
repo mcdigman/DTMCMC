@@ -2,7 +2,9 @@
 module to store objects related to fisher matrix jumps
 """
 
-from typing import TYPE_CHECKING
+from copy import copy
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -10,6 +12,7 @@ from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
+from DTMCMC.numba_backend import NativeLikelihoodState, jittable_jump, jittable_jump_manager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -47,6 +50,68 @@ def sigma_subspace_jump_helper(
     return new_point, 0.0, True
 
 
+class FisherNativeState(NamedTuple):
+    """Numba-compatible runtime state for Fisher-derived jumps."""
+
+    n_par: int
+    fisher_subspace_frac: float
+    sigma_scales: NDArray[np.floating]
+    chol_fishers: NDArray[np.floating]
+    gamma_mults: NDArray[np.floating]
+
+
+@njit(inline='always')
+def _sigma_full_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: FisherNativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return sigma_subspace_jump_helper(
+        sample_point, itrt, state.n_par, state.fisher_subspace_frac, state.sigma_scales, True
+    )
+
+
+@njit(inline='always')
+def _sigma_subspace_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: FisherNativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return sigma_subspace_jump_helper(
+        sample_point, itrt, state.n_par, state.fisher_subspace_frac, state.sigma_scales, False
+    )
+
+
+@njit(inline='always')
+def fisher_full_jump_helper(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    chol_fishers: NDArray[np.floating],
+    gamma_mults: NDArray[np.floating],
+) -> tuple[NDArray[np.floating], float, bool]:
+    """Apply a full Cholesky Fisher jump."""
+    n_par = sample_point.size
+    new_point = sample_point + solve_triangular(
+        chol_fishers[itrt],
+        gamma_mults[itrt] * np.random.normal(0.0, 1.0, n_par),
+        trans_a=True,
+    )
+    return new_point, 0.0, True
+
+
+@njit(inline='always')
+def _fisher_full_native(
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: FisherNativeState,
+    _likelihood: NativeLikelihoodState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
+
+
+@jittable_jump(_sigma_full_native)
 class SigmaFullJump(AbstractJump):
     """Standard Deviation Jump in Full Dimensions"""
 
@@ -71,6 +136,7 @@ class SigmaFullJump(AbstractJump):
         # return new_point, 0., True
 
 
+@jittable_jump(_sigma_subspace_native)
 class SigmaRandomSubspaceJump(AbstractJump):
     """Standard deviation jump in random subspaces"""
 
@@ -90,16 +156,26 @@ class SigmaRandomSubspaceJump(AbstractJump):
         )
 
 
+@dataclass(init=False)
 class FisherStrategyParameters:
     """container to store some parameters related to the strategy of
     fisher matrix proposal generation
     """
 
+    use_chol_fishers: bool
+    cold_fisher_weight: float
+    hot_fisher_weight: float
+    fisher_subspace_frac: float
+    fisher_full_d_frac: float
+    fisher_downsample: int
+    sigma_default: float
+    max_fisher_el: float
+    eps_default: float
+    verbose_fisher: bool
+
     def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
-
-        config_f = self.config['FisherJumpManager']
+        config_f = config['FisherJumpManager']
 
         # whether to do fisher jumps using the cholesky decomposition
         self.use_chol_fishers = config_f.getboolean('use_chol_fishers', False)
@@ -124,7 +200,7 @@ class FisherStrategyParameters:
 
     def copy(self) -> FisherStrategyParameters:
         """Copy the object"""
-        return FisherStrategyParameters(self.config)
+        return copy(self)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
@@ -273,6 +349,30 @@ def set_scales(
     return sigma_scales, gamma_mults
 
 
+def _get_fisher_native_state(manager: Any) -> FisherNativeState:
+    return FisherNativeState(
+        manager.n_par,
+        manager.strategy_params.fisher_subspace_frac,
+        manager.sigma_scales,
+        manager.chol_fishers,
+        manager.gamma_mults,
+    )
+
+
+def _set_fisher_native_state(_manager: Any, _state: FisherNativeState) -> None:
+    """Fisher native state is read-only during a block."""
+
+
+@njit(inline='always')
+def _post_fisher_native_state(state: FisherNativeState, _samples: NDArray[np.floating]) -> FisherNativeState:
+    return state
+
+
+@jittable_jump_manager(
+    state_getter=_get_fisher_native_state,
+    state_setter=_set_fisher_native_state,
+    post_step=_post_fisher_native_state,
+)
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
@@ -380,6 +480,7 @@ class FisherJumpManager(JumpManager):
         self.strategy_params.record_config(config_in)
 
 
+@jittable_jump(_fisher_full_native)
 class FisherFullJump(AbstractJump):
     def __init__(self, manager: FisherJumpManager) -> None:
         self.manager: FisherJumpManager = manager
@@ -387,10 +488,9 @@ class FisherFullJump(AbstractJump):
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a fisher matrix jump"""
-        n_par: int = sample_point.size
-        new_point = sample_point + solve_triangular(
-            self.manager.chol_fishers[itrt],
-            self.manager.gamma_mults[itrt] * np.random.normal(0.0, 1.0, n_par),
-            trans_a=True,
+        return fisher_full_jump_helper(
+            sample_point,
+            itrt,
+            self.manager.chol_fishers,
+            self.manager.gamma_mults,
         )
-        return new_point, 0.0, True

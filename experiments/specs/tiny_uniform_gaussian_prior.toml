@@ -1,0 +1,33 @@
+name = "tiny_uniform_gaussian_prior"
+seed = 20260715
+
+[likelihood]
+name = "uniform_gaussian_prior"
+n_par = 4
+prior_mean = 1.5
+prior_std = 0.75
+
+[ladder]
+kind = "geometric"
+n_chain = 6
+n_cold = 1
+T_cold = 1.0
+T_min = 1.0
+T_max = 100.0
+n_inf_final = 1
+
+[run]
+n_steps = 128
+block_size = 32
+store_thin = 1
+checkpoint_every_blocks = 1
+
+[exchange]
+strategy = "sequential"
+track_full_exchanges = false
+
+[proposals.FisherJumpManager]
+verbose_fisher = false
+
+[proposals.DEJumpManager]
+de_size = 64

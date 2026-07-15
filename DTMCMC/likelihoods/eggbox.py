@@ -72,79 +72,20 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
     return new_point, success
 
 
-@njit(inline='always')
-def _native_prior_draw(
-    _n_par: int,
-    _low_lims: NDArray[np.floating],
-    _high_lims: NDArray[np.floating],
-    state: tuple[int],
-) -> NDArray[np.floating]:
-    return prior_draw(state[0])
-
-
-@njit(inline='always')
-def _native_prior_factor(params: NDArray[np.floating], state: tuple[int]) -> float:
-    return prior_factor(params, state[0])
-
-
-@njit(inline='always')
-def _native_validate_bounds(
-    params: NDArray[np.floating],
-    _low_lims: NDArray[np.floating],
-    _high_lims: NDArray[np.floating],
-    _state: tuple[int],
-) -> tuple[NDArray[np.floating], bool]:
-    return validate_bounds(params)
-
-
 # @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-@jittable_likelihood(
-    get_loglike,
-    state_attrs=('n_par',),
-    prior_draw=_native_prior_draw,
-    prior_factor=_native_prior_factor,
-    validate_bounds=_native_validate_bounds,
-)
+@jittable_likelihood(get_loglike, state_attrs=('n_par',))
 class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
-        self.n_par = n_par
+        super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
         self.epsilons = np.zeros(n_par) + eps_default
-        self.low_lims = np.full(n_par, low_lim)
-        self.high_lims = np.full(n_par, high_lim)
-        self.n_evals = 0
 
     def get_loglike(self, v: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
         self.n_evals += 1
         return get_loglike(v, self.n_par)
-
-    def prior_draw(self) -> NDArray[np.floating]:
-        """Get a draw from the prior"""
-        return prior_draw(self.n_par)
-
-    def prior_proposal(self, v_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], float, bool]:
-        """Get a proposal from the prior"""
-        v_out = prior_draw(self.n_par)
-        return v_out, prior_factor(v_in, self.n_par) - prior_factor(v_out, self.n_par), True
-
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        """Get the density factor for prior draws, if the prior draws are not uniform"""
-        return prior_factor(params_in, self.n_par)
-
-    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Correct the bounds of a draw to be in range, if allowed for this likelihood"""
-        return correct_bounds(params_in, self.n_par)
-
-    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
-        """Check if the bounds of a draw are in the prior range but do not change them"""
-        return check_bounds(params_in)
-
-    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
-        """Check the parameters and correct if required."""
-        return validate_bounds(params_in)
 
     def get_epsilons(self) -> NDArray[np.floating]:
         """Get epsilons for fisher matrix calculation."""

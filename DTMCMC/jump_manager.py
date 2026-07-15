@@ -39,6 +39,44 @@ class AbstractJump(Protocol):
         ...
 
 
+class AbstractJumpManager(Protocol):
+    """Structural component-manager interface used by aggregate dispatchers."""
+
+    T_ladder: TemperatureLadder
+
+    @property
+    def jumps(self) -> list[AbstractJump]:
+        """Ordered jump objects exported by this manager."""
+        ...
+
+    @property
+    def jump_probs(self) -> NDArray[np.floating]:
+        """Conditional jump probabilities by temperature."""
+        ...
+
+    def get_jump_weights(self) -> NDArray[np.floating]:
+        """Return unnormalized jump weights by temperature and jump type."""
+        ...
+
+    def get_jump_labels(self) -> list[str]:
+        """Return labels in the same order as ``jumps``."""
+        ...
+
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:
+        """Update manager state after one sampler step across all chains."""
+        ...
+
+    def post_block_update(
+        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
+    ) -> None:
+        """Update manager state after one completed block."""
+        ...
+
+    def record_config(self, config_in: ConfigParser) -> None:
+        """Record manager configuration."""
+        ...
+
+
 @njit()
 def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     """Helper that picks a random integer with the given input probabilities"""

@@ -52,6 +52,7 @@ LIKELIHOOD_NAMES: frozenset[str] = frozenset(
         'random_wheel',
         'rosenbrock',
         'spoke_wheel',
+        'uniform_gaussian_prior',
     }
 )
 

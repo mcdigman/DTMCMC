@@ -169,6 +169,11 @@ def _moments_gaussian_mixture(n_par: int) -> tuple[NDArray[np.floating], NDArray
     return np.full(n_par, mean), np.full(n_par, second - mean**2)
 
 
+def _draw_uniform_gaussian_prior(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:
+    """Exact draws for the constant-likelihood Gaussian-prior benchmark."""
+    return rng.normal(1.5, 0.75, size=(n_draws, n_par))
+
+
 def mixture_mode_centers(n_par: int) -> NDArray[np.floating]:
     """The gaussian_mixture mode centers at the requested dimension."""
     return np.vstack([np.full(n_par, 5.0), np.full(n_par, -5.0)])
@@ -269,6 +274,13 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         ),
         mode_centers=np.asarray(spoke_wheel_module.cs, dtype=np.float64),
         mode_weights=_WHEEL_WEIGHTS,
+    ),
+    'uniform_gaussian_prior': BenchmarkTarget(
+        likelihood_name='uniform_gaussian_prior',
+        default_params={'n_par': 4, 'prior_mean': 1.5, 'prior_std': 0.75},
+        draw_reference=_draw_uniform_gaussian_prior,
+        reference_moments=_moments_constant(1.5, 0.75**2),
+        notes='constant likelihood; posterior equals the independent Gaussian prior exactly',
     ),
 }
 

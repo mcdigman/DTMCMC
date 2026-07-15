@@ -10,20 +10,16 @@ from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
-from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper as _mcmc_decision_helper
-from DTMCMC.numba_backend import try_advance_block_numba_serial
+from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
+from DTMCMC.numba_backend import NativeSerialBackend
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
 
 if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
-    from DTMCMC.proposal_manager import ProposalManager
+    from DTMCMC.proposal_manager import AbstractProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
-
-
-# Backward-compatible public import location used by existing tests/extensions.
-mcmc_decision_helper = _mcmc_decision_helper
 
 
 @njit()
@@ -73,7 +69,7 @@ def advance_step_ptmcmc(
     T_ladder: TemperatureLadder,
     accept_record: NDArray[np.int64],
     esd_record: NDArray[np.floating],
-    proposal_manager: ProposalManager,
+    proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
 ) -> None:
     """Advance a single step step in the ptmcmc chain"""
@@ -86,6 +82,12 @@ def advance_step_ptmcmc(
         if success:
             # see if the point is in bounds, if not try to make it legal
             new_point, success = like_obj.validate_bounds(new_point)
+
+        if success:
+            # The prior is not tempered. For a prior-draw proposal this target
+            # factor cancels the reverse/forward proposal factor supplied by
+            # PriorFullJump; other jumps retain the target-prior contribution.
+            density_fac += like_obj.prior_factor(new_point) - like_obj.prior_factor(samples[itrb - 1, itrt])
 
         # skip likelihood evaluation if proposal is marked as a failure
         if success:
@@ -105,7 +107,7 @@ def advance_block_ptmcmc(
     logLs: NDArray[np.floating],
     samples: NDArray[np.floating],
     chain_track: NDArray[np.int64],
-    proposal_manager: ProposalManager,
+    proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
     tracker_manager: TrackerManager,
 ) -> NDArray[np.floating]:
@@ -159,7 +161,7 @@ class DTMCMCSampler:
         block_size: int,
         store_size: int,
         tracker_manager: TrackerManager | None = None,
-        proposal_manager: ProposalManager | None = None,
+        proposal_manager: AbstractProposalManager | None = None,
         starting_samples: NDArray[np.floating] | None = None,
         store_thin: int = 1,
         arg_record: list[int] | None = None,
@@ -177,7 +179,7 @@ class DTMCMCSampler:
             Object that gets likelihoods for a given set of parameters
         T_ladder_in: TemperatureLadder
         tracker_manager: TrackerManager
-        proposal_manager: ProposalManager
+        proposal_manager: AbstractProposalManager
         starting_samples: a (n_chain, n_par) float array of starting samples
         store_thin: scalar integer, how much to thin the stored samples by (default 1)
         arg_record: optional sequence of chain indices to record in storage in
@@ -187,10 +189,12 @@ class DTMCMCSampler:
             arg_record columns follow in the given order, and an index that
             duplicates a readout chain is simply stored twice
         kernel_backend: {'auto', 'numba', 'python'}
-            Select the generated serial block kernel when it supports the
-            concrete likelihood and proposal graph. Both 'auto' and 'numba'
-            fall back silently to the Python path; 'python' disables only the
-            generated block kernel, leaving existing jitted helpers enabled.
+            Select the generated serial block kernel. 'numba' requires every
+            concrete graph component to be registered. 'auto' silently falls
+            back for a wholly undecorated graph and warns for a mixed graph;
+            registered compilation failures always raise. 'python' disables
+            only the generated block kernel, leaving existing jitted helpers
+            enabled.
         """
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
@@ -204,9 +208,10 @@ class DTMCMCSampler:
             msg = f'Unrecognized kernel_backend: {kernel_backend!r}'
             raise ValueError(msg)
         self.kernel_backend: str = kernel_backend
+        self._native_serial_backend = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: str = 'python'
         self.tracker_manager: TrackerManager
-        self.proposal_manager: ProposalManager
+        self.proposal_manager: AbstractProposalManager
         self.starting_samples = starting_samples
 
         self.T_ladder: TemperatureLadder = T_ladder_in
@@ -275,7 +280,7 @@ class DTMCMCSampler:
         self.samples_store = np.zeros((self.store_size, len(self.record_indices), self.n_par))
         self.logLs_store = np.zeros((self.store_size, len(self.record_indices)))
 
-    def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager | None = None) -> None:
         """Anything that needs to be done to initialize the various jumps"""
         if proposal_manager_in is None:
             self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])
@@ -368,7 +373,7 @@ class DTMCMCSampler:
 
     def block_main(self) -> None:
         """The main body of the block with the mcmc step"""
-        if self.kernel_backend != 'python' and try_advance_block_numba_serial(
+        if self._native_serial_backend.try_advance_block(
             self.T_ladder,
             self.logLs,
             self.samples,
