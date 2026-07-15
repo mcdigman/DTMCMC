@@ -5,6 +5,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.numba_backend import jittable_likelihood
 
 # constants
 # limits for first two parameters
@@ -28,6 +29,7 @@ def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
     return res
 
 
+@jittable_likelihood(get_loglike, state_attrs=('n_par',))
 class BananaLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

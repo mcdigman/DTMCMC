@@ -7,6 +7,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.numba_backend import jittable_likelihood
 
 
 @njit()
@@ -92,6 +93,10 @@ def _get_loglike_2tier(
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
+@jittable_likelihood(
+    _get_loglike_2tier,
+    state_attrs=('_tier_lognorms', '_tier_coefs', '_tier_powers'),
+)
 class CakeLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

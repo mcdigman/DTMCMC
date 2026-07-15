@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.numba_backend import jittable_likelihood
 
 tmax: float = 5.0 * np.pi
 
@@ -71,7 +72,39 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
     return new_point, success
 
 
+@njit(inline='always')
+def _native_prior_draw(
+    _n_par: int,
+    _low_lims: NDArray[np.floating],
+    _high_lims: NDArray[np.floating],
+    state: tuple[int],
+) -> NDArray[np.floating]:
+    return prior_draw(state[0])
+
+
+@njit(inline='always')
+def _native_prior_factor(params: NDArray[np.floating], state: tuple[int]) -> float:
+    return prior_factor(params, state[0])
+
+
+@njit(inline='always')
+def _native_validate_bounds(
+    params: NDArray[np.floating],
+    _low_lims: NDArray[np.floating],
+    _high_lims: NDArray[np.floating],
+    _state: tuple[int],
+) -> tuple[NDArray[np.floating], bool]:
+    return validate_bounds(params)
+
+
 # @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
+@jittable_likelihood(
+    get_loglike,
+    state_attrs=('n_par',),
+    prior_draw=_native_prior_draw,
+    prior_factor=_native_prior_factor,
+    validate_bounds=_native_validate_bounds,
+)
 class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -79,6 +112,8 @@ class EggboxLikelihood(RectangularLikelihood):
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default
+        self.low_lims = np.full(n_par, low_lim)
+        self.high_lims = np.full(n_par, high_lim)
         self.n_evals = 0
 
     def get_loglike(self, v: NDArray[np.floating]) -> float:

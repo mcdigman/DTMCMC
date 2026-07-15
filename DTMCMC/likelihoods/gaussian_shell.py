@@ -5,6 +5,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.numba_backend import jittable_likelihood
 
 # constants
 low_lim: float = -40.0
@@ -47,6 +48,7 @@ def draw_shell_radius() -> float:
             return d
 
 
+@jittable_likelihood(get_loglike)
 class GaussianShellLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

@@ -10,6 +10,8 @@ from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
+from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
+from DTMCMC.numba_backend import try_advance_block_numba_serial
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
 from DTMCMC.tracker_manager import TrackerManager
@@ -58,46 +60,6 @@ def store_sample_helper(
             store_idx = 0
 
     return store_idx, store_counter
-
-
-@njit()
-def mcmc_decision_helper(
-    itrb: int,
-    samples: NDArray[np.floating],
-    logLs: NDArray[np.floating],
-    betas: NDArray[np.floating],
-    accept_record: NDArray[np.int64],
-    esd_record: NDArray[np.floating],
-    itrt: int,
-    new_point: NDArray[np.floating],
-    logL_new: float,
-    density_fac: float,
-    idx_jump: int,
-) -> None:
-    """Helper to decide whether mcmc point is accepted or not and process accordingly"""
-    # draw to determine if we will accept
-    test: float = np.log(np.random.uniform(0.0, 1.0))
-
-    # squared displacement of the proposal, accumulated per (T, jump type)
-    # for the expected-squared-displacement tracker; pure observer, no draws
-    delta_sq: float = 0.0
-    for itrp in range(new_point.size):
-        diff: float = new_point[itrp] - samples[itrb - 1, itrt, itrp]
-        delta_sq += diff * diff
-    esd_record[0, itrt, idx_jump] += delta_sq
-
-    # process acceptance or rejection
-    if betas[itrt] * (logL_new - logLs[itrb - 1, itrt]) + density_fac > test:
-        # the draw was accepted, assign its parameters
-        samples[itrb, itrt] = new_point
-        logLs[itrb, itrt] = logL_new
-        accept_record[0, itrt, idx_jump] += 1
-        esd_record[1, itrt, idx_jump] += delta_sq
-    else:
-        # the draw was rejected, assign the old parameters
-        samples[itrb, itrt] = samples[itrb - 1, itrt]
-        logLs[itrb, itrt] = logLs[itrb - 1, itrt]
-        accept_record[1, itrt, idx_jump] += 1
 
 
 def advance_step_ptmcmc(
@@ -197,6 +159,7 @@ class DTMCMCSampler:
         starting_samples: NDArray[np.floating] | None = None,
         store_thin: int = 1,
         arg_record: list[int] | None = None,
+        kernel_backend: str = 'auto',
     ) -> None:
         """Create the chain object
 
@@ -219,6 +182,11 @@ class DTMCMCSampler:
             and their indices are recomputed at every ladder update; the
             arg_record columns follow in the given order, and an index that
             duplicates a readout chain is simply stored twice
+        kernel_backend: {'auto', 'numba', 'python'}
+            Select the generated serial block kernel when it supports the
+            concrete likelihood and proposal graph. Both 'auto' and 'numba'
+            fall back silently to the Python path; 'python' disables only the
+            generated block kernel, leaving existing jitted helpers enabled.
         """
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
@@ -228,6 +196,11 @@ class DTMCMCSampler:
         self.store_counter: int = 0
         self.itrn: int = 0
         self.like_obj: AbstractLikelihood = like_obj
+        if kernel_backend not in {'auto', 'numba', 'python'}:
+            msg = f'Unrecognized kernel_backend: {kernel_backend!r}'
+            raise ValueError(msg)
+        self.kernel_backend: str = kernel_backend
+        self.last_kernel_backend: str = 'python'
         self.tracker_manager: TrackerManager
         self.proposal_manager: ProposalManager
         self.starting_samples = starting_samples
@@ -391,6 +364,18 @@ class DTMCMCSampler:
 
     def block_main(self) -> None:
         """The main body of the block with the mcmc step"""
+        if self.kernel_backend != 'python' and try_advance_block_numba_serial(
+            self.T_ladder,
+            self.logLs,
+            self.samples,
+            self.chain_track,
+            self.proposal_manager,
+            self.like_obj,
+            self.tracker_manager,
+        ):
+            self.last_kernel_backend = 'numba'
+            return
+        self.last_kernel_backend = 'python'
         advance_block_ptmcmc(
             self.T_ladder,
             self.logLs,
