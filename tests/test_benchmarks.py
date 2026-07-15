@@ -39,6 +39,7 @@ SMOKE_PARAMS: dict[str, dict[str, Any]] = {
     'random_wheel': {'n_par': 2},
     'rosenbrock': {'n_par': 4},
     'spoke_wheel': {'n_par': 2},
+    'uniform_gaussian_prior': {'n_par': 3, 'prior_mean': 1.5, 'prior_std': 0.75},
 }
 
 

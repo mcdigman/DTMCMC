@@ -40,11 +40,11 @@ class AbstractLikelihood(Protocol):
         ...
 
     def prior_factor(self, params_in: NDArray[np.floating], /) -> float:
-        """Get the prior density factor for the input parameters.
+        """Get the untempered log prior density for the input parameters.
         input:
             params_in: the parameters to consider
         output:
-            prior_factor: a scalar density factor for the prior draw
+            prior_factor: log prior density up to an additive constant
         """
         ...
 

@@ -2,6 +2,8 @@
 blank manager to serve as template for adding more draw types
 """
 
+from copy import copy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -20,18 +22,20 @@ if TYPE_CHECKING:
 # TODO create a specialized likelihood object that makes this useful
 
 
+@dataclass(init=False)
 class HistoryStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
+    history_jump_weight: float
+
     def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
-        config_h = self.config['LadderHistoryJumpManager']
+        config_h = config['LadderHistoryJumpManager']
         self.history_jump_weight = config_h.getfloat('ladder_history_jump_weight', 0.0)
 
     def copy(self) -> HistoryStrategyParameters:
         """Copy the object"""
-        return HistoryStrategyParameters(self.config)
+        return copy(self)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object

@@ -9,7 +9,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
-    from DTMCMC.proposal_manager import ProposalManager
+    from DTMCMC.proposal_manager import AbstractProposalManager
 
 
 # direction codes for the round-trip event log
@@ -296,7 +296,7 @@ class TrackerManager:
         return res
 
     def print_tracker_summary(
-        self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: ProposalManager, last_itrn: int = -1
+        self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: AbstractProposalManager, last_itrn: int = -1
     ) -> None:
         """Print a summmary of results from this tracker object."""
         with np.errstate(invalid='ignore', divide='ignore'):

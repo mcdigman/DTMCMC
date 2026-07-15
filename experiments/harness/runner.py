@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from DTMCMC.likelihood import AbstractLikelihood
-    from DTMCMC.proposal_manager import ProposalManager
+    from DTMCMC.proposal_manager import AbstractProposalManager
 
 from diagnostic_commentary_helpers import print_diagnostic_commentary
 from DTMCMC.corr_summary_helpers import CorrelationSummary
@@ -45,6 +45,7 @@ from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.likelihoods.random_wheel import RandomWheelLikelihood
 from DTMCMC.likelihoods.rosenbrock import RosenbrockLikelihood
 from DTMCMC.likelihoods.spoke_wheel import SpokeWheelLikelihood
+from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import (
@@ -89,6 +90,7 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
     'random_wheel': RandomWheelLikelihood,
     'rosenbrock': RosenbrockLikelihood,
     'spoke_wheel': SpokeWheelLikelihood,
+    'uniform_gaussian_prior': UniformGaussianPriorLikelihood,
 }
 
 
@@ -317,7 +319,7 @@ class HarnessSampler(DTMCMCSampler):
         # Ts in place, so the copy must be taken before the first block runs
         self.initial_Ts = np.array(self.Ts, dtype=np.float64)
 
-    def initialize_jumps(self, proposal_manager_in: ProposalManager | None = None) -> None:
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
 
         Runs inside super().__init__ after initialize_state has filled
