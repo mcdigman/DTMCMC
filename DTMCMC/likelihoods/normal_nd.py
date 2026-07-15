@@ -5,6 +5,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.numba_backend import jittable_likelihood
 
 
 @njit()
@@ -22,6 +23,7 @@ def get_loglike(v: NDArray[np.floating]) -> float:
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
+@jittable_likelihood(get_loglike)
 class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

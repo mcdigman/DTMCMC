@@ -5,6 +5,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.numba_backend import jittable_likelihood
 
 # constants
 low_lim: float = -15.0
@@ -21,6 +22,7 @@ def get_loglike(x: NDArray[np.floating]) -> float:
     return res
 
 
+@jittable_likelihood(get_loglike)
 class HyperpyramidLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

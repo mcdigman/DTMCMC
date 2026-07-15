@@ -246,6 +246,7 @@ class HarnessSampler(DTMCMCSampler):
         provenance: RunProvenance | None = None,
         start_monotonic: float | None = None,
         sampler_verbosity: int = 0,
+        kernel_backend: str = 'auto',
     ) -> None:
         if artifact_path is not None and provenance is None:
             msg = 'artifact_path requires provenance'
@@ -279,6 +280,7 @@ class HarnessSampler(DTMCMCSampler):
             spec.store_size,
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
+            kernel_backend=kernel_backend,
         )
         self.de_manager = next(
             (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
@@ -429,6 +431,7 @@ def build_sampler(
     provenance: RunProvenance | None = None,
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
+    kernel_backend: str = 'auto',
 ) -> tuple[HarnessSampler, AbstractLikelihood]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
@@ -458,6 +461,7 @@ def build_sampler(
         provenance=provenance,
         start_monotonic=start_monotonic,
         sampler_verbosity=sampler_verbosity,
+        kernel_backend=kernel_backend,
     )
     return sampler, like_obj
 

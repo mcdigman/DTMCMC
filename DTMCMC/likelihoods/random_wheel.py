@@ -5,6 +5,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.numba_backend import jittable_likelihood
 
 # constants
 low_lim = -40.0
@@ -44,6 +45,7 @@ def get_loglike(v: NDArray[np.floating]) -> float:
     return res
 
 
+@jittable_likelihood(get_loglike)
 class RandomWheelLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
