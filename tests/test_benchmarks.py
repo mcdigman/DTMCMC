@@ -29,6 +29,7 @@ from experiments.pilots.family_compare import summarize_arms
 SMOKE_PARAMS: dict[str, dict[str, Any]] = {
     'gaussian': {'n_par': 3, 'cutoff': 5},
     'cake': {'n_par': 3, 'cutoff': 10},
+    'constant_rectangular': {'n_par': 3},
     'eggbox': {'n_par': 2},
     'hawaii': {},
     'ar1': {'n_par': 6},

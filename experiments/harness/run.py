@@ -14,6 +14,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='Execute a single DTMCMC run from a TOML spec')
     parser.add_argument('spec', help='path to the run spec TOML (repo-root relative or absolute)')
     parser.add_argument('--seed', type=int, default=None, help='override the run seed in the spec')
+    parser.add_argument(
+        '--zero-loglike',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='override run.zero_loglike (also supports --no-zero-loglike)',
+    )
     parser.add_argument('--out', default='artifacts', help='output directory for the artifact (default: artifacts/)')
     parser.add_argument(
         '--sampler-verbosity',
@@ -27,6 +33,8 @@ def main(argv: list[str] | None = None) -> int:
     spec = RunSpec.from_toml(resolve(args.spec))
     if args.seed is not None:
         spec = spec.with_seed(args.seed)
+    if args.zero_loglike is not None:
+        spec = spec.with_zero_loglike(args.zero_loglike)
 
     artifact_path = run_from_spec(spec, args.out, sampler_verbosity=args.sampler_verbosity)
 

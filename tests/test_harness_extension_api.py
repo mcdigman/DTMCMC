@@ -8,7 +8,7 @@ builds its proposal manager around the base-class-drawn starting samples
 in initialize_jumps, drives the adaptive controller from
 postblock_operations, flushes checkpoints from post_Nblock_teardown, and
 gates the base tracker summary through sampler_verbosity; the run CLI
-threads its --sampler-verbosity flag into run_from_spec.
+threads its overrides into the effective RunSpec and run_from_spec.
 """
 
 from typing import Any
@@ -252,19 +252,27 @@ def test_adaptive_burnin_iterations_no_controller() -> None:
     assert sampler.adaptive_burnin_iterations() == 0
 
 
-def test_run_cli_forwards_sampler_verbosity(monkeypatch, tmp_path) -> None:
-    """The run CLI threads --sampler-verbosity into run_from_spec."""
+@pytest.mark.parametrize(
+    ('spec_zero_loglike', 'cli_flag', 'expected_zero_loglike'),
+    [(False, '--zero-loglike', True), (True, '--no-zero-loglike', False)],
+)
+def test_run_cli_forwards_verbosity_and_zero_mode(
+    monkeypatch, tmp_path, spec_zero_loglike, cli_flag, expected_zero_loglike
+) -> None:
+    """The run CLI threads verbosity and zero mode into run_from_spec."""
     spec_path = tmp_path / 'spec.toml'
-    spec_path.write_text(dumps_toml(dict(TINY_SPEC)))
+    spec_path.write_text(dumps_toml(make_spec(zero_loglike=spec_zero_loglike).to_dict()))
 
     captured: dict[str, object] = {}
 
     def fake_run(_spec, _out, _artifact_name=None, sampler_verbosity=0):
         captured['sampler_verbosity'] = sampler_verbosity
+        captured['zero_loglike'] = _spec.zero_loglike
         return tmp_path / 'artifact.h5'
 
     monkeypatch.setattr(run_mod, 'run_from_spec', fake_run)
     monkeypatch.setattr(run_mod, 'validate', lambda *_args, **_kwargs: [])
 
-    assert run_mod.main([str(spec_path), '--out', str(tmp_path), '--sampler-verbosity', '2']) == 0
+    assert run_mod.main([str(spec_path), '--out', str(tmp_path), '--sampler-verbosity', '2', cli_flag]) == 0
     assert captured['sampler_verbosity'] == 2
+    assert captured['zero_loglike'] is expected_zero_loglike
