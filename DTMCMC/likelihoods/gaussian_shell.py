@@ -1,11 +1,15 @@
 """two shell likelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/Examples%20--%20Gaussian%20Shells.ipynb"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # constants
 low_lim: float = -40.0
@@ -48,7 +52,6 @@ def draw_shell_radius() -> float:
             return d
 
 
-@jittable_likelihood(get_loglike)
 class GaussianShellLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -64,8 +67,11 @@ class GaussianShellLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         return get_loglike(params_in)
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """The module-level loglike is already stateless and jitted."""
+        return get_loglike
 
 
 @njit()

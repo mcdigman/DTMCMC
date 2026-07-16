@@ -2,7 +2,6 @@
 blank manager to serve as template for adding more draw types
 """
 
-from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -32,10 +31,6 @@ class HistoryStrategyParameters:
         """Initialize the object with the prescribed parameters"""
         config_h = config['LadderHistoryJumpManager']
         self.history_jump_weight = config_h.getfloat('ladder_history_jump_weight', 0.0)
-
-    def copy(self) -> HistoryStrategyParameters:
-        """Copy the object"""
-        return copy(self)
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
@@ -100,6 +95,8 @@ class LadderHistoryJump(AbstractJump):
         itrt_target = np.random.randint(0, self.manager.T_ladder_old.n_chain)
         idx_target = np.random.randint(0, self.manager.logLs_old.shape[0])
 
+        # this jump-internal evaluation is invisible to the sampler's
+        # LikelihoodEvalTracker, which only counts orchestrated call sites
         logL_cur = self.manager.like_obj.get_loglike(sample_point)
         logL_new = self.manager.logLs_old[idx_target, itrt_target]
 

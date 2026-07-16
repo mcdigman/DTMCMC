@@ -203,8 +203,8 @@ def test_counting_proxy_matches_artifact(tmp_path) -> None:
         spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
     )
 
-    sampler, like_obj = build_sampler(spec)
-    evals_after_init = like_obj.n_evals
+    sampler, _like_obj = build_sampler(spec)
+    evals_after_init = sampler.eval_tracker.n_evals
     # initialization evaluates each starting sample once plus the Fisher
     # stencil: n_chain * (1 + 2 * n_par) evaluations at minimum
     assert evals_after_init >= spec.n_chain * (1 + 1 + 2 * 3)
@@ -212,15 +212,17 @@ def test_counting_proxy_matches_artifact(tmp_path) -> None:
     sampler.advance_N_blocks(spec.n_blocks)
 
     artifact_path = tmp_path / 'counting.h5'
-    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=True, wall_seconds=0.0)
+    write_artifact(
+        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=True, wall_seconds=0.0
+    )
 
     attrs = read_attrs(artifact_path)
-    assert int(np.asarray(attrs['n_likelihood_evals']).item()) == like_obj.n_evals
+    assert int(np.asarray(attrs['n_likelihood_evals']).item()) == sampler.eval_tracker.n_evals
 
     # exchange iterations evaluate nothing, so evals stay strictly below
     # chain-steps even after adding initialization and Fisher refreshes
     n_chain_steps = spec.n_steps * spec.n_chain
-    assert evals_after_init < like_obj.n_evals < n_chain_steps
+    assert evals_after_init < sampler.eval_tracker.n_evals < n_chain_steps
     assert validate(artifact_path, mode='complete') == []
 
 
@@ -233,11 +235,13 @@ def test_partial_artifact_validates_as_partial_only(tmp_path) -> None:
         spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
     )
 
-    sampler, like_obj = build_sampler(spec)
+    sampler, _like_obj = build_sampler(spec)
     sampler.advance_block()
 
     artifact_path = tmp_path / 'partial.h5'
-    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=False, wall_seconds=0.0)
+    write_artifact(
+        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
+    )
 
     assert validate(artifact_path, mode='partial') == []
     problems = validate(artifact_path, mode='complete')
@@ -455,10 +459,12 @@ def test_schema_version_mismatch_reported_alone(tmp_path) -> None:
     provenance = collect_provenance(
         spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
     )
-    sampler, like_obj = build_sampler(spec)
+    sampler, _like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'old_schema.h5'
-    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=False, wall_seconds=0.0)
+    write_artifact(
+        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
+    )
 
     with h5py.File(str(artifact_path), 'a') as hf:
         hf.attrs['schema_version'] = 1
@@ -476,10 +482,12 @@ def test_artifact_ladder_mismatch_detected(tmp_path) -> None:
     provenance = collect_provenance(
         spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
     )
-    sampler, like_obj = build_sampler(spec)
+    sampler, _like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'tampered.h5'
-    write_artifact(artifact_path, spec, sampler, like_obj.n_evals, provenance, finalized=False, wall_seconds=0.0)
+    write_artifact(
+        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
+    )
     assert validate(artifact_path, mode='partial') == []
 
     with h5py.File(str(artifact_path), 'a') as hf:

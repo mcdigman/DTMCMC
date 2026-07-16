@@ -62,6 +62,5 @@ class HawaiiLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         res: float = self.hawaii_interp(params_in)[0]
         return res

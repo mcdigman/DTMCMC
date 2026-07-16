@@ -4,7 +4,7 @@ Manager object to handle all dispatching of proposals.
 C 2023 Matthew C. Digman
 """
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
+@runtime_checkable
 class AbstractProposalManager(Protocol):
     """Structural aggregate proposal interface required by sampler kernels."""
 

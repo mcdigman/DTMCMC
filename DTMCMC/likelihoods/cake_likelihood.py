@@ -1,13 +1,16 @@
 """an n dimensional normal distribution"""
 
 from math import gamma
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @njit()
@@ -93,10 +96,6 @@ def _get_loglike_2tier(
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-@jittable_likelihood(
-    _get_loglike_2tier,
-    state_attrs=('_tier_lognorms', '_tier_coefs', '_tier_powers'),
-)
 class CakeLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -142,7 +141,6 @@ class CakeLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
         # r2_got: float = 0.0
         # for itrp in range(params_in.shape[0]):
@@ -154,3 +152,15 @@ class CakeLikelihood(RectangularLikelihood):
         #        res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
         #    )
         return res
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """Return the tier loglike with the tier tuples baked in as constants."""
+        tier_lognorms = self._tier_lognorms
+        tier_coefs = self._tier_coefs
+        tier_powers = self._tier_powers
+
+        @njit(inline='always')
+        def loglike_native(params_in: NDArray[np.floating]) -> float:
+            return _get_loglike_2tier(params_in, tier_lognorms, tier_coefs, tier_powers)
+
+        return loglike_native

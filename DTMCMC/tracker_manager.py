@@ -85,6 +85,23 @@ def process_chain_cycles(
 # TODO clean up tracker reporting
 
 
+class LikelihoodEvalTracker:
+    """Count likelihood evaluations on behalf of a stateless likelihood object.
+
+    The sampler owns one of these and counts at each orchestrated call site
+    (initialization, the Python step loop, the native kernel's returned
+    total, and Fisher-matrix refreshes), so likelihood objects themselves
+    stay immutable after construction.
+    """
+
+    def __init__(self) -> None:
+        self.n_evals: int = 0
+
+    def count(self, n: int = 1) -> None:
+        """Record n likelihood evaluations."""
+        self.n_evals += n
+
+
 class TrackerManager:
     """track various things about chains like acceptance rates and cycle times."""
 
