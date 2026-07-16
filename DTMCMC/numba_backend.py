@@ -558,6 +558,7 @@ def make_serial_kernel(
         manager_states: tuple[object, ...],
         exchange_state: object,
         jump_internal_evals: NDArray[np.int64],
+        zero_loglike: bool,
     ) -> tuple[int, int]:
         block_size = samples.shape[0] - 1
         n_chain = samples.shape[1]
@@ -579,7 +580,10 @@ def make_serial_kernel(
                     if success:
                         density_fac += prior_factor(new_point, like_state) - prior_factor(sample_point, like_state)
                     if success:
-                        logL_new = loglike(new_point, like_state)
+                        if zero_loglike:
+                            logL_new = 0.0
+                        else:
+                            logL_new = loglike(new_point, like_state)
                         n_target_evals += 1
                     else:
                         logL_new = -np.inf
@@ -762,6 +766,7 @@ class NativeSerialBackend:
         like_obj: AbstractLikelihood,
         tracker_manager: TrackerManager,
         eval_accounting: EvalAccounting,
+        zero_loglike: bool,
     ) -> bool:
         """Run a native block when the graph is bindable, otherwise return False."""
         if self.mode == 'python':
@@ -794,6 +799,7 @@ class NativeSerialBackend:
                 manager_states,
                 exchange_state,
                 self._jump_internal_evals,
+                zero_loglike,
             )
         except NumbaError as exc:
             # NumbaError here means the kernel failed to compile, which
