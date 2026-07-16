@@ -1,15 +1,13 @@
 """Constant likelihood with an independent Gaussian prior in every dimension."""
 
-from typing import TYPE_CHECKING
+from typing import NamedTuple
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from DTMCMC.numba_backend import NativeLoglikeCall, NativePriorDrawCall, NativePriorFactorCall
 
 
 @njit(inline='always')
@@ -39,6 +37,34 @@ def gaussian_prior_factor(
     return -0.5 * float(np.sum(standardized * standardized)) - float(np.sum(np.log(prior_std)))
 
 
+class UniformGaussianNativeState(NamedTuple):
+    """Runtime state bundle: the rectangular fields plus the Gaussian prior arrays."""
+
+    n_par: int
+    low_lims: NDArray[np.float64]
+    high_lims: NDArray[np.float64]
+    prior_mean: NDArray[np.float64]
+    prior_std: NDArray[np.float64]
+
+
+@njit(inline='always')
+def _loglike_native(params_in: NDArray[np.floating], _state: UniformGaussianNativeState) -> float:
+    """Per-class native log likelihood; the constant needs no instance state."""
+    return get_loglike(params_in)
+
+
+@njit(inline='always')
+def _prior_draw_native(state: UniformGaussianNativeState) -> NDArray[np.floating]:
+    """Per-class native Gaussian prior draw reading the state bundle."""
+    return gaussian_prior_draw(state.n_par, state.prior_mean, state.prior_std)
+
+
+@njit(inline='always')
+def _prior_factor_native(params_in: NDArray[np.floating], state: UniformGaussianNativeState) -> float:
+    """Per-class native Gaussian log prior density reading the state bundle."""
+    return gaussian_prior_factor(params_in, state.prior_mean, state.prior_std)
+
+
 class UniformGaussianPriorLikelihood(RectangularLikelihood):
     """Known Gaussian target produced by a constant likelihood and Gaussian prior."""
 
@@ -47,7 +73,7 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood):
             msg = 'prior_std must be positive'
             raise ValueError(msg)
         super().__init__(n_par, np.full(n_par, -np.inf), np.full(n_par, np.inf))
-        # frozen: the native bindings bake these arrays in by reference
+        # frozen so the Python path and the native state bundles always agree
         self.prior_mean = np.full(n_par, prior_mean)
         self.prior_std = np.full(n_par, prior_std)
         self.prior_mean.setflags(write=False)
@@ -65,29 +91,18 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood):
         """Return the Gaussian log prior density up to a constant."""
         return gaussian_prior_factor(params_in, self.prior_mean, self.prior_std)
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        """The constant loglike is already stateless and jitted."""
-        return get_loglike
+    def native_state(self) -> UniformGaussianNativeState:
+        """Return the rectangular fields plus the Gaussian prior arrays."""
+        return UniformGaussianNativeState(self.n_par, self.low_lims, self.high_lims, self.prior_mean, self.prior_std)
 
-    def bind_native_prior_draw(self) -> Callable[[], NDArray[np.floating]]:
-        """Return the Gaussian draw with the prior arrays baked in."""
-        n_par = self.n_par
-        prior_mean = self.prior_mean
-        prior_std = self.prior_std
+    def bind_native_loglike(self) -> NativeLoglikeCall[UniformGaussianNativeState]:
+        """Return the per-class native log likelihood."""
+        return _loglike_native
 
-        @njit(inline='always')
-        def prior_draw_native() -> NDArray[np.floating]:
-            return gaussian_prior_draw(n_par, prior_mean, prior_std)
+    def bind_native_prior_draw(self) -> NativePriorDrawCall[UniformGaussianNativeState]:
+        """Return the per-class native Gaussian prior draw."""
+        return _prior_draw_native
 
-        return prior_draw_native
-
-    def bind_native_prior_factor(self) -> Callable[[NDArray[np.floating]], float]:
-        """Return the Gaussian log density with the prior arrays baked in."""
-        prior_mean = self.prior_mean
-        prior_std = self.prior_std
-
-        @njit(inline='always')
-        def prior_factor_native(params: NDArray[np.floating]) -> float:
-            return gaussian_prior_factor(params, prior_mean, prior_std)
-
-        return prior_factor_native
+    def bind_native_prior_factor(self) -> NativePriorFactorCall[UniformGaussianNativeState]:
+        """Return the per-class native Gaussian log prior density."""
+        return _prior_factor_native

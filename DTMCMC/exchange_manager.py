@@ -2,7 +2,7 @@
 helpers to perform the parallel tempering exchanges
 """
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -247,12 +247,49 @@ def exchange_is_step_native(itrb: int) -> bool:
     return itrb % 2 == 0
 
 
+class ExchangeNativeState(NamedTuple):
+    """Runtime state bundle for the built-in native exchange functions."""
+
+    strategy: int
+    track_full_exchanges: bool
+
+
+@njit(inline='always')
+def _exchange_is_step_state_native(itrb: int, _state: ExchangeNativeState) -> bool:
+    """Per-class native exchange cadence (state-independent by default)."""
+    return exchange_is_step_native(itrb)
+
+
+@njit(inline='always')
+def _exchange_native(
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    n_chain: int,
+    betas: NDArray[np.floating],
+    exchange_tracker: NDArray[np.int64],
+    esd_exchange: NDArray[np.floating],
+    chain_track: NDArray[np.int64],
+    state: ExchangeNativeState,
+) -> None:
+    """Per-class native exchange executor reading the strategy from the state bundle."""
+    do_ptmcmc_exchange(
+        itrb - 1,
+        samples,
+        logLs,
+        n_chain,
+        betas,
+        exchange_tracker,
+        esd_exchange,
+        chain_track,
+        state.strategy,
+        state.track_full_exchanges,
+    )
+
+
 class ExchangeManager:
     """class to take a temperature ladder and state of a chain
     and define the strategy by which to propose exchanges
-
-    The strategy constants are fixed at construction: native bindings bake
-    them into compiled closures, so they must not be reassigned afterwards.
     """
 
     def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
@@ -291,33 +328,10 @@ class ExchangeManager:
         """
         return exchange_is_step_native(itrb)
 
-    def bind_native(self) -> NativeExchangeFunctions:
-        """Bake the exchange schedule and executor into jitted closures."""
-        strategy = self.strategy
-        track_full_exchanges = self.track_full_exchanges
+    def native_state(self) -> ExchangeNativeState:
+        """Return the runtime state bundle, re-read at each block entry."""
+        return ExchangeNativeState(self.strategy, self.track_full_exchanges)
 
-        @njit(inline='always')
-        def exchange_native(
-            itrb: int,
-            samples: NDArray[np.floating],
-            logLs: NDArray[np.floating],
-            n_chain: int,
-            betas: NDArray[np.floating],
-            exchange_tracker: NDArray[np.int64],
-            esd_exchange: NDArray[np.floating],
-            chain_track: NDArray[np.int64],
-        ) -> None:
-            do_ptmcmc_exchange(
-                itrb - 1,
-                samples,
-                logLs,
-                n_chain,
-                betas,
-                exchange_tracker,
-                esd_exchange,
-                chain_track,
-                strategy,
-                track_full_exchanges,
-            )
-
-        return NativeExchangeFunctions(is_exchange_step=exchange_is_step_native, exchange=exchange_native)
+    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeState]:
+        """Return the per-class native exchange schedule and executor."""
+        return NativeExchangeFunctions(is_exchange_step=_exchange_is_step_state_native, exchange=_exchange_native)

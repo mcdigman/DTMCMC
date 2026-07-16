@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from DTMCMC.jump_manager import JumpManager
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
-    from DTMCMC.tracker_manager import LikelihoodEvalTracker
 
 
 def get_default_proposal_manager(
@@ -36,7 +35,6 @@ def get_default_proposal_manager(
     auxilliary_manager_loc: AuxilliaryJumpManager | None = None,
     prior_manager_loc: PriorManager | None = None,
     exchange_manager_loc: ExchangeManager | None = None,
-    eval_tracker: LikelihoodEvalTracker | None = None,
 ) -> ProposalManager:
     """Get a default proposal manager object, or allow any individual part
     of the default fisher_manager_loc, de_manager_loc, prior_manager_loc to be replaced separately
@@ -52,7 +50,7 @@ def get_default_proposal_manager(
             starting_samples[itrt] = like_obj.prior_draw()
 
     if fisher_manager_loc is None:
-        fisher_manager_loc = FisherJumpManager(T_ladder, like_obj, starting_samples, config, eval_tracker=eval_tracker)
+        fisher_manager_loc = FisherJumpManager(T_ladder, like_obj, starting_samples, config)
 
     if de_manager_loc is None:
         de_manager_loc = DEJumpManager(T_ladder, like_obj, config)

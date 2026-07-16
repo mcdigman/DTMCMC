@@ -1,15 +1,11 @@
 """a gaussian mixture likelihood in n dimensions with 2 unequal modes at +/-5"""
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState, check_bounds_rectangular
+from DTMCMC.numba_backend import NativeLoglikeCall
 
 # constants
 low_lim: float = -10.0
@@ -30,6 +26,12 @@ def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
     return res
 
 
+@njit(inline='always')
+def _loglike_native(params_in: NDArray[np.floating], state: RectangularNativeState) -> float:
+    """Per-class native log likelihood reading n_par from the state bundle."""
+    return get_loglike(params_in, state.n_par)
+
+
 class GaussianMixtureLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -44,15 +46,9 @@ class GaussianMixtureLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in, self.n_par)
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        """Return the module loglike with n_par baked in as a constant."""
-        n_par = self.n_par
-
-        @njit(inline='always')
-        def loglike_native(params_in: NDArray[np.floating]) -> float:
-            return get_loglike(params_in, n_par)
-
-        return loglike_native
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+        """Return the per-class native log likelihood."""
+        return _loglike_native
 
 
 @njit()

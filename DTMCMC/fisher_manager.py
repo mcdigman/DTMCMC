@@ -3,7 +3,7 @@ module to store objects related to fisher matrix jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -11,14 +11,14 @@ from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
+from DTMCMC.likelihood import FisherSupportLikelihood
+from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood
-    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
-    from DTMCMC.tracker_manager import LikelihoodEvalTracker
 
 
 @njit()
@@ -50,29 +50,38 @@ def sigma_subspace_jump_helper(
     return new_point, 0.0, True
 
 
-FisherNativeState = tuple[
-    'NDArray[np.floating]', 'NDArray[np.floating]', 'NDArray[np.floating]'
-]  # (sigma_scales, chol_fishers, gamma_mults)
+class FisherNativeState(NamedTuple):
+    """Runtime state bundle for the Fisher-derived native jumps.
 
-
-def _bind_sigma_native(manager: FisherJumpManager, do_full: bool) -> NativeJumpCall:
-    """Bind a standard-deviation jump reading the manager's runtime state.
-
-    The scale arrays are refreshed between blocks, so they arrive through
-    the manager's runtime native state; only the immutable configuration
-    (n_par, subspace fraction) is baked.
+    Re-read at every block entry, so the between-block scale refreshes are
+    picked up exactly as on the Python path.
     """
-    n_par = manager.n_par
-    fisher_subspace_frac = manager.strategy_params.fisher_subspace_frac
 
-    @njit(inline='always')
-    def native_call(
-        sample_point: NDArray[np.floating], itrt: int, state: FisherNativeState
-    ) -> tuple[NDArray[np.floating], float, bool]:
-        sigma_scales = state[0]
-        return sigma_subspace_jump_helper(sample_point, itrt, n_par, fisher_subspace_frac, sigma_scales, do_full)
+    n_par: int
+    fisher_subspace_frac: float
+    sigma_scales: NDArray[np.floating]
+    chol_fishers: NDArray[np.floating]
+    gamma_mults: NDArray[np.floating]
 
-    return native_call
+
+@njit(inline='always')
+def _sigma_full_native(
+    sample_point: NDArray[np.floating], itrt: int, state: FisherNativeState, _like_state: object
+) -> tuple[NDArray[np.floating], float, bool]:
+    """Per-class native standard-deviation jump in all dimensions."""
+    return sigma_subspace_jump_helper(
+        sample_point, itrt, state.n_par, state.fisher_subspace_frac, state.sigma_scales, True
+    )
+
+
+@njit(inline='always')
+def _sigma_subspace_native(
+    sample_point: NDArray[np.floating], itrt: int, state: FisherNativeState, _like_state: object
+) -> tuple[NDArray[np.floating], float, bool]:
+    """Per-class native standard-deviation jump in random subspaces."""
+    return sigma_subspace_jump_helper(
+        sample_point, itrt, state.n_par, state.fisher_subspace_frac, state.sigma_scales, False
+    )
 
 
 @njit(inline='always')
@@ -92,8 +101,18 @@ def fisher_full_jump_helper(
     return new_point, 0.0, True
 
 
+@njit(inline='always')
+def _fisher_full_native(
+    sample_point: NDArray[np.floating], itrt: int, state: FisherNativeState, _like_state: object
+) -> tuple[NDArray[np.floating], float, bool]:
+    """Per-class native full Cholesky Fisher jump."""
+    return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
+
+
 class SigmaFullJump(AbstractJump):
     """Standard Deviation Jump in Full Dimensions"""
+
+    declared_internal_evals = 0
 
     def __init__(self, manager: FisherJumpManager) -> None:
         """Create the jump"""
@@ -104,10 +123,12 @@ class SigmaFullJump(AbstractJump):
         # new_point = sample_point+self.manager.sigma_scales[itrt]*mult
         # return new_point, 0., True
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
-        """Bind the jump as a jitted closure reading the manager runtime state."""
+    def bind_native(
+        self, likelihood_natives: NativeLikelihoodFunctions[object]
+    ) -> NativeJumpCall[FisherNativeState, object]:
+        """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
-        return _bind_sigma_native(self.manager, True)
+        return _sigma_full_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump"""
@@ -124,14 +145,18 @@ class SigmaFullJump(AbstractJump):
 class SigmaRandomSubspaceJump(AbstractJump):
     """Standard deviation jump in random subspaces"""
 
+    declared_internal_evals = 0
+
     def __init__(self, manager: FisherJumpManager) -> None:
         self.manager: FisherJumpManager = manager
         self.print_name = 'Std Random-D'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
-        """Bind the jump as a jitted closure reading the manager runtime state."""
+    def bind_native(
+        self, likelihood_natives: NativeLikelihoodFunctions[object]
+    ) -> NativeJumpCall[FisherNativeState, object]:
+        """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
-        return _bind_sigma_native(self.manager, False)
+        return _sigma_subspace_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump in random subspaces"""
@@ -205,15 +230,25 @@ class FisherStrategyParameters:
         config_f['verbose_Fisher'] = str(self.verbose_fisher)
 
 
+def declared_fisher_stencil_evals(n_chain: int, n_par: int, use_chol_fishers: bool) -> int:
+    """Deterministic likelihood-evaluation count of one ``set_fishers`` stencil.
+
+    Per chain: one center evaluation, two per diagonal element, and, with
+    Cholesky Fisher matrices, four per off-diagonal pair. Verified against
+    an independent call spy in the eval-accounting tests.
+    """
+    if use_chol_fishers:
+        return n_chain * (1 + 2 * n_par**2)
+    return n_chain * (1 + 2 * n_par)
+
+
 def set_fishers(
     sample_set: NDArray[np.floating],
     strategy_params: FisherStrategyParameters,
     n_chain: int,
     like_obj: AbstractLikelihood,
-    eval_tracker: LikelihoodEvalTracker | None = None,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Set up the fisher matrices"""
-    n_evals = 0
     use_chol_fishers = strategy_params.use_chol_fishers
     sigma_default = strategy_params.sigma_default
     max_fisher_el = strategy_params.max_fisher_el
@@ -237,7 +272,6 @@ def set_fishers(
         new_point_alt = like_obj.correct_bounds(new_point.copy())
         assert np.all(new_point == new_point_alt)
         nn = like_obj.get_loglike(new_point)
-        n_evals += 1
         for itrp in range(n_par):
             eps = epsilons[itrp]
             pointp = new_point.copy()
@@ -249,7 +283,6 @@ def set_fishers(
             pointm[itrp] -= 2 * eps
             pointm = like_obj.correct_bounds(pointm)
             mm = like_obj.get_loglike(pointm)
-            n_evals += 2
 
             fisher_loc = -(pp - 2.0 * nn + mm) / (4 * eps * eps) + 1.0 / sigma_default**2
 
@@ -290,7 +323,6 @@ def set_fishers(
                     pointmm[itrp2] -= eps2
                     pointmm = like_obj.correct_bounds(pointmm)
                     mm = like_obj.get_loglike(pointmm)
-                    n_evals += 4
 
                     res = -(pp - mp - pm + mm) / (4.0 * eps1 * eps2)
                     if not np.isfinite(res) or np.abs(res) > max_fisher_el:
@@ -308,8 +340,6 @@ def set_fishers(
 
             chol_fishers[itrt] = np.linalg.cholesky(fishers[itrt])
 
-    if eval_tracker is not None:
-        eval_tracker.count(n_evals)
     return sigma_diags, fishers, chol_fishers
 
 
@@ -345,9 +375,9 @@ def set_scales(
 class FisherJumpManager(JumpManager):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager
 
-    The fisher arrays are allocated once and refreshed in place: native jump
-    bindings bake them into compiled closures by reference, so their identity
-    must be stable for the lifetime of the sampler.
+    The fisher arrays are allocated once and refreshed in place; the native
+    state bundle is re-read at every block entry, so between-block refreshes
+    reach the native jumps exactly as they reach the Python path.
     """
 
     def __init__(
@@ -356,11 +386,15 @@ class FisherJumpManager(JumpManager):
         like_obj: AbstractLikelihood,
         sample_set: NDArray[np.floating],
         config: ConfigParser,
-        eval_tracker: LikelihoodEvalTracker | None = None,
     ) -> None:
         """Create the object"""
+        if not isinstance(like_obj, FisherSupportLikelihood):
+            msg = (
+                f'likelihood {type(like_obj).__qualname__} does not implement FisherSupportLikelihood '
+                '(correct_bounds and get_epsilons), which FisherJumpManager requires'
+            )
+            raise TypeError(msg)
         self.strategy_params = FisherStrategyParameters(config)
-        self.eval_tracker = eval_tracker
 
         jumps: list[AbstractJump] = [FisherFullJump(self), SigmaFullJump(self), SigmaRandomSubspaceJump(self)]
 
@@ -376,11 +410,24 @@ class FisherJumpManager(JumpManager):
             self.chol_fishers = np.zeros((0, 0, 0))
         self.sigma_scales: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
         self.gamma_mults: NDArray[np.floating] = np.zeros(self.n_chain)
+        # the construction-time stencil below is a declared deterministic
+        # cost read by the sampler's eval accounting
+        self.declared_construction_evals: int = self.declared_refresh_evals()
         self.reset_fishers_from_point(self.sample_set)
 
-    def bind_native_state(self) -> FisherNativeState:
-        """Return the identity-stable scale arrays read by this manager's jumps."""
-        return (self.sigma_scales, self.chol_fishers, self.gamma_mults)
+    def declared_refresh_evals(self) -> int:
+        """Deterministic likelihood-evaluation cost of one fisher refresh."""
+        return declared_fisher_stencil_evals(self.n_chain, self.n_par, self.strategy_params.use_chol_fishers)
+
+    def native_state(self) -> FisherNativeState:
+        """Return the runtime state bundle read by this manager's native jumps."""
+        return FisherNativeState(
+            self.n_par,
+            self.strategy_params.fisher_subspace_frac,
+            self.sigma_scales,
+            self.chol_fishers,
+            self.gamma_mults,
+        )
 
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
@@ -435,17 +482,15 @@ class FisherJumpManager(JumpManager):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
+    ) -> int:
         """Do any needed internal processing after an individual block of size block_size:
-        ie, fisher matrix updates
+        ie, fisher matrix updates. Returns the deterministic likelihood-evaluation cost.
         """
         return self.reset_fishers(itrn, block_size, samples, logLs)
 
     def reset_fishers_from_point(self, sample_set: NDArray[np.floating]) -> None:
         """Set the fisher matrix object at the specified point, updating in place"""
-        sigma_diags, fishers, chol_fishers = set_fishers(
-            sample_set, self.strategy_params, self.n_chain, self.like_obj, eval_tracker=self.eval_tracker
-        )
+        sigma_diags, fishers, chol_fishers = set_fishers(sample_set, self.strategy_params, self.n_chain, self.like_obj)
         self.sigma_diags[:] = sigma_diags
         self.fishers[:] = fishers
         self.chol_fishers[:] = chol_fishers
@@ -455,19 +500,25 @@ class FisherJumpManager(JumpManager):
 
     def reset_fishers(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
-        """Reset the fisher matrices from input samples"""
+    ) -> int:
+        """Reset the fisher matrices from input samples when a refresh is scheduled.
+
+        Returns the number of likelihood evaluations performed (the declared
+        stencil cost on a refresh block, 0 otherwise).
+        """
         if itrn // block_size < 4 or itrn % (block_size * self.strategy_params.fisher_downsample) == 0:
             samples_fisher = np.zeros((self.n_chain, self.n_par))
             if self.strategy_params.verbose_fisher:
                 print('fisher update', itrn)
+            # TODO fishers should not all be the same,
+            # but try making them so for now because of fisher calculation instability
+            index_select = np.unravel_index(np.argmax(logLs[:, :]), logLs.shape)
+            # index_select = (np.random.randint(0,self.block_size+1),np.random.randint(0,self.n_cold))
             for itrt in range(self.n_chain):
-                # TODO fishers should not all be the same,
-                # but try making them so for now because of fisher calculation instability
-                index_select = np.unravel_index(np.argmax(logLs[:, :]), logLs.shape)
-                # index_select = (np.random.randint(0,self.block_size+1),np.random.randint(0,self.n_cold))
                 samples_fisher[itrt] = samples[index_select]
             self.reset_fishers_from_point(samples_fisher)
+            return self.declared_refresh_evals()
+        return 0
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
@@ -475,23 +526,18 @@ class FisherJumpManager(JumpManager):
 
 
 class FisherFullJump(AbstractJump):
+    declared_internal_evals = 0
+
     def __init__(self, manager: FisherJumpManager) -> None:
         self.manager: FisherJumpManager = manager
         self.print_name = 'Fisher All-D'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
-        """Bind the jump over the manager's runtime Cholesky state."""
+    def bind_native(
+        self, likelihood_natives: NativeLikelihoodFunctions[object]
+    ) -> NativeJumpCall[FisherNativeState, object]:
+        """Return the per-class native jump over the manager's runtime Cholesky state."""
         del likelihood_natives
-
-        @njit(inline='always')
-        def native_call(
-            sample_point: NDArray[np.floating], itrt: int, state: FisherNativeState
-        ) -> tuple[NDArray[np.floating], float, bool]:
-            chol_fishers = state[1]
-            gamma_mults = state[2]
-            return fisher_full_jump_helper(sample_point, itrt, chol_fishers, gamma_mults)
-
-        return native_call
+        return _fisher_full_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a fisher matrix jump"""

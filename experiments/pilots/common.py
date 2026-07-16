@@ -191,6 +191,10 @@ def load_run_metrics(
         samples: NDArray[np.floating] = np.asarray(hf['store/samples'])
         n_iterations = int(np.asarray(hf.attrs['n_iterations']).item())
         n_evals = int(np.asarray(hf.attrs['n_likelihood_evals']).item())
+        # incomplete accounting (a component could not declare its cost)
+        # must not silently masquerade as an exact efficiency denominator;
+        # artifacts predating the attribute are complete by construction
+        n_evals_complete = bool(np.asarray(hf.attrs.get('n_likelihood_evals_complete', True)).item())
         n_chain = int(np.asarray(hf['ladder/Ts']).shape[0])
         wall_seconds = float(np.asarray(hf.attrs['wall_seconds']).item())
         store_thin = int(np.asarray(hf['store'].attrs['store_thin']).item())
@@ -217,8 +221,8 @@ def load_run_metrics(
         'rt_rate': float(rt_rate),
         'total_round_trips': total_trips,
         'n_eff_min': float(n_eff),
-        'n_eff_per_eval': float(n_eff / n_evals),
-        'n_likelihood_evals': float(n_evals),
+        'n_eff_per_eval': float(n_eff / n_evals) if n_evals_complete else float('nan'),
+        'n_likelihood_evals': float(n_evals) if n_evals_complete else float('nan'),
         'n_chain': float(n_chain),
         'n_iterations': float(n_iterations),
         'wall_seconds': wall_seconds,
