@@ -10,18 +10,18 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood
-    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
 @njit(inline='always')
 def _blank_jump_native(
-    sample_point: NDArray[np.floating], _itrt: int, _state: None
+    sample_point: NDArray[np.floating], _itrt: int, _state: None, _like_state: object
 ) -> tuple[NDArray[np.floating], float, bool]:
     return sample_point.copy(), 0.0, True
 
@@ -29,12 +29,14 @@ def _blank_jump_native(
 class BlankJump(AbstractJump):
     """Template jump for future extensions"""
 
+    declared_internal_evals = 0
+
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
         self.print_name = 'Blank Jump'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
-        """The blank jump is stateless, so the module-level closure suffices."""
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
+        """The blank jump is stateless, so the per-class module function suffices."""
         del likelihood_natives
         return _blank_jump_native
 

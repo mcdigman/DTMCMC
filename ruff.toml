@@ -71,6 +71,11 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 # imports used in @njit/@jitclass signatures must NOT be gated behind
 # `if TYPE_CHECKING` or the first call raises NameError on Python 3.14.
 runtime-evaluated-decorators = ["numba.njit", "numba.jit", "numba.experimental.jitclass"]
+# the native-binding callback protocols are part of the runtime extension
+# API: typing.get_type_hints on bind_native* hooks must resolve in the
+# defining module's namespace (PR #40 review F005), so these imports stay
+# out of TYPE_CHECKING blocks. typing/typing_extensions restate the default.
+exempt-modules = ["typing", "typing_extensions", "DTMCMC.numba_backend"]
 
 [lint.flake8-quotes]
 inline-quotes="single"

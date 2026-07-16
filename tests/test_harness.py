@@ -16,11 +16,19 @@ import numpy as np
 import pytest
 
 import DTMCMC.rng_helpers as rng_helpers
+from DTMCMC.eval_accounting import LoglikeCallSpy
 from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.batch import write_batch
 from experiments.harness.paths import default_config_path, repo_root
-from experiments.harness.runner import LADDER_BUILDERS, LIKELIHOOD_BUILDERS, build_ladder, build_sampler, run_from_spec
+from experiments.harness.runner import (
+    LADDER_BUILDERS,
+    LIKELIHOOD_BUILDERS,
+    build_ladder,
+    build_likelihood,
+    build_sampler,
+    run_from_spec,
+)
 from experiments.harness.spec import LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
 
 TINY_GAUSSIAN_SPEC: dict[str, Any] = {
@@ -190,12 +198,14 @@ def test_determinism_same_seed(tmp_path) -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_counting_proxy_matches_artifact(tmp_path) -> None:
-    """Acceptance 6: the artifact eval counter equals the proxy count.
+def test_counting_matches_independent_spy(tmp_path) -> None:
+    """Acceptance 6: the artifact eval accounting equals an independent call spy.
 
-    The tiny run exercises every current call site: initialization,
-    exchange and non-exchange iterations, and Fisher refreshes (the first
-    four blocks always refresh).
+    The tiny run exercises every accounting phase: initialization draws,
+    the Fisher construction and refresh stencils (the first four blocks
+    always refresh), and the Python block loop. The spy wraps get_loglike
+    before the sampler is built, so the comparison is independent of the
+    declared costs it verifies.
     """
     spec = make_tiny_spec()
     seed_children = seed_run(spec.seed)
@@ -203,26 +213,45 @@ def test_counting_proxy_matches_artifact(tmp_path) -> None:
         spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
     )
 
-    sampler, _like_obj = build_sampler(spec)
-    evals_after_init = sampler.eval_tracker.n_evals
-    # initialization evaluates each starting sample once plus the Fisher
-    # stencil: n_chain * (1 + 2 * n_par) evaluations at minimum
-    assert evals_after_init >= spec.n_chain * (1 + 1 + 2 * 3)
+    like_obj = build_likelihood(spec)
+    with LoglikeCallSpy(like_obj) as spy:
+        sampler, _like_obj = build_sampler(spec, like_obj=like_obj, kernel_backend='python')
+        accounting = sampler.eval_accounting
+        evals_after_init = accounting.initialization
+        # initialization evaluates each starting sample once plus the Fisher
+        # construction stencil: n_chain * (1 + 1 + 2 * n_par) evaluations
+        assert evals_after_init >= spec.n_chain * (1 + 1 + 2 * 3)
+        assert spy.n_calls == evals_after_init
 
-    sampler.advance_N_blocks(spec.n_blocks)
+        sampler.advance_N_blocks(spec.n_blocks)
+
+    assert accounting.complete
+    assert accounting.total == spy.n_calls
 
     artifact_path = tmp_path / 'counting.h5'
-    write_artifact(
-        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=True, wall_seconds=0.0
-    )
+    write_artifact(artifact_path, spec, sampler, accounting, provenance, finalized=True, wall_seconds=0.0)
 
     attrs = read_attrs(artifact_path)
-    assert int(np.asarray(attrs['n_likelihood_evals']).item()) == sampler.eval_tracker.n_evals
+    assert int(np.asarray(attrs['n_likelihood_evals']).item()) == spy.n_calls
+    assert bool(np.asarray(attrs['n_likelihood_evals_complete']).item())
+    breakdown = (
+        int(np.asarray(attrs['n_evals_initialization']).item()),
+        int(np.asarray(attrs['n_evals_proposal_targets']).item()),
+        int(np.asarray(attrs['n_evals_proposal_internal']).item()),
+        int(np.asarray(attrs['n_evals_post_block']).item()),
+    )
+    assert breakdown == (
+        accounting.initialization,
+        accounting.proposal_targets,
+        accounting.proposal_internal,
+        accounting.post_block,
+    )
+    assert sum(breakdown) == spy.n_calls
 
     # exchange iterations evaluate nothing, so evals stay strictly below
     # chain-steps even after adding initialization and Fisher refreshes
     n_chain_steps = spec.n_steps * spec.n_chain
-    assert evals_after_init < sampler.eval_tracker.n_evals < n_chain_steps
+    assert evals_after_init < accounting.total < n_chain_steps
     assert validate(artifact_path, mode='complete') == []
 
 
@@ -239,9 +268,7 @@ def test_partial_artifact_validates_as_partial_only(tmp_path) -> None:
     sampler.advance_block()
 
     artifact_path = tmp_path / 'partial.h5'
-    write_artifact(
-        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
-    )
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
 
     assert validate(artifact_path, mode='partial') == []
     problems = validate(artifact_path, mode='complete')
@@ -462,9 +489,7 @@ def test_schema_version_mismatch_reported_alone(tmp_path) -> None:
     sampler, _like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'old_schema.h5'
-    write_artifact(
-        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
-    )
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
 
     with h5py.File(str(artifact_path), 'a') as hf:
         hf.attrs['schema_version'] = 1
@@ -485,9 +510,7 @@ def test_artifact_ladder_mismatch_detected(tmp_path) -> None:
     sampler, _like_obj = build_sampler(spec)
 
     artifact_path = tmp_path / 'tampered.h5'
-    write_artifact(
-        artifact_path, spec, sampler, sampler.eval_tracker.n_evals, provenance, finalized=False, wall_seconds=0.0
-    )
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
     assert validate(artifact_path, mode='partial') == []
 
     with h5py.File(str(artifact_path), 'a') as hf:

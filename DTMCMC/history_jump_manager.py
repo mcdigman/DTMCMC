@@ -84,6 +84,9 @@ class LadderHistoryJumpManager(JumpManager):
 class LadderHistoryJump(AbstractJump):
     """Get a proposal from a random draw from the recorded historical points"""
 
+    # each dispatch evaluates the likelihood once at the current point
+    declared_internal_evals = 1
+
     def __init__(self, manager: LadderHistoryJumpManager) -> None:
         """Get the object to propose ladder history draws"""
         self.manager: LadderHistoryJumpManager = manager
@@ -95,8 +98,8 @@ class LadderHistoryJump(AbstractJump):
         itrt_target = np.random.randint(0, self.manager.T_ladder_old.n_chain)
         idx_target = np.random.randint(0, self.manager.logLs_old.shape[0])
 
-        # this jump-internal evaluation is invisible to the sampler's
-        # LikelihoodEvalTracker, which only counts orchestrated call sites
+        # this jump-internal evaluation is reported to the sampler's
+        # eval accounting through declared_internal_evals above
         logL_cur = self.manager.like_obj.get_loglike(sample_point)
         logL_new = self.manager.logLs_old[idx_target, itrt_target]
 

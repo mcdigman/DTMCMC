@@ -32,6 +32,7 @@ from .paths import repo_root
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from DTMCMC.eval_accounting import EvalAccounting
     from experiments.adaptive import AdaptiveLadderController
 
     from .spec import RunSpec
@@ -200,7 +201,7 @@ def write_artifact(
     path: Path,
     spec: RunSpec,
     sampler: DTMCMCSampler,
-    n_likelihood_evals: int,
+    eval_accounting: EvalAccounting,
     provenance: RunProvenance,
     finalized: bool,
     wall_seconds: float,
@@ -227,7 +228,16 @@ def write_artifact(
         hf.attrs['wall_seconds'] = wall_seconds
         hf.attrs['n_iterations'] = sampler.itrn
         hf.attrs['n_chain_steps'] = sampler.itrn * n_chain
-        hf.attrs['n_likelihood_evals'] = n_likelihood_evals
+        # evaluation accounting: the total plus the per-phase breakdown; a
+        # component that cannot declare its cost marks the total incomplete
+        # rather than silently undercounting (consumers must not present an
+        # incomplete total as exact)
+        hf.attrs['n_likelihood_evals'] = eval_accounting.total
+        hf.attrs['n_likelihood_evals_complete'] = eval_accounting.complete
+        hf.attrs['n_evals_initialization'] = eval_accounting.initialization
+        hf.attrs['n_evals_proposal_targets'] = eval_accounting.proposal_targets
+        hf.attrs['n_evals_proposal_internal'] = eval_accounting.proposal_internal
+        hf.attrs['n_evals_post_block'] = eval_accounting.post_block
         # readers convert freeze blocks to iterations without reparsing the
         # embedded spec (schema v4)
         hf.attrs['block_size'] = sampler.block_size

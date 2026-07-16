@@ -1,16 +1,14 @@
 """an n dimensional normal distribution"""
 
 from math import gamma
-from typing import TYPE_CHECKING
+from typing import NamedTuple
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from DTMCMC.numba_backend import NativeLoglikeCall
 
 
 @njit()
@@ -91,6 +89,23 @@ def _get_loglike_2tier(
     return res
 
 
+class CakeNativeState(NamedTuple):
+    """Runtime state bundle: the rectangular fields plus the tier constants."""
+
+    n_par: int
+    low_lims: NDArray[np.float64]
+    high_lims: NDArray[np.float64]
+    tier_lognorms: tuple[float, float]
+    tier_coefs: tuple[float, float]
+    tier_powers: tuple[float, float]
+
+
+@njit(inline='always')
+def _loglike_native(params_in: NDArray[np.floating], state: CakeNativeState) -> float:
+    """Per-class native log likelihood reading the tier constants from the state bundle."""
+    return _get_loglike_2tier(params_in, state.tier_lognorms, state.tier_coefs, state.tier_powers)
+
+
 # n dimensional unit normal motivated by the 100d considerations in
 # https://statmodeling.stat.columbia.edu/2017/03/15/ensemble-methods-doomed-fail-high-dimensions/
 
@@ -153,14 +168,12 @@ class CakeLikelihood(RectangularLikelihood):
         #    )
         return res
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        """Return the tier loglike with the tier tuples baked in as constants."""
-        tier_lognorms = self._tier_lognorms
-        tier_coefs = self._tier_coefs
-        tier_powers = self._tier_powers
+    def native_state(self) -> CakeNativeState:
+        """Return the rectangular fields plus the tier constants."""
+        return CakeNativeState(
+            self.n_par, self.low_lims, self.high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
+        )
 
-        @njit(inline='always')
-        def loglike_native(params_in: NDArray[np.floating]) -> float:
-            return _get_loglike_2tier(params_in, tier_lognorms, tier_coefs, tier_powers)
-
-        return loglike_native
+    def bind_native_loglike(self) -> NativeLoglikeCall[CakeNativeState]:
+        """Return the per-class native log likelihood."""
+        return _loglike_native
