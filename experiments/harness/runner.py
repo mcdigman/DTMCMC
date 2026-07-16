@@ -263,7 +263,6 @@ class HarnessSampler(DTMCMCSampler):
         self.provenance = provenance
         self.start_monotonic = time.monotonic() if start_monotonic is None else start_monotonic
         self.sampler_verbosity = sampler_verbosity
-        self.counting_like = like_obj
         # periodic "major report" bookkeeping: rather than comparing itrn
         # against a run total (the sampler must not know how many iterations
         # it will be run for), the teardown accumulates steps since the last
@@ -340,6 +339,7 @@ class HarnessSampler(DTMCMCSampler):
             starting_samples=self.samples[0, :, :],
             config=self.config,
             exchange_manager_loc=exchange_manager,
+            eval_tracker=self.eval_tracker,
         )
 
     def postblock_operations(self) -> None:
@@ -403,7 +403,7 @@ class HarnessSampler(DTMCMCSampler):
                 self.artifact_path,
                 self.spec,
                 self,
-                self.counting_like.n_evals,
+                self.eval_tracker.n_evals,
                 self.provenance,
                 finalized=major_report,
                 wall_seconds=time.monotonic() - self.start_monotonic,

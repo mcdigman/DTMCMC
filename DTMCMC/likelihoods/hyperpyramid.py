@@ -1,11 +1,15 @@
 """the 2D hyper-pyramid lkelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # constants
 low_lim: float = -15.0
@@ -22,7 +26,6 @@ def get_loglike(x: NDArray[np.floating]) -> float:
     return res
 
 
-@jittable_likelihood(get_loglike)
 class HyperpyramidLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -38,5 +41,8 @@ class HyperpyramidLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         return get_loglike(params_in)
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """The module-level loglike is already stateless and jitted."""
+        return get_loglike

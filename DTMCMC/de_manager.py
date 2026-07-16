@@ -2,21 +2,20 @@
 Module to manage differential evoultion jumps
 """
 
-from copy import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeLikelihoodState, jittable_jump, jittable_jump_manager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions, NativePostStepCall
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
@@ -61,56 +60,26 @@ def apply_de_helper(
     return new_point, 0.0, nontrivial
 
 
-class DENativeState(NamedTuple):
-    """Numba-compatible runtime state for differential-evolution jumps."""
+def _bind_de_native(manager: DEJumpManager, do_subspace: bool, do_big: bool) -> NativeJumpCall:
+    """Bind a differential-evolution jump reading the manager's runtime state.
 
-    de_buffer: NDArray[np.floating]
-    de_subspace_frac: float
-    de_thin: int
-    counters: NDArray[np.int64]
+    The ring buffer is mutated inside the block by the per-step update, so
+    it must arrive through the manager's runtime native state rather than
+    being baked (Numba treats captured arrays as read-only non-aliasing
+    constants); only the immutable subspace fraction is baked.
+    """
+    de_subspace_frac = manager.de_subspace_frac
 
+    @njit(inline='always')
+    def native_call(
+        sample_point: NDArray[np.floating], itrt: int, state: tuple[NDArray[np.floating], NDArray[np.int64]]
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        de_buffer = state[0]
+        return apply_de_helper(de_buffer, de_subspace_frac, itrt, sample_point, do_subspace, do_big)
 
-@njit(inline='always')
-def _de_standard_full_native(
-    sample_point: NDArray[np.floating],
-    itrt: int,
-    state: DENativeState,
-    _likelihood: NativeLikelihoodState,
-) -> tuple[NDArray[np.floating], float, bool]:
-    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, False)
-
-
-@njit(inline='always')
-def _de_standard_subspace_native(
-    sample_point: NDArray[np.floating],
-    itrt: int,
-    state: DENativeState,
-    _likelihood: NativeLikelihoodState,
-) -> tuple[NDArray[np.floating], float, bool]:
-    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, False)
+    return native_call
 
 
-@njit(inline='always')
-def _de_big_full_native(
-    sample_point: NDArray[np.floating],
-    itrt: int,
-    state: DENativeState,
-    _likelihood: NativeLikelihoodState,
-) -> tuple[NDArray[np.floating], float, bool]:
-    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, True)
-
-
-@njit(inline='always')
-def _de_big_subspace_native(
-    sample_point: NDArray[np.floating],
-    itrt: int,
-    state: DENativeState,
-    _likelihood: NativeLikelihoodState,
-) -> tuple[NDArray[np.floating], float, bool]:
-    return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, True)
-
-
-@jittable_jump(_de_standard_full_native)
 class DEStandardFullJump(AbstractJump):
     """apply a jump with standard random size in all dimensions
     null proposals are marked as failures
@@ -120,11 +89,15 @@ class DEStandardFullJump(AbstractJump):
         self.manager: DEJumpManager = manager
         self.print_name = 'DE Std All-D'
 
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Bind the jump as a jitted closure reading the manager runtime state."""
+        del likelihood_natives
+        return _bind_de_native(self.manager, False, False)
+
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
 
 
-@jittable_jump(_de_standard_subspace_native)
 class DEStandardRandomSubspaceJump(AbstractJump):
     """apply a jump with standard random size in a random subspace
     null proposals are marked as failures
@@ -134,11 +107,15 @@ class DEStandardRandomSubspaceJump(AbstractJump):
         self.manager: DEJumpManager = manager
         self.print_name = 'DE Std Random-D'
 
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Bind the jump as a jitted closure reading the manager runtime state."""
+        del likelihood_natives
+        return _bind_de_native(self.manager, True, False)
+
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
 
 
-@jittable_jump(_de_big_full_native)
 class DEBigFullJump(AbstractJump):
     """apply the full length differential evolution jump in all dimensions
     null proposals are marked as failures
@@ -148,11 +125,15 @@ class DEBigFullJump(AbstractJump):
         self.manager: DEJumpManager = manager
         self.print_name = 'DE Big All-D'
 
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Bind the jump as a jitted closure reading the manager runtime state."""
+        del likelihood_natives
+        return _bind_de_native(self.manager, False, True)
+
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
 
 
-@jittable_jump(_de_big_subspace_native)
 class DEBigRandomSubspaceJump(AbstractJump):
     """apply the full length differential evolution jump in a random subspace
     null proposals are marked as failures
@@ -161,6 +142,11 @@ class DEBigRandomSubspaceJump(AbstractJump):
     def __init__(self, manager: DEJumpManager) -> None:
         self.manager: DEJumpManager = manager
         self.print_name = 'DE Big Random-D'
+
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Bind the jump as a jitted closure reading the manager runtime state."""
+        del likelihood_natives
+        return _bind_de_native(self.manager, True, True)
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
@@ -195,30 +181,6 @@ def advance_de_state_helper(
     return itrde_write, itrde_count
 
 
-def _get_de_native_state(manager: Any) -> DENativeState:
-    counters = np.asarray((manager.itrde_write, manager.itrde_count), dtype=np.int64)
-    return DENativeState(manager.de_buffer, manager.de_subspace_frac, manager.de_thin, counters)
-
-
-def _set_de_native_state(manager: Any, state: DENativeState) -> None:
-    manager.itrde_write = int(state.counters[0])
-    manager.itrde_count = int(state.counters[1])
-
-
-@njit(inline='always')
-def _post_de_native_state(state: DENativeState, samples: NDArray[np.floating]) -> DENativeState:
-    write, count = advance_de_state_helper(
-        int(state.counters[1]),
-        int(state.counters[0]),
-        state.de_thin,
-        state.de_buffer,
-        samples,
-    )
-    state.counters[0] = write
-    state.counters[1] = count
-    return state
-
-
 @dataclass(init=False)
 class DEStrategyParameters:
     """container to store some parameters related to the strategy of differential evolution proposal generation"""
@@ -250,10 +212,6 @@ class DEStrategyParameters:
         # how much to thin the differential evolution buffer by
         self.de_thin = config_de.getint('de_thin', 1)
 
-    def copy(self) -> DEStrategyParameters:
-        """Copy the object"""
-        return copy(self)
-
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
@@ -273,13 +231,13 @@ class DEStrategyParameters:
 # TODO fix name lengths
 
 
-@jittable_jump_manager(
-    state_getter=_get_de_native_state,
-    state_setter=_set_de_native_state,
-    post_step=_post_de_native_state,
-)
 class DEJumpManager(JumpManager):
-    """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager"""
+    """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager
+
+    The ring buffer and the write/thinning counter array are allocated once
+    and mutated in place: native bindings bake them into compiled closures by
+    reference, so their identity must be stable for the sampler's lifetime.
+    """
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
         """Create the manager object"""
@@ -301,8 +259,52 @@ class DEJumpManager(JumpManager):
         self.de_buffer = np.zeros((self.de_size, self.n_chain, self.n_par))
         initialize_de_helper(self.de_buffer, self.de_size, self.n_chain, self.like_obj)
 
-        self.itrde_write: int = 1
-        self.itrde_count: int = 1
+        # identity-stable counter storage as (write, count); the int-valued
+        # itrde_write/itrde_count properties are views into this array
+        self._de_counters: NDArray[np.int64] = np.zeros(2, dtype=np.int64)
+        self.itrde_write = 1
+        self.itrde_count = 1
+
+    @property
+    def itrde_write(self) -> int:
+        """Next ring-buffer row to write, backed by the counter array."""
+        return int(self._de_counters[0])
+
+    @itrde_write.setter
+    def itrde_write(self, value: int) -> None:
+        self._de_counters[0] = value
+
+    @property
+    def itrde_count(self) -> int:
+        """Thinning countdown state, backed by the counter array."""
+        return int(self._de_counters[1])
+
+    @itrde_count.setter
+    def itrde_count(self, value: int) -> None:
+        self._de_counters[1] = value
+
+    def bind_native_state(self) -> tuple[NDArray[np.floating], NDArray[np.int64]]:
+        """Return the identity-stable mutable state shared by jumps and post-step."""
+        return (self.de_buffer, self._de_counters)
+
+    def bind_native_post_step(self) -> NativePostStepCall:
+        """Bind the ring-buffer write as a jitted per-step closure.
+
+        The buffer and counters are written per step, so they arrive through
+        the runtime state; only the immutable thinning factor is baked.
+        """
+        de_thin = self.de_thin
+
+        @njit(inline='always')
+        def post_step_native(
+            state: tuple[NDArray[np.floating], NDArray[np.int64]], samples: NDArray[np.floating]
+        ) -> None:
+            de_buffer, counters = state
+            itrde_write, itrde_count = advance_de_state_helper(counters[1], counters[0], de_thin, de_buffer, samples)
+            counters[0] = itrde_write
+            counters[1] = itrde_count
+
+        return post_step_native
 
     def write_de(self, samples: NDArray[np.floating]) -> None:
         """Write to the differential evolution buffer"""

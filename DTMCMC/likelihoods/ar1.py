@@ -1,11 +1,15 @@
 """The ar(1) likelihood in n dimensions"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # constants
 low_lim: float = -10.0
@@ -30,7 +34,6 @@ def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
     return res
 
 
-@jittable_likelihood(get_loglike, state_attrs=('n_par',))
 class Ar1Likelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -43,8 +46,17 @@ class Ar1Likelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         return get_loglike(params_in, self.n_par)
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """Return the module loglike with n_par baked in as a constant."""
+        n_par = self.n_par
+
+        @njit(inline='always')
+        def loglike_native(params_in: NDArray[np.floating]) -> float:
+            return get_loglike(params_in, n_par)
+
+        return loglike_native
 
 
 @njit()

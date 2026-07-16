@@ -1,11 +1,15 @@
 """an n dimensional normal distribution"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood, check_bounds_rectangular
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @njit()
@@ -23,7 +27,6 @@ def get_loglike(v: NDArray[np.floating]) -> float:
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-@jittable_likelihood(get_loglike)
 class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -36,8 +39,11 @@ class GaussianLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         return get_loglike(params_in)
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """The module-level loglike is already stateless and jitted."""
+        return get_loglike
 
 
 @njit()

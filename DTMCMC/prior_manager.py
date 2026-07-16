@@ -2,64 +2,42 @@
 manager to manage prior-draw based jumps
 """
 
-from copy import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import (
-    NativeLikelihoodSpec,
-    NativeLikelihoodState,
-    jittable_jump,
-    jittable_jump_manager,
-)
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
-class PriorNativeState(NamedTuple):
-    """Empty native state for prior-draw proposals."""
-
-
-def _make_prior_native(
-    likelihood_spec: NativeLikelihoodSpec,
-) -> Callable[..., tuple[NDArray[np.floating], float, bool]]:
-    prior_draw = likelihood_spec.prior_draw
-    prior_factor = likelihood_spec.prior_factor
-
-    @njit(inline='always')
-    def prior_native(
-        sample_point: NDArray[np.floating],
-        _itrt: int,
-        _manager_state: PriorNativeState,
-        likelihood: NativeLikelihoodState,
-    ) -> tuple[NDArray[np.floating], float, bool]:
-        new_point = prior_draw(
-            likelihood.n_par,
-            likelihood.low_lims,
-            likelihood.high_lims,
-            likelihood.custom,
-        )
-        density_fac = prior_factor(sample_point, likelihood.custom) - prior_factor(new_point, likelihood.custom)
-        return new_point, density_fac, True
-
-    return prior_native
-
-
-@jittable_jump(factory=_make_prior_native)
 class PriorFullJump(AbstractJump):
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
         self.print_name = 'Prior All-D'
+
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Bake the likelihood's own bound prior draw and density closures."""
+        prior_draw = likelihood_natives.prior_draw
+        prior_factor = likelihood_natives.prior_factor
+
+        @njit(inline='always')
+        def native_call(
+            sample_point: NDArray[np.floating], _itrt: int, _state: None
+        ) -> tuple[NDArray[np.floating], float, bool]:
+            new_point = prior_draw()
+            density_fac = prior_factor(sample_point) - prior_factor(new_point)
+            return new_point, density_fac, True
+
+        return native_call
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         del itrt
@@ -83,10 +61,6 @@ class PriorStrategyParameters:
         # how often to do prior draws in the hottest finite temperature chain
         self.hot_prior_target_weight = config_p.getfloat('hot_prior_target_weight', 0.333)
 
-    def copy(self) -> PriorStrategyParameters:
-        """Copy the object"""
-        return copy(self)
-
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
@@ -97,24 +71,6 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-def _get_prior_native_state(_manager: Any) -> PriorNativeState:
-    return PriorNativeState()
-
-
-def _set_prior_native_state(_manager: Any, _state: PriorNativeState) -> None:
-    """Prior manager native state is empty."""
-
-
-@njit(inline='always')
-def _post_prior_native_state(state: PriorNativeState, _samples: NDArray[np.floating]) -> PriorNativeState:
-    return state
-
-
-@jittable_jump_manager(
-    state_getter=_get_prior_native_state,
-    state_setter=_set_prior_native_state,
-    post_step=_post_prior_native_state,
-)
 class PriorManager(JumpManager):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
