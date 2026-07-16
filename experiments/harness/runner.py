@@ -36,6 +36,7 @@ from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.likelihoods.ar1 import Ar1Likelihood
 from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
+from DTMCMC.likelihoods.constant_rectangular import ConstantRectangularLikelihood
 from DTMCMC.likelihoods.eggbox import EggboxLikelihood
 from DTMCMC.likelihoods.gaussian_mixture import GaussianMixtureLikelihood
 from DTMCMC.likelihoods.gaussian_shell import GaussianShellLikelihood
@@ -80,6 +81,7 @@ DE_MEMORY_MIN_BLOCKS_FIXED = 4
 LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
+    'constant_rectangular': ConstantRectangularLikelihood,
     'eggbox': EggboxLikelihood,
     'hawaii': HawaiiLikelihood,
     'ar1': Ar1Likelihood,
@@ -282,6 +284,7 @@ class HarnessSampler(DTMCMCSampler):
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
             kernel_backend=kernel_backend,
+            zero_loglike=spec.zero_loglike,
         )
         self.de_manager = next(
             (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
@@ -443,7 +446,8 @@ def build_sampler(
     pass like_obj/T_ladder to override the spec-built ones (the adaptive
     path supplies its prior-anchored initial ladder). The keyword-only
     arguments configure the extension hooks: without an artifact_path the
-    teardown records checkpoint metrics but writes nothing.
+    teardown records checkpoint metrics but writes nothing. Scientific run
+    modes, including zero_loglike, come from the serializable RunSpec.
     """
     if like_obj is None:
         like_obj = build_likelihood(spec)
@@ -567,6 +571,8 @@ def run_from_spec(
     out_path.mkdir(parents=True, exist_ok=True)
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
+    # build_sampler consumes scientific run modes from the effective spec,
+    # including zero_loglike, so artifact provenance and execution agree.
     sampler, _like_obj = build_sampler(
         spec,
         config=config,

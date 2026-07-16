@@ -91,8 +91,18 @@ def test_spec_toml_roundtrip_example_file() -> None:
     """The checked-in example spec parses, and its TOML round-trip is exact."""
     spec = RunSpec.from_toml(repo_root() / 'experiments' / 'specs' / 'tiny_gaussian.toml')
     assert spec.likelihood_name == 'gaussian'
+    assert not spec.zero_loglike
     round_tripped = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
     assert round_tripped == spec
+
+
+def test_zero_loglike_spec_toml_roundtrip() -> None:
+    """The scientific zero-mode flag is validated and preserved in resolved specs."""
+    spec = make_tiny_spec(zero_loglike=True)
+    round_tripped = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    assert round_tripped == spec
+    assert round_tripped.zero_loglike
+    assert not round_tripped.with_zero_loglike(False).zero_loglike
 
 
 def test_dumps_toml_roundtrip_tricky_values() -> None:
@@ -119,6 +129,7 @@ def test_dumps_toml_roundtrip_tricky_values() -> None:
         (('ladder', 'kind'), 'nonsense', 'unknown ladder kind'),
         (('ladder', 'n_cold'), 0, 'n_cold must be'),
         (('run', 'n_steps'), 100, 'multiple of'),
+        (('run', 'zero_loglike'), 'yes', 'zero_loglike must be a boolean'),
         (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
         (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
         (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),

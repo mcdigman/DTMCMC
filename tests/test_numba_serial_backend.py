@@ -678,6 +678,7 @@ def test_uniform_likelihood_gaussian_prior_contract_is_bit_exact() -> None:
         'ar1',
         'banana',
         'cake',
+        'constant_rectangular',
         'gaussian',
         'gaussian_mixture',
         'gaussian_shell',
