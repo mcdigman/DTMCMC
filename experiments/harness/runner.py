@@ -251,7 +251,6 @@ class HarnessSampler(DTMCMCSampler):
         start_monotonic: float | None = None,
         sampler_verbosity: int = 0,
         kernel_backend: str = 'auto',
-        zero_loglike: bool = False,
     ) -> None:
         if artifact_path is not None and provenance is None:
             msg = 'artifact_path requires provenance'
@@ -285,7 +284,7 @@ class HarnessSampler(DTMCMCSampler):
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
             kernel_backend=kernel_backend,
-            zero_loglike=zero_loglike,
+            zero_loglike=spec.zero_loglike,
         )
         self.de_manager = next(
             (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
@@ -437,7 +436,6 @@ def build_sampler(
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
     kernel_backend: str = 'auto',
-    zero_loglike: bool = False,
 ) -> tuple[HarnessSampler, AbstractLikelihood]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
@@ -448,8 +446,8 @@ def build_sampler(
     pass like_obj/T_ladder to override the spec-built ones (the adaptive
     path supplies its prior-anchored initial ladder). The keyword-only
     arguments configure the extension hooks: without an artifact_path the
-    teardown records checkpoint metrics but writes nothing; zero_loglike
-    enables the prior-recovery review mode (see DTMCMCSampler).
+    teardown records checkpoint metrics but writes nothing. Scientific run
+    modes, including zero_loglike, come from the serializable RunSpec.
     """
     if like_obj is None:
         like_obj = build_likelihood(spec)
@@ -469,7 +467,6 @@ def build_sampler(
         start_monotonic=start_monotonic,
         sampler_verbosity=sampler_verbosity,
         kernel_backend=kernel_backend,
-        zero_loglike=zero_loglike,
     )
     return sampler, like_obj
 
@@ -574,6 +571,8 @@ def run_from_spec(
     out_path.mkdir(parents=True, exist_ok=True)
     artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
 
+    # build_sampler consumes scientific run modes from the effective spec,
+    # including zero_loglike, so artifact provenance and execution agree.
     sampler, _like_obj = build_sampler(
         spec,
         config=config,

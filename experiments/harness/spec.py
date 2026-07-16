@@ -18,7 +18,7 @@ import json
 import math
 import re
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import DTMCMC.exchange_manager as em
@@ -71,6 +71,7 @@ RUN_KEYS: frozenset[str] = frozenset(
         'store_thin',
         'arg_record',
         'checkpoint_every_blocks',
+        'zero_loglike',
     }
 )
 
@@ -306,6 +307,10 @@ class RunSpec:
         are recomputed at every ladder update; duplicates are kept
     checkpoint_every_blocks: int
         Artifact flush cadence in blocks
+    zero_loglike: bool
+        Whether sampler target log-likelihood values are forced to zero.
+        Proposal-internal calculations continue to use the configured
+        likelihood. Embedded in artifacts as run provenance.
     exchange_strategy: str
         One of EXCHANGE_STRATEGY_CODES
     track_full_exchanges: bool
@@ -325,6 +330,7 @@ class RunSpec:
     store_thin: int = 1
     arg_record: list[int] = field(default_factory=list)
     checkpoint_every_blocks: int = 8
+    zero_loglike: bool = False
     exchange_strategy: str = 'sequential'
     track_full_exchanges: bool = False
     proposal_overrides: dict[str, dict[str, TomlValue]] = field(default_factory=dict)
@@ -521,6 +527,7 @@ class RunSpec:
             store_thin=_opt_int(run, 'store_thin', 'run', 1),
             arg_record=_opt_int_list(run, 'arg_record', 'run'),
             checkpoint_every_blocks=_opt_int(run, 'checkpoint_every_blocks', 'run', 8),
+            zero_loglike=_opt_bool(run, 'zero_loglike', 'run', False),
             exchange_strategy=_require_str(exchange, 'strategy', 'exchange')
             if 'strategy' in exchange
             else 'sequential',
@@ -550,6 +557,7 @@ class RunSpec:
                 'store_thin': self.store_thin,
                 'arg_record': list(self.arg_record),
                 'checkpoint_every_blocks': self.checkpoint_every_blocks,
+                'zero_loglike': self.zero_loglike,
             },
             'exchange': {
                 'strategy': self.exchange_strategy,
@@ -570,6 +578,10 @@ class RunSpec:
         data = self.to_dict()
         data['seed'] = seed
         return RunSpec.from_dict(data)
+
+    def with_zero_loglike(self, enabled: bool) -> RunSpec:
+        """Get a copy of this spec with zero-log-likelihood mode set explicitly."""
+        return replace(self, zero_loglike=enabled)
 
     def build_proposal_config(self) -> configparser.ConfigParser:
         """Build the proposal-manager ConfigParser: defaults plus spec overrides.

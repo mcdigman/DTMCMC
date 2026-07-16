@@ -6,6 +6,7 @@ evaluations are zero in both kernel backends while the original likelihood
 continues to drive proposal-internal calculations such as Fisher stencils.
 """
 
+import tomllib
 from dataclasses import asdict
 from typing import Any, cast
 
@@ -18,7 +19,8 @@ from DTMCMC.fisher_manager import FisherJumpManager
 from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.constant_rectangular import ConstantRectangularLikelihood, high_lim, low_lim
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
-from experiments.harness.runner import build_sampler
+from experiments.harness.artifact import read_attrs, validate
+from experiments.harness.runner import build_sampler, run_from_spec
 from experiments.harness.spec import RunSpec
 
 N_PAR = 4
@@ -40,8 +42,10 @@ TARGET_EQUIVALENT_JUMP_LABELS = [
     'Blank Jump',
 ]
 
+FISHER_MANAGER_JUMP_LABELS = ['Fisher All-D', 'Std All-D', 'Std Random-D']
 
-def _make_spec(likelihood_table: dict[str, Any]) -> RunSpec:
+
+def _make_spec(likelihood_table: dict[str, Any], *, zero_loglike: bool = False) -> RunSpec:
     return RunSpec.from_dict(
         {
             'name': 'zero_loglike_equivalence',
@@ -56,7 +60,13 @@ def _make_spec(likelihood_table: dict[str, Any]) -> RunSpec:
                 'T_max': 100.0,
                 'n_inf_final': 1,
             },
-            'run': {'n_steps': 8, 'block_size': 4, 'store_thin': 1, 'checkpoint_every_blocks': 1},
+            'run': {
+                'n_steps': 8,
+                'block_size': 4,
+                'store_thin': 1,
+                'checkpoint_every_blocks': 1,
+                'zero_loglike': zero_loglike,
+            },
             'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
             'proposals': {
                 'FisherJumpManager': {'verbose_fisher': False, 'use_chol_fishers': True},
@@ -92,9 +102,9 @@ def _run(
 ) -> tuple[dict[str, object], Any]:
     reset_seed_guard_for_tests()
     try:
-        spec = _make_spec(likelihood_table)
+        spec = _make_spec(likelihood_table, zero_loglike=zero_loglike)
         seed_run(spec.seed)
-        sampler, _like_obj = build_sampler(spec, kernel_backend=backend, zero_loglike=zero_loglike)
+        sampler, _like_obj = build_sampler(spec, kernel_backend=backend)
         if jump_label is not None:
             jump_idx = sampler.proposal_manager.jump_labels_array.index(jump_label)
             sampler.proposal_manager.jump_probs.fill(0.0)
@@ -142,6 +152,35 @@ def test_zero_mode_matches_constant_target(backend: str, jump_label: str) -> Non
     assert zeroed_sampler.eval_accounting.proposal_targets > 0
 
 
+@pytest.mark.parametrize('jump_label', FISHER_MANAGER_JUMP_LABELS)
+def test_zero_mode_fisher_manager_jumps_match_python_and_numba(jump_label: str) -> None:
+    """Forced Fisher and sigma jumps are bit-exact across zero-mode backends."""
+    python_state, python_sampler = _run({'name': 'banana', 'n_par': N_PAR}, 'python', jump_label, zero_loglike=True)
+    numba_state, numba_sampler = _run({'name': 'banana', 'n_par': N_PAR}, 'numba', jump_label, zero_loglike=True)
+
+    assert python_state.keys() == numba_state.keys()
+    for key, python_value in python_state.items():
+        numba_value = numba_state[key]
+        if isinstance(python_value, np.ndarray):
+            np.testing.assert_array_equal(numba_value, python_value, err_msg=key)
+        else:
+            assert numba_value == python_value, key
+
+    python_fisher = next(
+        manager for manager in python_sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
+    )
+    numba_fisher = next(
+        manager for manager in numba_sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
+    )
+    for field in ('sigma_diags', 'fishers', 'chol_fishers', 'sigma_scales', 'gamma_mults'):
+        np.testing.assert_array_equal(getattr(numba_fisher, field), getattr(python_fisher, field), err_msg=field)
+
+    assert python_sampler.zero_loglike
+    assert numba_sampler.zero_loglike
+    assert np.all(python_sampler.logLs == 0.0)
+    assert np.all(numba_sampler.logLs == 0.0)
+
+
 def test_constant_rectangular_defaults() -> None:
     """The constant likelihood defaults to the borrowed banana box and zero loglike."""
     like = ConstantRectangularLikelihood(n_par=3)
@@ -156,13 +195,14 @@ def test_zero_mode_preserves_original_fisher_likelihood() -> None:
     """Fisher construction is identical with and without zero mode."""
     reset_seed_guard_for_tests()
     try:
-        spec = _make_spec({'name': 'banana', 'n_par': N_PAR})
-        seed_run(spec.seed)
-        zeroed_sampler, _ = build_sampler(spec, kernel_backend='python', zero_loglike=True)
+        zeroed_spec = _make_spec({'name': 'banana', 'n_par': N_PAR}, zero_loglike=True)
+        seed_run(zeroed_spec.seed)
+        zeroed_sampler, _ = build_sampler(zeroed_spec, kernel_backend='python')
 
         reset_seed_guard_for_tests()
-        seed_run(spec.seed)
-        regular_sampler, _ = build_sampler(spec, kernel_backend='python', zero_loglike=False)
+        regular_spec = _make_spec({'name': 'banana', 'n_par': N_PAR})
+        seed_run(regular_spec.seed)
+        regular_sampler, _ = build_sampler(regular_spec, kernel_backend='python')
     finally:
         reset_seed_guard_for_tests()
 
@@ -190,11 +230,11 @@ def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
     """Target calls are skipped while Fisher's real-likelihood calls remain accounted."""
     reset_seed_guard_for_tests()
     try:
-        spec = _make_spec({'name': 'banana', 'n_par': N_PAR})
+        spec = _make_spec({'name': 'banana', 'n_par': N_PAR}, zero_loglike=True)
         seed_run(spec.seed)
         like_obj = BananaLikelihood(N_PAR)
         with LoglikeCallSpy(like_obj) as spy:
-            sampler, _ = build_sampler(spec, like_obj=like_obj, kernel_backend=backend, zero_loglike=True)
+            sampler, _ = build_sampler(spec, like_obj=like_obj, kernel_backend=backend)
             fisher = next(
                 manager for manager in sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
             )
@@ -211,3 +251,18 @@ def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
         assert np.all(sampler.logLs == 0.0)
     finally:
         reset_seed_guard_for_tests()
+
+
+def test_run_from_spec_persists_zero_mode_in_artifact(tmp_path) -> None:
+    """The effective zero-mode setting survives run_from_spec as artifact provenance."""
+    reset_seed_guard_for_tests()
+    try:
+        spec = _make_spec({'name': 'banana', 'n_par': N_PAR}, zero_loglike=True)
+        artifact_path = run_from_spec(spec, tmp_path)
+    finally:
+        reset_seed_guard_for_tests()
+
+    assert validate(artifact_path, mode='complete') == []
+    attrs = read_attrs(artifact_path)
+    embedded = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
+    assert embedded.zero_loglike
