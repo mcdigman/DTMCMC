@@ -1,21 +1,26 @@
 """Regression tests for the binding-driven serial nopython block kernel."""
 
 import configparser
+import typing
 import warnings
-from typing import TYPE_CHECKING, Any
+from dataclasses import asdict
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import pytest
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.de_manager import DEJumpManager
+from DTMCMC.auxilliary_manager import BlankJump
+from DTMCMC.de_manager import DEJumpManager, DEStandardFullJump
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import (
     NULL_TARGETS,
     ExchangeManager,
+    ExchangeNativeState,
     do_ptmcmc_exchange,
 )
+from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.likelihood import RectangularLikelihood
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
@@ -24,7 +29,13 @@ from DTMCMC.numba_backend import (
     NativeBackendCompilationError,
     NativeBackendUnsupportedError,
     NativeExchangeFunctions,
+    NativeJumpCall,
+    NativeLikelihoodFunctions,
+    NativeLoglikeCall,
+    NativePriorDrawCall,
+    NativePriorFactorCall,
 )
+from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import GeometricTemperatureLadder
@@ -33,8 +44,6 @@ from experiments.harness.spec import RunSpec
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
 
 
 def _make_spec(
@@ -104,7 +113,7 @@ def _snapshot(sampler) -> dict[str, object]:
         'de_buffer': de_manager.de_buffer.copy(),
         'de_write': de_manager.itrde_write,
         'de_count': de_manager.itrde_count,
-        'n_evals': sampler.eval_tracker.n_evals,
+        'eval_accounting': asdict(sampler.eval_accounting),
         'store_idx': sampler.store_idx,
         'store_counter': sampler.store_counter,
         'itrn': sampler.itrn,
@@ -269,6 +278,31 @@ def _extension_prior_factor(params: NDArray[np.floating], rate: float) -> float:
     return -rate * float(np.sum(params))
 
 
+class _ExtensionNativeState(NamedTuple):
+    """External-style runtime state bundle: rectangular fields plus extension constants."""
+
+    n_par: int
+    low_lims: NDArray[np.float64]
+    high_lims: NDArray[np.float64]
+    center: float
+    prior_rate: float
+
+
+@njit(inline='always')
+def _extension_loglike_native(params: NDArray[np.floating], state: _ExtensionNativeState) -> float:
+    return _extension_loglike(params, state.center, state.prior_rate)
+
+
+@njit(inline='always')
+def _extension_prior_draw_native(state: _ExtensionNativeState) -> NDArray[np.floating]:
+    return _extension_prior_draw(state.n_par, state.low_lims, state.high_lims, state.prior_rate)
+
+
+@njit(inline='always')
+def _extension_prior_factor_native(params: NDArray[np.floating], state: _ExtensionNativeState) -> float:
+    return _extension_prior_factor(params, state.prior_rate)
+
+
 class _ExtensionLikelihood(RectangularLikelihood):
     """Small external-style likelihood with a non-uniform prior."""
 
@@ -286,36 +320,17 @@ class _ExtensionLikelihood(RectangularLikelihood):
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         return _extension_prior_factor(params_in, self.prior_rate)
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        center = self.center
-        prior_rate = self.prior_rate
+    def native_state(self) -> _ExtensionNativeState:
+        return _ExtensionNativeState(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
 
-        @njit(inline='always')
-        def loglike_native(params: NDArray[np.floating]) -> float:
-            return _extension_loglike(params, center, prior_rate)
+    def bind_native_loglike(self) -> NativeLoglikeCall[_ExtensionNativeState]:
+        return _extension_loglike_native
 
-        return loglike_native
+    def bind_native_prior_draw(self) -> NativePriorDrawCall[_ExtensionNativeState]:
+        return _extension_prior_draw_native
 
-    def bind_native_prior_draw(self) -> Callable[[], NDArray[np.floating]]:
-        n_par = self.n_par
-        low_lims = self.low_lims
-        high_lims = self.high_lims
-        prior_rate = self.prior_rate
-
-        @njit(inline='always')
-        def prior_draw_native() -> NDArray[np.floating]:
-            return _extension_prior_draw(n_par, low_lims, high_lims, prior_rate)
-
-        return prior_draw_native
-
-    def bind_native_prior_factor(self) -> Callable[[NDArray[np.floating]], float]:
-        prior_rate = self.prior_rate
-
-        @njit(inline='always')
-        def prior_factor_native(params: NDArray[np.floating]) -> float:
-            return _extension_prior_factor(params, prior_rate)
-
-        return prior_factor_native
+    def bind_native_prior_factor(self) -> NativePriorFactorCall[_ExtensionNativeState]:
+        return _extension_prior_factor_native
 
 
 @njit(inline='always')
@@ -324,19 +339,25 @@ def _custom_jump_helper(sample_point: NDArray[np.floating], scale: float) -> tup
 
 
 class _CustomJump(AbstractJump):
-    """External-style jump whose type is unknown to numba_backend.py."""
+    """External-style jump whose type is unknown to numba_backend.py.
+
+    Binds a per-instance closure rather than a per-class function: allowed
+    (the program cache just cannot share it across samplers).
+    """
+
+    declared_internal_evals = 0
 
     def __init__(self, manager: _CustomManager) -> None:
         self.manager = manager
         self.print_name = 'Custom Gaussian'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[None, Any]:
         del likelihood_natives
         scale = self.manager.scale
 
         @njit(inline='always')
         def native_call(
-            sample_point: NDArray[np.floating], _itrt: int, _state: None
+            sample_point: NDArray[np.floating], _itrt: int, _state: None, _like_state: Any
         ) -> tuple[NDArray[np.floating], float, bool]:
             return _custom_jump_helper(sample_point, scale)
 
@@ -403,6 +424,37 @@ def _every_third_exchange_schedule(itrb: int) -> bool:
     return itrb % 3 == 0
 
 
+@njit(inline='always')
+def _every_third_schedule_native(itrb: int, _state: ExchangeNativeState) -> bool:
+    return _every_third_exchange_schedule(itrb)
+
+
+@njit(inline='always')
+def _every_third_exchange_native(
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    n_chain: int,
+    betas: NDArray[np.floating],
+    exchange_tracker: NDArray[np.int64],
+    esd_exchange: NDArray[np.floating],
+    chain_track: NDArray[np.int64],
+    state: ExchangeNativeState,
+) -> None:
+    do_ptmcmc_exchange(
+        itrb - 1,
+        samples,
+        logLs,
+        n_chain,
+        betas,
+        exchange_tracker,
+        esd_exchange,
+        chain_track,
+        NULL_TARGETS,
+        state.track_full_exchanges,
+    )
+
+
 class _EveryThirdExchange(ExchangeManager):
     def is_exchange_step(self, itrb: int) -> bool:
         return _every_third_exchange_schedule(itrb)
@@ -430,34 +482,10 @@ class _EveryThirdExchange(ExchangeManager):
             self.track_full_exchanges,
         )
 
-    def bind_native(self) -> NativeExchangeFunctions:
-        track_full_exchanges = self.track_full_exchanges
-
-        @njit(inline='always')
-        def exchange_native(
-            itrb: int,
-            samples: NDArray[np.floating],
-            logLs: NDArray[np.floating],
-            n_chain: int,
-            betas: NDArray[np.floating],
-            exchange_tracker: NDArray[np.int64],
-            esd_exchange: NDArray[np.floating],
-            chain_track: NDArray[np.int64],
-        ) -> None:
-            do_ptmcmc_exchange(
-                itrb - 1,
-                samples,
-                logLs,
-                n_chain,
-                betas,
-                exchange_tracker,
-                esd_exchange,
-                chain_track,
-                NULL_TARGETS,
-                track_full_exchanges,
-            )
-
-        return NativeExchangeFunctions(is_exchange_step=_every_third_exchange_schedule, exchange=exchange_native)
+    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeState]:
+        return NativeExchangeFunctions(
+            is_exchange_step=_every_third_schedule_native, exchange=_every_third_exchange_native
+        )
 
 
 def _standalone_snapshot(sampler: DTMCMCSampler) -> dict[str, object]:
@@ -468,7 +496,7 @@ def _standalone_snapshot(sampler: DTMCMCSampler) -> dict[str, object]:
         'chain_track': sampler.chain_track.copy(),
         'accept_record': tracker.accept_record.copy(),
         'esd_record': tracker.esd_record.copy(),
-        'n_evals': sampler.eval_tracker.n_evals,
+        'eval_accounting': asdict(sampler.eval_accounting),
     }
 
 
@@ -514,7 +542,7 @@ def _run_standalone_graph(
         reset_seed_guard_for_tests()
 
 
-def _bad_native_loglike(params: NDArray[np.floating]) -> float:
+def _bad_native_loglike(params: NDArray[np.floating], _state: Any) -> float:
     return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
 
 
@@ -527,7 +555,7 @@ class _BadNativeLikelihood(RectangularLikelihood):
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         return -float(np.sum(params_in * params_in))
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[Any]:
         return njit(inline='always')(_bad_native_loglike)
 
 
@@ -536,8 +564,24 @@ def _many_state_loglike(params: NDArray[np.floating], a: float, b: float, c: flo
     return -float(np.sum(params * params)) + a + b + c + d + e
 
 
+class _ManyStateNativeState(NamedTuple):
+    n_par: int
+    low_lims: NDArray[np.float64]
+    high_lims: NDArray[np.float64]
+    a: float
+    b: float
+    c: float
+    d: float
+    e: float
+
+
+@njit(inline='always')
+def _many_state_loglike_native(params: NDArray[np.floating], state: _ManyStateNativeState) -> float:
+    return _many_state_loglike(params, state.a, state.b, state.c, state.d, state.e)
+
+
 class _ManyStateLikelihood(RectangularLikelihood):
-    """Regression likelihood baking more constants than the former four-state limit."""
+    """Regression likelihood whose state bundle carries many extension fields."""
 
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
@@ -546,14 +590,11 @@ class _ManyStateLikelihood(RectangularLikelihood):
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         return _many_state_loglike(params_in, self.a, self.b, self.c, self.d, self.e)
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        a, b, c, d, e = self.a, self.b, self.c, self.d, self.e
+    def native_state(self) -> _ManyStateNativeState:
+        return _ManyStateNativeState(self.n_par, self.low_lims, self.high_lims, self.a, self.b, self.c, self.d, self.e)
 
-        @njit(inline='always')
-        def loglike_native(params: NDArray[np.floating]) -> float:
-            return _many_state_loglike(params, a, b, c, d, e)
-
-        return loglike_native
+    def bind_native_loglike(self) -> NativeLoglikeCall[_ManyStateNativeState]:
+        return _many_state_loglike_native
 
 
 def test_external_nonuniform_prior_contract_is_bit_exact() -> None:
@@ -609,8 +650,8 @@ def test_native_compile_failure_warns_once_and_falls_back_in_auto_mode() -> None
     assert state['itrn'] == 4
 
 
-def test_native_binding_supports_many_baked_constants() -> None:
-    """Baked closures support extension state beyond four constants."""
+def test_native_binding_supports_many_state_fields() -> None:
+    """State bundles support extension state well beyond the rectangular fields."""
     python_state, _ = _run(_make_spec(n_steps=4), 'python', like_factory=_ManyStateLikelihood)
     numba_state, backend = _run(_make_spec(n_steps=4), 'numba', like_factory=_ManyStateLikelihood)
     assert backend == 'numba'
@@ -710,7 +751,130 @@ def test_invalid_kernel_backend_is_rejected() -> None:
     reset_seed_guard_for_tests()
     try:
         seed_run(spec.seed)
-        with pytest.raises(NotImplementedError, match='kernel_backend'):
+        with pytest.raises(ValueError, match='kernel_backend'):
             build_sampler(spec, kernel_backend='cuda')
     finally:
         reset_seed_guard_for_tests()
+
+
+def test_rectangular_bounds_are_immutable() -> None:
+    """PR #40 review F001: a bound graph cannot be diverged by rebinding bounds.
+
+    The bounds are private read-only arrays behind properties, so both the
+    rebind and the in-place write that produced silent native/Python
+    divergence now fail immediately, and the native state bundle re-reads
+    the same frozen arrays the Python path uses.
+    """
+    like = GaussianLikelihood(n_par=2)
+    with pytest.raises(AttributeError):
+        like.low_lims = np.full(2, -1.0)  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        like.high_lims = np.full(2, 1.0)  # type: ignore[misc]
+    with pytest.raises(ValueError, match='read-only'):
+        like.low_lims[0] = 0.0
+    state = like.native_state()
+    assert state.low_lims is like.low_lims
+    assert state.high_lims is like.high_lims
+
+
+def test_structurally_identical_samplers_share_one_program() -> None:
+    """PR #40 review F002: same-structure samplers reuse one compiled kernel.
+
+    The program cache keys on the bound per-class functions rather than
+    object identities, so a second sampler resolves to the same program and
+    Numba compiles no additional kernel signature.
+    """
+    spec = _make_spec(n_steps=4)
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(spec.seed)
+        first, _ = build_sampler(spec, kernel_backend='numba')
+        for _ in range(spec.n_blocks):
+            first.advance_block()
+        first_program = first._native_serial_backend.program
+        assert first_program is not None
+        kernel: Any = first_program.kernel  # numba Dispatcher: signatures is untyped
+        n_signatures = len(kernel.signatures)
+
+        second, _ = build_sampler(spec, kernel_backend='numba')
+        second.advance_block()
+        assert second.last_kernel_backend == 'numba'
+        assert second._native_serial_backend.program is first_program
+        assert len(kernel.signatures) == n_signatures
+    finally:
+        reset_seed_guard_for_tests()
+
+
+class _IncompleteLikelihood:
+    """Deliberately missing prior_draw/prior_factor/validate_bounds."""
+
+    def __init__(self) -> None:
+        self.n_par = 2
+
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+        del params_in
+        return 0.0
+
+
+def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
+    """PR #40 review F003: core validation fires before the likelihood is used.
+
+    The failure is the structural conformance TypeError naming the missing
+    protocol, not a raw AttributeError from initialization touching a
+    missing method.
+    """
+    ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
+    with pytest.raises(TypeError, match='CoreLikelihood'):
+        DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')  # type: ignore[arg-type]
+
+
+class _CoreOnlyLikelihood:
+    """Implements CoreLikelihood but not the Fisher support methods."""
+
+    def __init__(self) -> None:
+        self.n_par = 2
+
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+        return -float(np.sum(params_in * params_in))
+
+    def prior_draw(self) -> NDArray[np.floating]:
+        return np.zeros(self.n_par)
+
+    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
+        del params_in
+        return 0.0
+
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        return params_in, True
+
+
+def test_fisher_manager_requires_fisher_support_likelihood() -> None:
+    """PR #40 review F003: the Fisher manager validates its extra requirements."""
+    ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
+    config = configparser.ConfigParser()
+    config.read('default_config.ini')
+    with pytest.raises(TypeError, match='FisherSupportLikelihood'):
+        FisherJumpManager(ladder, _CoreOnlyLikelihood(), np.zeros((4, 2)), config)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    'hook',
+    [
+        RectangularLikelihood.bind_native,
+        RectangularLikelihood.bind_native_loglike,
+        RectangularLikelihood.native_state,
+        GaussianLikelihood.bind_native_loglike,
+        SigmaFullJump.bind_native,
+        DEStandardFullJump.bind_native,
+        PriorFullJump.bind_native,
+        BlankJump.bind_native,
+        DEJumpManager.bind_native_post_step,
+        DEJumpManager.native_state,
+        ExchangeManager.bind_native,
+        ExchangeManager.native_state,
+    ],
+)
+def test_native_binding_type_hints_resolve_at_runtime(hook: Any) -> None:
+    """PR #40 review F005: extension hook annotations are runtime-introspectable."""
+    hints = typing.get_type_hints(hook)
+    assert 'return' in hints

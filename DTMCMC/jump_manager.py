@@ -25,8 +25,16 @@ class AbstractJump(Protocol):
     """An object that performs a single proposal from its __call__ method.
 
     A jump may additionally opt into native execution by defining
-    ``bind_native(likelihood_natives)`` returning a jitted closure with
-    exactly this ``__call__`` signature (see DTMCMC.numba_backend).
+    ``bind_native(likelihood_natives)`` returning a per-class jitted
+    function with this ``__call__`` signature plus the manager and
+    likelihood runtime states (see DTMCMC.numba_backend).
+
+    A jump should also declare ``declared_internal_evals``: the fixed
+    number of target-likelihood evaluations one dispatch performs
+    internally (0 for every proposal that does not evaluate the
+    likelihood itself). A jump without the attribute makes the sampler's
+    evaluation accounting incomplete — an unknown cost is never silently
+    treated as zero.
     """
 
     print_name: str
@@ -50,10 +58,15 @@ class AbstractJumpManager(Protocol):
     """Structural component-manager interface used by aggregate dispatchers.
 
     A manager whose ``post_step_update`` does real work may opt into native
-    execution by defining ``bind_native_post_step()`` returning a jitted
-    ``(state, samples_row) -> None`` closure paired with its writable runtime
-    state (see DTMCMC.numba_backend); a manager that inherits the base no-op
-    needs nothing.
+    execution by defining ``bind_native_post_step()`` returning a per-class
+    jitted ``(state, samples_row) -> None`` function paired with the runtime
+    state bundle from ``native_state()`` (see DTMCMC.numba_backend); a
+    manager that inherits the base no-op needs nothing.
+
+    Managers whose construction evaluates the likelihood should declare the
+    deterministic cost in a ``declared_construction_evals`` attribute (the
+    ``JumpManager`` base declares 0); a manager without the attribute makes
+    the sampler's evaluation accounting incomplete.
     """
 
     T_ladder: TemperatureLadder
@@ -82,8 +95,13 @@ class AbstractJumpManager(Protocol):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
-        """Update manager state after one completed block."""
+    ) -> int | None:
+        """Update manager state after one completed block.
+
+        Returns the deterministic number of target-likelihood evaluations
+        the update performed, or None when the cost cannot be declared
+        (which makes the sampler's evaluation accounting incomplete).
+        """
         ...
 
     def record_config(self, config_in: ConfigParser) -> None:
@@ -107,6 +125,10 @@ def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
 
 class JumpManager(ABC):
     """mcmc proposals should be dispatched from extensions of this class"""
+
+    # deterministic likelihood-evaluation cost of constructing the manager;
+    # subclasses that evaluate the likelihood at construction must override
+    declared_construction_evals: int = 0
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, jumps: list[AbstractJump]) -> None:
         """Default constructor that handles all the common actions we expect to need"""
@@ -222,7 +244,7 @@ class JumpManager(ABC):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
+    ) -> int | None:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         inputs:
@@ -230,8 +252,13 @@ class JumpManager(ABC):
             block_size: int, the number of steps in this block
             samples: 3D float array of samples
             logLs: 2D float array of likelihoods
+        output:
+            the deterministic number of target-likelihood evaluations the
+            update performed (0 for the base no-op), or None when the cost
+            cannot be declared
         """
         del itrn
         del block_size
         del samples
         del logLs
+        return 0

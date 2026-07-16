@@ -1,15 +1,11 @@
 """the 2D hyper-pyramid lkelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/"""
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState
+from DTMCMC.numba_backend import NativeLoglikeCall
 
 # constants
 low_lim: float = -15.0
@@ -24,6 +20,12 @@ def get_loglike(x: NDArray[np.floating]) -> float:
     """Get the likelihood"""
     res: float = -(max(np.abs((x - center) / sigma)) ** (1.0 / s))
     return res
+
+
+@njit(inline='always')
+def _loglike_native(params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
+    """Per-class native log likelihood; the pyramid needs no instance state."""
+    return get_loglike(params_in)
 
 
 class HyperpyramidLikelihood(RectangularLikelihood):
@@ -43,6 +45,6 @@ class HyperpyramidLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
-    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
-        """The module-level loglike is already stateless and jitted."""
-        return get_loglike
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+        """Return the per-class native log likelihood."""
+        return _loglike_native

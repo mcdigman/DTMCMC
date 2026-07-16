@@ -65,8 +65,13 @@ class AbstractProposalManager(Protocol):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
-        """Update all component managers after a sampler block."""
+    ) -> int | None:
+        """Update all component managers after a sampler block.
+
+        Returns the deterministic number of target-likelihood evaluations
+        performed across all managers, or None when any manager cannot
+        declare its cost.
+        """
         ...
 
 
@@ -173,13 +178,21 @@ class ProposalManager(JumpManager):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> None:
+    ) -> int | None:
         """Do any needed internal processing after an individual block of size block_size.
 
-        E.g. fisher matrix updates.
+        E.g. fisher matrix updates. Returns the summed deterministic
+        likelihood-evaluation cost, or None when any component manager
+        cannot declare its cost (every manager is still updated).
         """
+        n_evals: int | None = 0
         for itrm in range(self.n_managers):
-            self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
+            got = self.managers[itrm].post_block_update(itrn, block_size, samples, logLs)
+            if got is None or n_evals is None:
+                n_evals = None
+            else:
+                n_evals += got
+        return n_evals
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in."""

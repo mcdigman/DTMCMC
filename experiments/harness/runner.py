@@ -339,7 +339,6 @@ class HarnessSampler(DTMCMCSampler):
             starting_samples=self.samples[0, :, :],
             config=self.config,
             exchange_manager_loc=exchange_manager,
-            eval_tracker=self.eval_tracker,
         )
 
     def postblock_operations(self) -> None:
@@ -403,7 +402,7 @@ class HarnessSampler(DTMCMCSampler):
                 self.artifact_path,
                 self.spec,
                 self,
-                self.eval_tracker.n_evals,
+                self.eval_accounting,
                 self.provenance,
                 finalized=major_report,
                 wall_seconds=time.monotonic() - self.start_monotonic,
