@@ -42,6 +42,7 @@ LIKELIHOOD_NAMES: frozenset[str] = frozenset(
     {
         'gaussian',
         'cake',
+        'constant_rectangular',
         'eggbox',
         'hawaii',
         'ar1',

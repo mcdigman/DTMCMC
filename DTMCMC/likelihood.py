@@ -2,6 +2,7 @@
 abstract class to hold a likelihood object
 """
 
+from dataclasses import replace
 from typing import Any, NamedTuple, Protocol, runtime_checkable
 
 import numpy as np
@@ -11,11 +12,13 @@ from numpy.typing import NDArray
 from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.numba_backend import (
     NativeBackendUnsupportedError,
+    NativeBindableLikelihood,
     NativeLikelihoodFunctions,
     NativeLoglikeCall,
     NativePriorDrawCall,
     NativePriorFactorCall,
     NativeValidateBoundsCall,
+    likelihood_binding_problem,
 )
 
 
@@ -322,3 +325,93 @@ class RectangularLikelihood(AbstractLikelihood):
             prior_factor=self.bind_native_prior_factor(),
             validate_bounds=self.bind_native_validate_bounds(),
         )
+
+
+@njit(inline='always')
+def zero_loglike_native(_params_in: NDArray[np.floating], _state: Any) -> float:
+    """Per-class native log likelihood that is identically zero.
+
+    Shared by ConstantRectangularLikelihood and the zero-loglike
+    prior-recovery wrapper, so a zeroed graph and a constant-likelihood
+    graph bind the same function and share one compiled program.
+    """
+    return 0.0
+
+
+class ZeroedLoglikeLikelihood:
+    """Wrap a likelihood so every log-likelihood evaluation returns zero.
+
+    Prior-recovery review mode: scientific sampler reviews routinely rerun
+    with the likelihood forced to a constant, so the sampler must reproduce
+    the prior exactly. Only the log likelihood is replaced — the Python
+    method and the native binding both become identically zero — while
+    prior draws, prior density, bounds handling, Fisher support, and the
+    presentation helpers all delegate to the wrapped likelihood unchanged.
+
+    Enable it with ``DTMCMCSampler(..., zero_loglike=True)`` (or the same
+    keyword on the experiment harness ``build_sampler``); when
+    preassembling a proposal graph by hand, wrap the likelihood explicitly
+    before constructing the managers so they see the wrapped object.
+    """
+
+    def __init__(self, inner: AbstractLikelihood) -> None:
+        self.inner = inner
+        self.n_par = inner.n_par
+
+    def get_loglike(self, params_in: NDArray[np.floating], /) -> float:
+        """Return zero regardless of the parameters."""
+        del params_in
+        return 0.0
+
+    def prior_draw(self) -> NDArray[np.floating]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.prior_draw()
+
+    def prior_factor(self, params_in: NDArray[np.floating], /) -> float:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.prior_factor(params_in)
+
+    def correct_bounds(self, params_in: NDArray[np.floating], /) -> NDArray[np.floating]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.correct_bounds(params_in)
+
+    def check_bounds(self, params_in: NDArray[np.floating], /) -> bool:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.check_bounds(params_in)
+
+    def validate_bounds(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], bool]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.validate_bounds(params_in)
+
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.get_epsilons()
+
+    def get_labels(self) -> list[str]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.get_labels()
+
+    def format_samples_output(
+        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Delegate to the wrapped likelihood."""
+        return self.inner.format_samples_output(samples_store, params_fid)
+
+    def native_state(self) -> Any:
+        """Delegate to the wrapped likelihood (only reached after a successful bind)."""
+        assert isinstance(self.inner, NativeBindableLikelihood)
+        return self.inner.native_state()
+
+    def bind_native(self) -> NativeLikelihoodFunctions[Any]:
+        """Return the wrapped likelihood's native functions with a zeroed loglike.
+
+        The wrapped likelihood is vetted with the same hook-presence and
+        stale-override rules the backend applies, so wrapping cannot
+        launder a binding problem in the delegated prior or bounds
+        functions.
+        """
+        problem = likelihood_binding_problem(self.inner)
+        if problem is not None:
+            raise NativeBackendUnsupportedError(problem)
+        assert isinstance(self.inner, NativeBindableLikelihood)
+        return replace(self.inner.bind_native(), loglike=zero_loglike_native)

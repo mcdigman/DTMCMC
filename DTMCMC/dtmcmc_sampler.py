@@ -13,7 +13,7 @@ from DTMCMC.eval_accounting import EvalAccounting
 from DTMCMC.exchange_manager import AbstractExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
 from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager
-from DTMCMC.likelihood import AbstractLikelihood, CoreLikelihood
+from DTMCMC.likelihood import AbstractLikelihood, CoreLikelihood, ZeroedLoglikeLikelihood
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 from DTMCMC.numba_backend import NativeSerialBackend
 from DTMCMC.proposal_manager import AbstractProposalManager
@@ -203,6 +203,7 @@ class DTMCMCSampler:
         store_thin: int = 1,
         arg_record: list[int] | None = None,
         kernel_backend: str = 'auto',
+        zero_loglike: bool = False,
     ) -> None:
         """Create the chain object
 
@@ -233,6 +234,14 @@ class DTMCMCSampler:
             graph or a compilation failure before using Python. 'python'
             disables only the native block kernel, leaving existing jitted
             helpers enabled.
+        zero_loglike: bool
+            Prior-recovery review mode: wrap the likelihood so every log
+            likelihood evaluation (Python and native) returns zero while
+            the priors and bounds handling stay untouched — the sampler
+            must then reproduce the prior exactly. Applies to the default
+            sampler-built proposal graph; when passing a preassembled
+            proposal_manager, wrap the likelihood in ZeroedLoglikeLikelihood
+            yourself before constructing the managers instead.
         """
         # fail fast before the likelihood is used: initialization below
         # draws from the prior and evaluates the likelihood
@@ -242,6 +251,10 @@ class DTMCMCSampler:
                 '(n_par, get_loglike, prior_draw, prior_factor, validate_bounds)'
             )
             raise TypeError(msg)
+        if zero_loglike:
+            # prior-recovery review mode: zero the log likelihood only,
+            # after validating the real likelihood above
+            like_obj = ZeroedLoglikeLikelihood(like_obj)
         self.eval_accounting = EvalAccounting()
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par

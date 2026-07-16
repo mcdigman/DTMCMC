@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from DTMCMC.likelihoods import ar1 as ar1_module
 from DTMCMC.likelihoods import banana as banana_module
+from DTMCMC.likelihoods import constant_rectangular as constant_rectangular_module
 from DTMCMC.likelihoods import gaussian_mixture as gaussian_mixture_module
 from DTMCMC.likelihoods import gaussian_shell as gaussian_shell_module
 from DTMCMC.likelihoods import random_wheel as random_wheel_module
@@ -174,6 +175,11 @@ def _draw_uniform_gaussian_prior(n_draws: int, n_par: int, rng: np.random.Genera
     return rng.normal(1.5, 0.75, size=(n_draws, n_par))
 
 
+def _draw_constant_rectangular(n_draws: int, n_par: int, rng: np.random.Generator) -> NDArray[np.floating]:
+    """Exact draws for the constant-likelihood uniform-box benchmark."""
+    return rng.uniform(constant_rectangular_module.low_lim, constant_rectangular_module.high_lim, size=(n_draws, n_par))
+
+
 def mixture_mode_centers(n_par: int) -> NDArray[np.floating]:
     """The gaussian_mixture mode centers at the requested dimension."""
     return np.vstack([np.full(n_par, 5.0), np.full(n_par, -5.0)])
@@ -193,6 +199,13 @@ BENCHMARKS: dict[str, BenchmarkTarget] = {
         draw_reference=draw_cake,
         reference_moments=_moments_cake,
         notes='T=1 sits exactly at the tier phase transition; gold ladder data in data/*_cake_gold.npy',
+    ),
+    'constant_rectangular': BenchmarkTarget(
+        likelihood_name='constant_rectangular',
+        default_params={'n_par': 4},
+        draw_reference=_draw_constant_rectangular,
+        reference_moments=_moments_constant(0.0, constant_rectangular_module.high_lim**2 / 3.0),
+        notes='constant likelihood; posterior equals the uniform box prior exactly (prior-recovery reference)',
     ),
     'eggbox': BenchmarkTarget(
         likelihood_name='eggbox',

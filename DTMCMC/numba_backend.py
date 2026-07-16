@@ -278,7 +278,13 @@ _LIKELIHOOD_NATIVE_PAIRS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def _likelihood_problem(like_obj: AbstractLikelihood) -> str | None:
+def likelihood_binding_problem(like_obj: AbstractLikelihood) -> str | None:
+    """Describe why a likelihood cannot bind natively, or None if it can.
+
+    Public so wrappers that delegate to an inner likelihood (e.g. the
+    zero-loglike prior-recovery wrapper) can vet the wrapped object with
+    the same hook-presence and stale-override rules the backend applies.
+    """
     cls = type(like_obj)
     if _defining_class(cls, 'bind_native') is None:
         return f'{cls.__qualname__} does not define bind_native'
@@ -341,7 +347,7 @@ def _binding_inventory(
     problems: list[str] = []
     explicit = 0
 
-    problem = _likelihood_problem(like_obj)
+    problem = likelihood_binding_problem(like_obj)
     if problem is None:
         explicit += 1
     else:

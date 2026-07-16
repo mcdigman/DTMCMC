@@ -36,6 +36,7 @@ from DTMCMC.exchange_manager import ExchangeManager
 from DTMCMC.likelihoods.ar1 import Ar1Likelihood
 from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
+from DTMCMC.likelihoods.constant_rectangular import ConstantRectangularLikelihood
 from DTMCMC.likelihoods.eggbox import EggboxLikelihood
 from DTMCMC.likelihoods.gaussian_mixture import GaussianMixtureLikelihood
 from DTMCMC.likelihoods.gaussian_shell import GaussianShellLikelihood
@@ -80,6 +81,7 @@ DE_MEMORY_MIN_BLOCKS_FIXED = 4
 LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
+    'constant_rectangular': ConstantRectangularLikelihood,
     'eggbox': EggboxLikelihood,
     'hawaii': HawaiiLikelihood,
     'ar1': Ar1Likelihood,
@@ -249,6 +251,7 @@ class HarnessSampler(DTMCMCSampler):
         start_monotonic: float | None = None,
         sampler_verbosity: int = 0,
         kernel_backend: str = 'auto',
+        zero_loglike: bool = False,
     ) -> None:
         if artifact_path is not None and provenance is None:
             msg = 'artifact_path requires provenance'
@@ -282,6 +285,7 @@ class HarnessSampler(DTMCMCSampler):
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
             kernel_backend=kernel_backend,
+            zero_loglike=zero_loglike,
         )
         self.de_manager = next(
             (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
@@ -433,6 +437,7 @@ def build_sampler(
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
     kernel_backend: str = 'auto',
+    zero_loglike: bool = False,
 ) -> tuple[HarnessSampler, AbstractLikelihood]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
@@ -443,7 +448,8 @@ def build_sampler(
     pass like_obj/T_ladder to override the spec-built ones (the adaptive
     path supplies its prior-anchored initial ladder). The keyword-only
     arguments configure the extension hooks: without an artifact_path the
-    teardown records checkpoint metrics but writes nothing.
+    teardown records checkpoint metrics but writes nothing; zero_loglike
+    enables the prior-recovery review mode (see DTMCMCSampler).
     """
     if like_obj is None:
         like_obj = build_likelihood(spec)
@@ -463,6 +469,7 @@ def build_sampler(
         start_monotonic=start_monotonic,
         sampler_verbosity=sampler_verbosity,
         kernel_backend=kernel_backend,
+        zero_loglike=zero_loglike,
     )
     return sampler, like_obj
 
