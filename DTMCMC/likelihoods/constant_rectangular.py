@@ -2,24 +2,27 @@
 
 The posterior equals the box prior exactly, which makes this the reference
 target for prior-recovery review runs: a run with any other likelihood and
-``zero_loglike=True`` over the same bounds must reproduce this target
-bit-for-bit under the same seed.
+``zero_loglike=True`` over the same bounds has the same target. Proposal
+internals may still use that run's original likelihood by design.
 """
 
-from typing import TYPE_CHECKING
-
 import numpy as np
+from numba import njit
+from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState, zero_loglike_native
+from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState
 from DTMCMC.numba_backend import NativeLoglikeCall
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
 # default rectangular bounds, borrowed from the banana likelihood's
 # n >= 2 dimensions; override per instance via the constructor
 low_lim: float = -100.0
 high_lim: float = 100.0
+
+
+@njit(inline='always')
+def _loglike_native(_params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
+    """Return the constant log likelihood in the native kernel."""
+    return 0.0
 
 
 class ConstantRectangularLikelihood(RectangularLikelihood):
@@ -43,5 +46,5 @@ class ConstantRectangularLikelihood(RectangularLikelihood):
         return 0.0
 
     def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
-        """Return the shared per-class zero log likelihood."""
-        return zero_loglike_native
+        """Return the per-class native zero log likelihood."""
+        return _loglike_native

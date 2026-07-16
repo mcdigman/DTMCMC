@@ -1,25 +1,22 @@
-"""Prior-recovery review mode: zero_loglike wrapping and the constant likelihood.
+"""Prior-recovery review mode and its constant-likelihood reference target.
 
 Scientific sampler reviews rerun with the likelihood forced to a constant so
-the sampler must reproduce the prior. These tests pin the contract: a run
-with any likelihood and ``zero_loglike=True`` is bit-for-bit identical to a
-ConstantRectangularLikelihood run over the same bounds and settings, for
-every built-in jump type on both kernel backends, and the wrapper replaces
-only the log likelihood — priors and bounds handling stay untouched.
+the sampler must reproduce the prior. These tests pin the contract: target
+evaluations are zero in both kernel backends while the original likelihood
+continues to drive proposal-internal calculations such as Fisher stencils.
 """
 
 from dataclasses import asdict
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
 
 from DTMCMC.de_manager import DEJumpManager
-from DTMCMC.likelihood import ZeroedLoglikeLikelihood, zero_loglike_native
+from DTMCMC.eval_accounting import LoglikeCallSpy
+from DTMCMC.fisher_manager import FisherJumpManager
 from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.constant_rectangular import ConstantRectangularLikelihood, high_lim, low_lim
-from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
-from DTMCMC.numba_backend import NativeBackendUnsupportedError
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from experiments.harness.runner import build_sampler
 from experiments.harness.spec import RunSpec
@@ -31,13 +28,10 @@ SEED = 20260720
 # constant-likelihood reference run
 _BANANA_BOUNDS = BananaLikelihood(N_PAR)
 
-# every built-in local proposal (Cholesky mode enables Fisher All-D), plus
-# None for the default mixed-jump weighting
-JUMP_LABELS = [
-    None,
-    'Fisher All-D',
-    'Std All-D',
-    'Std Random-D',
+# Proposals whose construction and dispatch do not depend on likelihood
+# values. Fisher-manager proposals are covered separately because zero mode
+# deliberately retains the original likelihood for their stencils.
+TARGET_EQUIVALENT_JUMP_LABELS = [
     'DE Std All-D',
     'DE Std Random-D',
     'DE Big All-D',
@@ -114,13 +108,13 @@ def _run(
 
 
 @pytest.mark.parametrize('backend', ['python', 'numba'])
-@pytest.mark.parametrize('jump_label', JUMP_LABELS)
-def test_zeroed_likelihood_matches_constant_likelihood(backend: str, jump_label: str | None) -> None:
-    """zero_loglike over any likelihood equals the constant likelihood bit-for-bit.
+@pytest.mark.parametrize('jump_label', TARGET_EQUIVALENT_JUMP_LABELS)
+def test_zero_mode_matches_constant_target(backend: str, jump_label: str) -> None:
+    """Zero mode equals the constant target when proposal internals are likelihood-independent.
 
     Same seed, bounds, ladder, and proposal settings: the banana run with
     its log likelihood zeroed must reproduce the constant-rectangular run
-    exactly — every sample, tracker, DE-buffer entry, and evaluation count.
+    exactly for these proposals — every sample, tracker, and DE-buffer entry.
     """
     constant_table = {
         'name': 'constant_rectangular',
@@ -132,8 +126,10 @@ def test_zeroed_likelihood_matches_constant_likelihood(backend: str, jump_label:
     zeroed_state, zeroed_sampler = _run({'name': 'banana', 'n_par': N_PAR}, backend, jump_label, zero_loglike=True)
 
     assert isinstance(constant_sampler.like_obj, ConstantRectangularLikelihood)
-    assert isinstance(zeroed_sampler.like_obj, ZeroedLoglikeLikelihood)
-    assert isinstance(zeroed_sampler.like_obj.inner, BananaLikelihood)
+    assert isinstance(zeroed_sampler.like_obj, BananaLikelihood)
+    assert all(
+        cast('Any', manager).like_obj is zeroed_sampler.like_obj for manager in zeroed_sampler.proposal_manager.managers
+    )
 
     assert constant_state.keys() == zeroed_state.keys()
     for key, constant_value in constant_state.items():
@@ -143,6 +139,8 @@ def test_zeroed_likelihood_matches_constant_likelihood(backend: str, jump_label:
         else:
             assert zeroed_value == constant_value, key
 
+    assert zeroed_sampler.eval_accounting.proposal_targets > 0
+
 
 def test_constant_rectangular_defaults() -> None:
     """The constant likelihood defaults to the borrowed banana box and zero loglike."""
@@ -151,63 +149,65 @@ def test_constant_rectangular_defaults() -> None:
     np.testing.assert_array_equal(like.high_lims, np.full(3, high_lim))
     assert like.get_loglike(np.zeros(3)) == 0.0
     assert like.prior_factor(np.zeros(3)) == 0.0
-    assert like.bind_native().loglike is zero_loglike_native
+    assert like.bind_native().loglike(np.zeros(3), like.native_state()) == 0.0
 
 
-def test_zeroed_wrapper_replaces_only_the_loglike() -> None:
-    """The wrapper zeroes the log likelihood but delegates priors and bounds."""
-    inner = UniformGaussianPriorLikelihood(n_par=3, prior_mean=1.5, prior_std=0.75)
-    wrapped = ZeroedLoglikeLikelihood(inner)
-    point = np.full(3, 0.25)
+def test_zero_mode_preserves_original_fisher_likelihood() -> None:
+    """Fisher construction is identical with and without zero mode."""
+    reset_seed_guard_for_tests()
+    try:
+        spec = _make_spec({'name': 'banana', 'n_par': N_PAR})
+        seed_run(spec.seed)
+        zeroed_sampler, _ = build_sampler(spec, kernel_backend='python', zero_loglike=True)
 
-    assert wrapped.get_loglike(point) == 0.0
-    assert wrapped.prior_factor(point) == inner.prior_factor(point) != 0.0
-    corrected, ok = wrapped.validate_bounds(point.copy())
-    np.testing.assert_array_equal(corrected, inner.validate_bounds(point.copy())[0])
-    assert ok
+        reset_seed_guard_for_tests()
+        seed_run(spec.seed)
+        regular_sampler, _ = build_sampler(spec, kernel_backend='python', zero_loglike=False)
+    finally:
+        reset_seed_guard_for_tests()
 
-    inner_natives = inner.bind_native()
-    wrapped_natives = wrapped.bind_native()
-    assert wrapped_natives.loglike is zero_loglike_native
-    assert wrapped_natives.prior_draw is inner_natives.prior_draw
-    assert wrapped_natives.prior_factor is inner_natives.prior_factor
-    assert wrapped_natives.validate_bounds is inner_natives.validate_bounds
-    assert wrapped.native_state() == inner.native_state()
-
-
-def test_zeroed_wrapper_rejects_unbindable_inner() -> None:
-    """Wrapping does not launder a missing or stale native binding."""
-
-    class _HooklessLikelihood:
-        n_par = 2
-
-        def get_loglike(self, params_in: np.ndarray) -> float:
-            return -float(np.sum(params_in * params_in))
-
-        def prior_draw(self) -> np.ndarray:
-            return np.zeros(2)
-
-        def prior_factor(self, params_in: np.ndarray) -> float:
-            del params_in
-            return 0.0
-
-        def validate_bounds(self, params_in: np.ndarray) -> tuple[np.ndarray, bool]:
-            return params_in, True
-
-    wrapped = ZeroedLoglikeLikelihood(_HooklessLikelihood())  # type: ignore[arg-type]
-    with pytest.raises(NativeBackendUnsupportedError, match='bind_native'):
-        wrapped.bind_native()
+    assert isinstance(zeroed_sampler.like_obj, BananaLikelihood)
+    assert all(
+        cast('Any', manager).like_obj is zeroed_sampler.like_obj for manager in zeroed_sampler.proposal_manager.managers
+    )
+    zeroed_fisher = next(
+        manager for manager in zeroed_sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
+    )
+    regular_fisher = next(
+        manager for manager in regular_sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
+    )
+    assert zeroed_fisher.like_obj is zeroed_sampler.like_obj
+    np.testing.assert_array_equal(zeroed_sampler.starting_samples, regular_sampler.starting_samples)
+    np.testing.assert_array_equal(zeroed_fisher.sigma_diags, regular_fisher.sigma_diags)
+    np.testing.assert_array_equal(zeroed_fisher.fishers, regular_fisher.fishers)
+    np.testing.assert_array_equal(zeroed_fisher.chol_fishers, regular_fisher.chol_fishers)
+    assert np.all(zeroed_sampler.starting_logLs == 0.0)
+    assert np.any(regular_sampler.starting_logLs != 0.0)
 
 
-def test_zero_loglike_kwarg_wraps_before_graph_assembly() -> None:
-    """The kwarg wraps the likelihood before the default managers are built.
+@pytest.mark.parametrize('backend', ['python', 'numba'])
+def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
+    """Target calls are skipped while Fisher's real-likelihood calls remain accounted."""
+    reset_seed_guard_for_tests()
+    try:
+        spec = _make_spec({'name': 'banana', 'n_par': N_PAR})
+        seed_run(spec.seed)
+        like_obj = BananaLikelihood(N_PAR)
+        with LoglikeCallSpy(like_obj) as spy:
+            sampler, _ = build_sampler(spec, like_obj=like_obj, kernel_backend=backend, zero_loglike=True)
+            fisher = next(
+                manager for manager in sampler.proposal_manager.managers if isinstance(manager, FisherJumpManager)
+            )
+            assert spy.n_calls == fisher.declared_construction_evals
+            assert sampler.eval_accounting.initialization == spy.n_calls + sampler.n_chain
+            jump_idx = sampler.proposal_manager.jump_labels_array.index('Blank Jump')
+            sampler.proposal_manager.jump_probs.fill(0.0)
+            sampler.proposal_manager.jump_probs[:, jump_idx] = 1.0
+            sampler.advance_block()
 
-    Every sampler-built manager must hold the wrapped object, so Fisher
-    refreshes, DE initialization, and prior-jump dispatch all see the
-    zeroed log likelihood.
-    """
-    _state, sampler = _run({'name': 'banana', 'n_par': N_PAR}, 'python', None, zero_loglike=True)
-    assert isinstance(sampler.like_obj, ZeroedLoglikeLikelihood)
-    for manager in sampler.proposal_manager.managers:
-        assert manager.like_obj is sampler.like_obj
-    assert np.all(sampler.logLs == 0.0)
+        assert sampler.last_kernel_backend == backend
+        assert spy.n_calls == 2 * fisher.declared_construction_evals
+        assert sampler.eval_accounting.proposal_targets > 0
+        assert np.all(sampler.logLs == 0.0)
+    finally:
+        reset_seed_guard_for_tests()

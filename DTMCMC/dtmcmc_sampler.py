@@ -13,7 +13,7 @@ from DTMCMC.eval_accounting import EvalAccounting
 from DTMCMC.exchange_manager import AbstractExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
 from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager
-from DTMCMC.likelihood import AbstractLikelihood, CoreLikelihood, ZeroedLoglikeLikelihood
+from DTMCMC.likelihood import AbstractLikelihood, CoreLikelihood
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 from DTMCMC.numba_backend import NativeSerialBackend
 from DTMCMC.proposal_manager import AbstractProposalManager
@@ -75,6 +75,7 @@ def advance_step_ptmcmc(
     proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
     jump_internal_evals: NDArray[np.int64],
+    zero_loglike: bool,
 ) -> tuple[int, int]:
     """Advance a single step in the ptmcmc chain.
 
@@ -104,7 +105,10 @@ def advance_step_ptmcmc(
         # skip likelihood evaluation if proposal is marked as a failure
         if success:
             # if the point passes, get the likelihood
-            logL_new: float = like_obj.get_loglike(new_point)
+            if zero_loglike:
+                logL_new: float = 0.0
+            else:
+                logL_new = like_obj.get_loglike(new_point)
             n_target_evals += 1
         else:
             # Failed, ensure the point will not be accepted
@@ -137,6 +141,7 @@ def advance_block_ptmcmc(
     proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
     tracker_manager: TrackerManager,
+    zero_loglike: bool,
 ) -> tuple[int, int, bool]:
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals.
 
@@ -172,6 +177,7 @@ def advance_block_ptmcmc(
                 proposal_manager,
                 like_obj,
                 jump_internal_evals,
+                zero_loglike,
             )
             n_target_evals += step_targets
             n_internal_evals += step_internal
@@ -235,13 +241,10 @@ class DTMCMCSampler:
             disables only the native block kernel, leaving existing jitted
             helpers enabled.
         zero_loglike: bool
-            Prior-recovery review mode: wrap the likelihood so every log
-            likelihood evaluation (Python and native) returns zero while
-            the priors and bounds handling stay untouched — the sampler
-            must then reproduce the prior exactly. Applies to the default
-            sampler-built proposal graph; when passing a preassembled
-            proposal_manager, wrap the likelihood in ZeroedLoglikeLikelihood
-            yourself before constructing the managers instead.
+            Prior-recovery review mode: set the sampler's target log
+            likelihood values to zero without evaluating them. The original
+            likelihood remains attached to the proposal graph, so internal
+            calculations such as Fisher matrix stencils continue to use it.
         """
         # fail fast before the likelihood is used: initialization below
         # draws from the prior and evaluates the likelihood
@@ -251,10 +254,6 @@ class DTMCMCSampler:
                 '(n_par, get_loglike, prior_draw, prior_factor, validate_bounds)'
             )
             raise TypeError(msg)
-        if zero_loglike:
-            # prior-recovery review mode: zero the log likelihood only,
-            # after validating the real likelihood above
-            like_obj = ZeroedLoglikeLikelihood(like_obj)
         self.eval_accounting = EvalAccounting()
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
@@ -264,6 +263,7 @@ class DTMCMCSampler:
         self.store_counter: int = 0
         self.itrn: int = 0
         self.like_obj: AbstractLikelihood = like_obj
+        self.zero_loglike: bool = zero_loglike
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
         self._native_serial_backend = NativeSerialBackend(kernel_backend)
@@ -403,7 +403,10 @@ class DTMCMCSampler:
 
         self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
-            self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt, :])
+            if self.zero_loglike:
+                self.starting_logLs[itrt] = 0.0
+            else:
+                self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt, :])
             self.eval_accounting.initialization += 1
 
         for itrt in range(self.n_chain):
@@ -490,6 +493,7 @@ class DTMCMCSampler:
             self.like_obj,
             self.tracker_manager,
             self.eval_accounting,
+            self.zero_loglike,
         ):
             self.last_kernel_backend = 'numba'
             return
@@ -502,6 +506,7 @@ class DTMCMCSampler:
             self.proposal_manager,
             self.like_obj,
             self.tracker_manager,
+            self.zero_loglike,
         )
         self.eval_accounting.proposal_targets += n_target_evals
         self.eval_accounting.proposal_internal += n_internal_evals

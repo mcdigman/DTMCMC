@@ -278,13 +278,7 @@ _LIKELIHOOD_NATIVE_PAIRS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def likelihood_binding_problem(like_obj: AbstractLikelihood) -> str | None:
-    """Describe why a likelihood cannot bind natively, or None if it can.
-
-    Public so wrappers that delegate to an inner likelihood (e.g. the
-    zero-loglike prior-recovery wrapper) can vet the wrapped object with
-    the same hook-presence and stale-override rules the backend applies.
-    """
+def _likelihood_problem(like_obj: AbstractLikelihood) -> str | None:
     cls = type(like_obj)
     if _defining_class(cls, 'bind_native') is None:
         return f'{cls.__qualname__} does not define bind_native'
@@ -347,7 +341,7 @@ def _binding_inventory(
     problems: list[str] = []
     explicit = 0
 
-    problem = likelihood_binding_problem(like_obj)
+    problem = _likelihood_problem(like_obj)
     if problem is None:
         explicit += 1
     else:
@@ -564,6 +558,7 @@ def make_serial_kernel(
         manager_states: tuple[object, ...],
         exchange_state: object,
         jump_internal_evals: NDArray[np.int64],
+        zero_loglike: bool,
     ) -> tuple[int, int]:
         block_size = samples.shape[0] - 1
         n_chain = samples.shape[1]
@@ -585,7 +580,10 @@ def make_serial_kernel(
                     if success:
                         density_fac += prior_factor(new_point, like_state) - prior_factor(sample_point, like_state)
                     if success:
-                        logL_new = loglike(new_point, like_state)
+                        if zero_loglike:
+                            logL_new = 0.0
+                        else:
+                            logL_new = loglike(new_point, like_state)
                         n_target_evals += 1
                     else:
                         logL_new = -np.inf
@@ -768,6 +766,7 @@ class NativeSerialBackend:
         like_obj: AbstractLikelihood,
         tracker_manager: TrackerManager,
         eval_accounting: EvalAccounting,
+        zero_loglike: bool,
     ) -> bool:
         """Run a native block when the graph is bindable, otherwise return False."""
         if self.mode == 'python':
@@ -800,6 +799,7 @@ class NativeSerialBackend:
                 manager_states,
                 exchange_state,
                 self._jump_internal_evals,
+                zero_loglike,
             )
         except NumbaError as exc:
             # NumbaError here means the kernel failed to compile, which
