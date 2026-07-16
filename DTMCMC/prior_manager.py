@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 class PriorFullJump(AbstractJump):
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
-        AbstractJump.__init__(self, 'Prior All-D')
+        self.print_name = 'Prior All-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         del itrt

@@ -119,11 +119,7 @@ def advance_step_ptmcmc(
 
         if success:
             # see if the point is in bounds, if not try to make it legal
-            check_success: bool = like_obj.check_bounds(new_point)
-            if not check_success:
-                # try to make the point in bounds and fail if unsuccesful
-                new_point = like_obj.correct_bounds(new_point)
-                success = like_obj.check_bounds(new_point)
+            new_point, success = like_obj.validate_bounds(new_point)
 
         # skip likelihood evaluation if proposal is marked as a failure
         if success:

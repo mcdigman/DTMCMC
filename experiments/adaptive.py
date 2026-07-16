@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
-    from experiments.harness.runner import LikelihoodLike
+    from DTMCMC.likelihood import AbstractLikelihood
 
 ADAPTIVE_MODES: frozenset[str] = frozenset({'entropy', 'length', 'acceptance'})
 
@@ -280,7 +280,7 @@ class AdaptiveLadderController:
                 return record.block_index
         return self.budget_blocks
 
-    def initial_ladder(self, like_obj: LikelihoodLike, n_chain: int, n_cold: int) -> TemperatureLadder:
+    def initial_ladder(self, like_obj: AbstractLikelihood, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Build the hot-anchored initial ladder from prior-draw logL statistics.
 
         Draws from the run streams (the controller runs inside the run,

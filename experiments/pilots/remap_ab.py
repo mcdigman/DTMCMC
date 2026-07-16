@@ -30,7 +30,7 @@ from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import GeometricTemperatureLadder
 from experiments.harness.paths import chdir_repo_root, repo_root
-from experiments.harness.runner import CountingLikelihood, build_ladder, build_likelihood
+from experiments.harness.runner import build_ladder, build_likelihood
 from experiments.harness.spec import RunSpec
 from experiments.metrics import round_trip_counts
 from experiments.pilots.common import PILOT_ROOT, cake5_likelihood, entropy_gold_ladder, make_spec, save_summary
@@ -62,7 +62,7 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     seed_run(seed)
 
     spec = RunSpec.from_dict(make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2))
-    like_obj = CountingLikelihood(build_likelihood(spec))
+    like_obj = build_likelihood(spec)
     config = spec.build_proposal_config()
 
     # phase A: settle on a deliberately coarse geometric ladder

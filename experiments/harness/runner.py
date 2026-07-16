@@ -16,7 +16,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 from warnings import warn
 
 import numpy as np
@@ -25,8 +25,7 @@ if TYPE_CHECKING:
     import configparser
     from collections.abc import Callable
 
-    from numpy.typing import NDArray
-
+    from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.proposal_manager import ProposalManager
 
 from diagnostic_commentary_helpers import print_diagnostic_commentary
@@ -34,11 +33,10 @@ from DTMCMC.corr_summary_helpers import CorrelationSummary
 from DTMCMC.de_manager import DEJumpManager
 from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import ExchangeManager
-from DTMCMC.likelihood import AbstractLikelihood
 from DTMCMC.likelihoods.ar1 import Ar1Likelihood
 from DTMCMC.likelihoods.banana import BananaLikelihood
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
-from DTMCMC.likelihoods.eggbox import Likelihood as EggboxLikelihood
+from DTMCMC.likelihoods.eggbox import EggboxLikelihood
 from DTMCMC.likelihoods.gaussian_mixture import GaussianMixtureLikelihood
 from DTMCMC.likelihoods.gaussian_shell import GaussianShellLikelihood
 from DTMCMC.likelihoods.hawaii_likelihood import HawaiiLikelihood
@@ -75,90 +73,10 @@ DE_MEMORY_MIN_WINDOWS = 2
 DE_MEMORY_MIN_BLOCKS_FIXED = 4
 
 
-class LikelihoodLike(Protocol):
-    """Structural interface the engine requires of a likelihood object.
-
-    Matches AbstractLikelihood but also fits duck-typed likelihoods such
-    as the eggbox numba jitclass, which cannot subclass an ABC.
-    """
-
-    n_par: int
-
-    def get_loglike(self, params_in: NDArray[np.floating], /) -> float:
-        """Get the log likelihood at the specified parameters."""
-        ...
-
-    def prior_draw(self) -> NDArray[np.floating]:
-        """Get a draw from the priors for this likelihood."""
-        ...
-
-    def prior_factor(self, params_in: NDArray[np.floating], /) -> float:
-        """Get the prior density factor for the input parameters."""
-        ...
-
-    def correct_bounds(self, params_in: NDArray[np.floating], /) -> NDArray[np.floating]:
-        """Correct the input parameters to be within the prior range."""
-        ...
-
-    def check_bounds(self, params_in: NDArray[np.floating], /) -> bool:
-        """Check if the specified point is within the prior volume."""
-        ...
-
-
-class CountingLikelihood(AbstractLikelihood):
-    """Proxy that counts get_loglike calls and delegates everything else.
-
-    Wrapping the likelihood before any engine object sees it guarantees
-    the artifact eval counter covers every call site (initialization,
-    proposal evaluation, Fisher refreshes, history jumps) by construction.
-    The proxy is a pure observer: it adds no random draws (plan D5).
-    """
-
-    def __init__(self, wrapped: LikelihoodLike) -> None:
-        self._wrapped: LikelihoodLike = wrapped
-        self.n_evals: int = 0
-        AbstractLikelihood.__init__(self, int(wrapped.n_par))
-
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Count and delegate a log-likelihood evaluation."""
-        self.n_evals += 1
-        return self._wrapped.get_loglike(params_in)
-
-    def prior_draw(self) -> NDArray[np.floating]:
-        """Delegate a prior draw (a draw is not an evaluation)."""
-        return self._wrapped.prior_draw()
-
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        """Delegate the prior density factor."""
-        return self._wrapped.prior_factor(params_in)
-
-    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Delegate bounds correction."""
-        return self._wrapped.correct_bounds(params_in)
-
-    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
-        """Delegate the bounds check."""
-        return self._wrapped.check_bounds(params_in)
-
-    def get_epsilons(self) -> NDArray[np.floating]:
-        """Delegate Fisher epsilons, bridging duck-typed likelihoods.
-
-        The eggbox jitclass exposes an epsilons attribute instead of the
-        get_epsilons method; fall back to zeros like AbstractLikelihood.
-        """
-        get_eps = getattr(self._wrapped, 'get_epsilons', None)
-        if callable(get_eps):
-            return np.asarray(get_eps(), dtype=np.float64)
-        eps_attr = getattr(self._wrapped, 'epsilons', None)
-        if eps_attr is not None:
-            return np.asarray(eps_attr, dtype=np.float64).copy()
-        return np.zeros(self.n_par)
-
-
 # one constructor per spec likelihood name; a test asserts the keys stay in
 # sync with spec.LIKELIHOOD_NAMES (spec.py cannot import these back without a
 # circular import, so drift is caught by CI instead)
-LIKELIHOOD_BUILDERS: dict[str, Callable[..., LikelihoodLike]] = {
+LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
     'eggbox': EggboxLikelihood,
@@ -174,7 +92,7 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., LikelihoodLike]] = {
 }
 
 
-def build_likelihood(spec: RunSpec) -> LikelihoodLike:
+def build_likelihood(spec: RunSpec) -> AbstractLikelihood:
     """Construct the likelihood object named by the spec."""
     params: dict[str, Any] = dict(spec.likelihood_params)
     builder = LIKELIHOOD_BUILDERS.get(spec.likelihood_name)
@@ -320,7 +238,7 @@ class HarnessSampler(DTMCMCSampler):
         self,
         spec: RunSpec,
         T_ladder: TemperatureLadder,
-        like_obj: CountingLikelihood,
+        like_obj: AbstractLikelihood,
         config: configparser.ConfigParser,
         *,
         controller: AdaptiveLadderController | None = None,
@@ -503,7 +421,7 @@ class HarnessSampler(DTMCMCSampler):
 def build_sampler(
     spec: RunSpec,
     config: configparser.ConfigParser | None = None,
-    like_obj: CountingLikelihood | None = None,
+    like_obj: AbstractLikelihood | None = None,
     T_ladder: TemperatureLadder | None = None,
     *,
     controller: AdaptiveLadderController | None = None,
@@ -511,7 +429,7 @@ def build_sampler(
     provenance: RunProvenance | None = None,
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
-) -> tuple[HarnessSampler, CountingLikelihood]:
+) -> tuple[HarnessSampler, AbstractLikelihood]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
@@ -524,7 +442,7 @@ def build_sampler(
     teardown records checkpoint metrics but writes nothing.
     """
     if like_obj is None:
-        like_obj = CountingLikelihood(build_likelihood(spec))
+        like_obj = build_likelihood(spec)
     if T_ladder is None:
         T_ladder = build_ladder(spec)
     if config is None:
@@ -631,11 +549,11 @@ def run_from_spec(
     )
 
     controller = None
-    like_obj: CountingLikelihood | None = None
+    like_obj: AbstractLikelihood | None = None
     initial_ladder: TemperatureLadder | None = None
     if spec.adaptive is not None:
         controller = build_adaptive_controller(spec.adaptive)
-        like_obj = CountingLikelihood(build_likelihood(spec))
+        like_obj = build_likelihood(spec)
         # prior-draw anchoring consumes run-stream draws and counted evals,
         # deliberately: adaptive burn-in is charged in full (plan C3)
         initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)

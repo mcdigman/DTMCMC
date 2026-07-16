@@ -1,32 +1,31 @@
 """an n dimensional normal distribution"""
 
-from typing import TYPE_CHECKING
+from math import gamma
 
 import numpy as np
-from scipy.special import gamma
+from numba import njit
+from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
 
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
 
-
+@njit()
 def get_cake_tier_logL(v: NDArray[np.floating], amp: float, width: float, exponent: int | float) -> float:
     n_par: int = v.shape[0]
 
-    dim_part: float = gamma(1 + n_par / 2) / (np.pi ** (n_par / 2))
-    res: float = np.log(
-        amp * dim_part / (2 ** (n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent))
-    )
+    log_dim_part: float = np.log(gamma(1 + n_par / 2)) - (n_par / 2) * np.log(np.pi)
+    log_base_part: float = np.log(amp) - (n_par / exponent) * np.log(2) - n_par * np.log(width)
+    log_exp_part: float = -np.log(gamma((exponent + n_par) / exponent))
+
+    const_part: float = log_dim_part + log_base_part + log_exp_part
 
     # get the squared distance from the center
     r2_got: float = 0.0
     for itrp in range(v.shape[0]):
         r2_got += v[itrp] ** 2
 
-    res += -1 / (2 * width**exponent) * r2_got ** (exponent / 2)
-    # for itrp in range(0,v.shape[0]):
-    #    res += -1/(2*width**exponent)*v[itrp]**exponent
+    res_scale = -1 / (2 * width**exponent)
+    res: float = const_part + res_scale * r2_got ** (exponent / 2)
 
     return res
 
@@ -38,7 +37,7 @@ CAKE_DEFAULT_WIDTHS: tuple[float, float] = (4.0, 0.1)
 CAKE_DEFAULT_EXPONENTS: tuple[int, int] = (8, 2)
 
 
-# @njit()
+@njit()
 def get_loglike(
     params_in: NDArray[np.floating],
     amps: tuple[float, ...] = CAKE_DEFAULT_AMPS,
@@ -46,9 +45,45 @@ def get_loglike(
     exponents: tuple[int, ...] | tuple[float, ...] = CAKE_DEFAULT_EXPONENTS,
 ) -> float:
     """Get a 'cake' likelihood: logaddexp over the mixture tiers"""
-    res = get_cake_tier_logL(params_in, amps[0], widths[0], exponents[0])
+    res: float = get_cake_tier_logL(params_in, amps[0], widths[0], exponents[0])
     for itrm in range(1, len(amps)):
         res = np.logaddexp(res, get_cake_tier_logL(params_in, amps[itrm], widths[itrm], exponents[itrm]))
+    return res
+
+
+@njit()
+def _get_loglike(
+    params_in: NDArray[np.floating],
+    tier_lognorms: tuple[float, ...],
+    tier_coefs: tuple[float, ...],
+    tier_powers: tuple[float, ...],
+) -> float:
+    """Get the log likelihood given a set of parameters v"""
+    r2_got: float = 0.0
+    for itrp in range(params_in.shape[0]):
+        r2_got += params_in[itrp] ** 2
+
+    res: float = tier_lognorms[0] + tier_coefs[0] * r2_got ** tier_powers[0]
+    for itrm in range(1, len(tier_lognorms)):
+        res = np.logaddexp(res, tier_lognorms[itrm] + tier_coefs[itrm] * r2_got ** tier_powers[itrm])
+    return res
+
+
+@njit()
+def _get_loglike_2tier(
+    params_in: NDArray[np.floating],
+    tier_lognorms: tuple[float, float],
+    tier_coefs: tuple[float, float],
+    tier_powers: tuple[float, float],
+) -> float:
+    """Get the log likelihood given a set of parameters v"""
+    r2_got: float = 0.0
+    for itrp in range(params_in.shape[0]):
+        r2_got += params_in[itrp] ** 2
+
+    res1: float = tier_lognorms[0] + tier_coefs[0] * r2_got ** tier_powers[0]
+    res2: float = tier_lognorms[1] + tier_coefs[1] * r2_got ** tier_powers[1]
+    res: float = np.logaddexp(res1, res2)
     return res
 
 
@@ -76,6 +111,7 @@ class CakeLikelihood(RectangularLikelihood):
         """
         assert len(amps) == len(widths) == len(exponents)
         assert len(amps) >= 1
+        assert len(amps) == 2
         self.amps = tuple(amps)
         self.widths = tuple(widths)
         self.exponents = tuple(exponents)
@@ -85,14 +121,14 @@ class CakeLikelihood(RectangularLikelihood):
         # identical to get_cake_tier_logL's, so values are bit-identical
         # (guarded by the golden-run test)
         dim_part = gamma(1 + n_par / 2) / (np.pi ** (n_par / 2))
-        self._tier_lognorms = tuple(
+        self._tier_lognorms: tuple[float, float] = tuple(
             np.log(amp * dim_part / (2 ** (n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent)))
             for amp, width, exponent in zip(self.amps, self.widths, self.exponents, strict=True)
         )
-        self._tier_coefs = tuple(
+        self._tier_coefs: tuple[float, float] = tuple(
             -1 / (2 * width**exponent) for width, exponent in zip(self.widths, self.exponents, strict=True)
         )
-        self._tier_powers = tuple(exponent / 2 for exponent in self.exponents)
+        self._tier_powers: tuple[float, float] = tuple(exponent / 2 for exponent in self.exponents)  # type: ignore[assignment]
 
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)
@@ -101,13 +137,15 @@ class CakeLikelihood(RectangularLikelihood):
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        r2_got: float = 0.0
-        for itrp in range(params_in.shape[0]):
-            r2_got += params_in[itrp] ** 2
+        self.n_evals += 1
+        res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
+        # r2_got: float = 0.0
+        # for itrp in range(params_in.shape[0]):
+        #    r2_got += params_in[itrp] ** 2
 
-        res: float = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
-        for itrm in range(1, len(self.amps)):
-            res = np.logaddexp(
-                res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
-            )
+        # res: float = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
+        # for itrm in range(1, len(self.amps)):
+        #    res = np.logaddexp(
+        #        res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
+        #    )
         return res

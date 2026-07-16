@@ -18,7 +18,7 @@ from numpy.testing import assert_array_equal
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
-    from experiments.harness.runner import LikelihoodLike
+    from DTMCMC.likelihood import AbstractLikelihood
 
 import experiments.adaptive as adaptive_module
 from DTMCMC.de_manager import DEJumpManager
@@ -37,7 +37,6 @@ from DTMCMC.tracker_manager import TrackerManager
 from experiments.adaptive import AdaptiveLadderController
 from experiments.gates import GateReport, dedup_rows, ladder_entropy_gates, moment_gates, nn_gate, radial_mixture_gates
 from experiments.harness.runner import (
-    CountingLikelihood,
     build_adaptive_controller,
     build_likelihood,
     build_sampler,
@@ -269,7 +268,7 @@ def test_post_freeze_bit_exact_equivalence() -> None:
     controller = AdaptiveLadderController(
         mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
     )
-    like_a = CountingLikelihood(build_likelihood(spec))
+    like_a = build_likelihood(spec)
     initial_ladder = controller.initial_ladder(like_a, spec.n_chain, spec.n_cold)
     sampler_a, _ = build_sampler(spec, like_obj=like_a, T_ladder=initial_ladder)
 
@@ -292,7 +291,7 @@ def test_post_freeze_bit_exact_equivalence() -> None:
 
     # fresh fixed-ladder sampler on the frozen ladder; construction consumes
     # draws, then the full state is overwritten with copies
-    like_b = CountingLikelihood(build_likelihood(spec))
+    like_b = build_likelihood(spec)
     sampler_b, _ = build_sampler(spec, like_obj=like_b, T_ladder=sampler_a.T_ladder)
     _copy_full_state(sampler_a, sampler_b)
 
@@ -473,7 +472,7 @@ def test_adaptive_acceptance_mode_realizes_equal_exchange_rates() -> None:
     assert spec.adaptive is not None
     seed_run(spec.seed)
     controller = build_adaptive_controller(spec.adaptive)
-    like_obj = CountingLikelihood(build_likelihood(spec))
+    like_obj = build_likelihood(spec)
     sampler, _ = build_sampler(
         spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
     )
@@ -610,7 +609,7 @@ def test_freeze_requires_coupling_witness(monkeypatch) -> None:
     controller = AdaptiveLadderController(
         mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
     )
-    like_obj = CountingLikelihood(build_likelihood(spec))
+    like_obj = build_likelihood(spec)
     sampler, _ = build_sampler(
         spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
     )
@@ -642,7 +641,7 @@ def test_freeze_requires_trips_in_every_streak_window(monkeypatch) -> None:
     controller = AdaptiveLadderController(
         mode='entropy', update_every_blocks=4, freeze_criterion=(0.08, 2), budget_blocks=10**6
     )
-    like_obj = CountingLikelihood(build_likelihood(spec))
+    like_obj = build_likelihood(spec)
     sampler, _ = build_sampler(
         spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
     )
@@ -660,7 +659,7 @@ def test_budget_freeze_records_reason() -> None:
     spec = make_tiny_spec(n_steps=64 * 8, block_size=64)
     seed_run(spec.seed)
     controller = AdaptiveLadderController(mode='entropy', update_every_blocks=8, budget_blocks=4)
-    like_obj = CountingLikelihood(build_likelihood(spec))
+    like_obj = build_likelihood(spec)
     sampler, _ = build_sampler(
         spec, like_obj=like_obj, T_ladder=controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
     )
@@ -769,7 +768,7 @@ def test_adaptive_modes_sync_and_validation() -> None:
 
 
 class _StubLikelihood:
-    """Deterministic LikelihoodLike stand-in (no RNG draws)."""
+    """Deterministic AbstractLikelihood stand-in (no RNG draws)."""
 
     def __init__(self) -> None:
         self._count = 0
@@ -846,7 +845,7 @@ def test_pessimistic_var_estimator_ratchets_and_ages_out() -> None:
         )
         # huge freeze_dlog holds every rebuild, so the stub's temperatures
         # recur every segment — the regime where the estimators differ
-        controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), Ts_fixed.size, 1)
+        controller.initial_ladder(cast('AbstractLikelihood', _StubLikelihood()), Ts_fixed.size, 1)
         stub = _StubSampler(Ts_fixed)
         sampler = cast('DTMCMCSampler', stub)
         feeds = [low, high_cold] + [low] * (adaptive_module.VAR_HISTORY_LENGTH + 3)
@@ -887,7 +886,7 @@ def test_pool_tolerance_preserves_variance_history() -> None:
             pool_dlog_tol=tol,
             discard_blocks_after_update=0,
         )
-        controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
+        controller.initial_ladder(cast('AbstractLikelihood', _StubLikelihood()), 6, 1)
         stub = _StubSampler(np.array([1.0, 2.0, 4.0, 8.0, 16.0, np.inf]))
         sampler = cast('DTMCMCSampler', stub)
         stub.feed_block([0.5, 0.5, 0.5, 0.5, 0.5, 0.25])
@@ -924,7 +923,7 @@ def test_discard_blocks_after_update_drops_transients() -> None:
         discard_blocks_after_update=1,
         pool_dlog_tol=0.0,
     )
-    controller.initial_ladder(cast('LikelihoodLike', _StubLikelihood()), 6, 1)
+    controller.initial_ladder(cast('AbstractLikelihood', _StubLikelihood()), 6, 1)
     stub = _StubSampler(np.array([1.0, 2.0, 4.0, 8.0, 16.0, np.inf]))
     sampler = cast('DTMCMCSampler', stub)
     stub.feed_block([999.0, 999.0, 999.0, 999.0, 999.0, 999.0])  # transient: must not pool

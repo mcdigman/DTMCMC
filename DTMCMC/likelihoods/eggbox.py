@@ -1,13 +1,12 @@
 """the eggbox likelihood in n dimensions"""
 
 # see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
-import numba as nb
 import numpy as np
 from numba import njit
-from numba.experimental import jitclass  # type: ignore[attr-defined] # pyright: ignore[reportPrivateImportUsage]
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
+from DTMCMC.likelihood import RectangularLikelihood
 
 tmax: float = 5.0 * np.pi
 
@@ -39,13 +38,7 @@ def prior_draw(n_par: int) -> NDArray[np.floating]:
 
 @njit()
 def prior_factor(_v: NDArray[np.floating], _n_par: int) -> float:
-    """Get the denstiy factor for prior draws
-
-    numba cannot type `del` of function arguments, so the unused inputs
-    are marked by naming: the previous del-based body made every call to
-    prior_factor raise a TypingError, which left the eggbox jitclass
-    unable to run through the default proposal mixture at all
-    """
+    """Get the denstiy factor for prior draws."""
     return 0.0
 
 
@@ -66,17 +59,31 @@ def check_bounds(v: NDArray[np.floating]) -> bool:
     return True
 
 
-@jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-class Likelihood:
+@njit()
+def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+    success: bool = check_bounds(params_in)
+    if not success:
+        # try to make the point in bounds and fail if unsuccesful
+        new_point = correct_bounds(params_in, params_in.size)
+        success = check_bounds(params_in)
+    else:
+        new_point = params_in
+    return new_point, success
+
+
+# @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
+class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
         self.n_par = n_par
         self.epsilons = np.zeros(n_par) + eps_default
+        self.n_evals = 0
 
     def get_loglike(self, v: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
+        self.n_evals += 1
         return get_loglike(v, self.n_par)
 
     def prior_draw(self) -> NDArray[np.floating]:
@@ -88,17 +95,25 @@ class Likelihood:
         v_out = prior_draw(self.n_par)
         return v_out, prior_factor(v_in, self.n_par) - prior_factor(v_out, self.n_par), True
 
-    def prior_factor(self, v: NDArray[np.floating]) -> float:
+    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         """Get the density factor for prior draws, if the prior draws are not uniform"""
-        return prior_factor(v, self.n_par)
+        return prior_factor(params_in, self.n_par)
 
-    def correct_bounds(self, v: NDArray[np.floating]) -> NDArray[np.floating]:
+    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct the bounds of a draw to be in range, if allowed for this likelihood"""
-        return correct_bounds(v, self.n_par)
+        return correct_bounds(params_in, self.n_par)
 
-    def check_bounds(self, v: NDArray[np.floating]) -> bool:
+    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
         """Check if the bounds of a draw are in the prior range but do not change them"""
-        return check_bounds(v)
+        return check_bounds(params_in)
+
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check the parameters and correct if required."""
+        return validate_bounds(params_in)
+
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Get epsilons for fisher matrix calculation."""
+        return self.epsilons
 
 
 def get_labels(n_par: int) -> list[str]:

@@ -65,7 +65,7 @@ class DEStandardFullJump(AbstractJump):
 
     def __init__(self, manager: DEJumpManager) -> None:
         self.manager: DEJumpManager = manager
-        AbstractJump.__init__(self, 'DE Std All-D')
+        self.print_name = 'DE Std All-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
@@ -78,7 +78,7 @@ class DEStandardRandomSubspaceJump(AbstractJump):
 
     def __init__(self, manager: DEJumpManager) -> None:
         self.manager: DEJumpManager = manager
-        AbstractJump.__init__(self, 'DE Std Random-D')
+        self.print_name = 'DE Std Random-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
@@ -91,7 +91,7 @@ class DEBigFullJump(AbstractJump):
 
     def __init__(self, manager: DEJumpManager) -> None:
         self.manager: DEJumpManager = manager
-        AbstractJump.__init__(self, 'DE Big All-D')
+        self.print_name = 'DE Big All-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
@@ -104,7 +104,7 @@ class DEBigRandomSubspaceJump(AbstractJump):
 
     def __init__(self, manager: DEJumpManager) -> None:
         self.manager: DEJumpManager = manager
-        AbstractJump.__init__(self, 'DE Big Random-D')
+        self.print_name = 'DE Big Random-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)

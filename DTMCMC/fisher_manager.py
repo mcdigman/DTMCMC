@@ -53,7 +53,7 @@ class SigmaFullJump(AbstractJump):
     def __init__(self, manager: FisherJumpManager) -> None:
         """Create the jump"""
         self.manager: FisherJumpManager = manager
-        AbstractJump.__init__(self, 'Std All-D')
+        self.print_name = 'Std All-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump"""
@@ -76,7 +76,7 @@ class SigmaRandomSubspaceJump(AbstractJump):
 
     def __init__(self, manager: FisherJumpManager) -> None:
         self.manager: FisherJumpManager = manager
-        AbstractJump.__init__(self, 'Std Random-D')
+        self.print_name = 'Std Random-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump in random subspaces"""
@@ -383,7 +383,7 @@ class FisherJumpManager(JumpManager):
 class FisherFullJump(AbstractJump):
     def __init__(self, manager: FisherJumpManager) -> None:
         self.manager: FisherJumpManager = manager
-        AbstractJump.__init__(self, 'Fisher All-D')
+        self.print_name = 'Fisher All-D'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a fisher matrix jump"""

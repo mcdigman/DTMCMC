@@ -22,7 +22,7 @@ class BlankJump(AbstractJump):
 
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
-        AbstractJump.__init__(self, 'Blank Jump')
+        self.print_name = 'Blank Jump'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Call the jump"""
