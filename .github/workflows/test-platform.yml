@@ -1,0 +1,72 @@
+name: Test (platform)
+
+# Cross-OS smoke of the test suite on Linux, Windows, and macOS. Manual-only:
+# the per-push Test workflow already gates every change on Linux, and DTMCMC is
+# developed/run on Linux + Apple silicon, so paying for three OSes on every
+# commit is not worth it. Trigger this from the Actions tab (Run workflow), or
+# `gh workflow run test-platform.yml --ref <branch>`, when a change might be
+# platform-sensitive (paths, file encodings, numba/BLAS backends, etc.). There
+# is deliberately no Python *version* matrix -- DTMCMC floats to the latest
+# supported Python only (requires-python >=3.14); this matrix varies the OS.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: test-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    strategy:
+      # Report every OS's result even if one fails, so a platform-specific
+      # break is not masked by a fail-fast cancel of the others.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.os }}
+    # bash is present on all three hosted runners (including Windows), so every
+    # step uses it -- this keeps the venv interpreter path handling uniform
+    # instead of branching on the default shell per OS.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Same extras as the Linux Test workflow so the cross-OS run exercises the
+      # real installed package: pytest via [dev], plotting via [plots], and
+      # plotly/dash via [dashboard] for tests/test_dashboard.py.
+      - name: Install project with test extras
+        run: |
+          uv venv
+          uv pip install ".[dev,plots,dashboard]"
+
+      # Resolve the venv interpreter (Windows puts it under Scripts/), then run
+      # the non-slow suite -- the heavy convergence batteries stay behind the
+      # slow marker and their own manual Test (slow) workflow.
+      - name: Run tests
+        run: |
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            py=".venv/Scripts/python.exe"
+          else
+            py=".venv/bin/python"
+          fi
+          "$py" -m pytest -m "not slow"
