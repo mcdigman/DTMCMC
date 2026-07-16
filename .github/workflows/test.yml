@@ -6,11 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    # Weekly (Mon 06:00 UTC): re-run the suite even when no code changed, so a
+    # Weekly (Mon 06:17 UTC): re-run the suite even when no code changed, so a
     # newly released numpy/scipy/numba/h5py that breaks the floating "latest"
     # dependencies is caught. DTMCMC pins nothing to old versions, so latest is
     # the only thing it is ever tested against -- this guards that assumption.
-    - cron: "0 6 * * 1"
+    # Minute 17, not 0: GitHub delays or drops on-the-hour schedules under the
+    # load spike at the top of each hour.
+    - cron: "17 6 * * 1"
 
 concurrency:
   group: test-${{ github.ref }}
