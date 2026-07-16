@@ -2,45 +2,41 @@
 blank manager to serve as template for adding more draw types
 """
 
-from copy import copy
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeLikelihoodState, jittable_jump, jittable_jump_manager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
-
-
-class AuxilliaryNativeState(NamedTuple):
-    """Empty native state for the built-in blank proposal."""
 
 
 @njit(inline='always')
 def _blank_jump_native(
-    sample_point: NDArray[np.floating],
-    _itrt: int,
-    _manager_state: AuxilliaryNativeState,
-    _likelihood: NativeLikelihoodState,
+    sample_point: NDArray[np.floating], _itrt: int, _state: None
 ) -> tuple[NDArray[np.floating], float, bool]:
     return sample_point.copy(), 0.0, True
 
 
-@jittable_jump(_blank_jump_native)
 class BlankJump(AbstractJump):
     """Template jump for future extensions"""
 
     def __init__(self, manager: JumpManager) -> None:
         self.manager: JumpManager = manager
         self.print_name = 'Blank Jump'
+
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """The blank jump is stateless, so the module-level closure suffices."""
+        del likelihood_natives
+        return _blank_jump_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Call the jump"""
@@ -59,10 +55,6 @@ class AuxilliaryStrategyParameters:
         config_a = config['AuxilliaryJumpManager']
         self.auxilliary_jump_weight = config_a.getfloat('auxilliary_jump_weight', 0.0)
 
-    def copy(self) -> AuxilliaryStrategyParameters:
-        """Copy the object"""
-        return copy(self)
-
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
@@ -72,26 +64,6 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-def _get_auxilliary_native_state(_manager: Any) -> AuxilliaryNativeState:
-    return AuxilliaryNativeState()
-
-
-def _set_auxilliary_native_state(_manager: Any, _state: AuxilliaryNativeState) -> None:
-    """Auxiliary manager native state is empty."""
-
-
-@njit(inline='always')
-def _post_auxilliary_native_state(
-    state: AuxilliaryNativeState, _samples: NDArray[np.floating]
-) -> AuxilliaryNativeState:
-    return state
-
-
-@jittable_jump_manager(
-    state_getter=_get_auxilliary_native_state,
-    state_setter=_set_auxilliary_native_state,
-    post_step=_post_auxilliary_native_state,
-)
 class AuxilliaryJumpManager(JumpManager):
     """template manager for an extra jump type,
     subclass of DTMCMC.jump_manager.JumpManager

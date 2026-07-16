@@ -2,13 +2,13 @@
 helpers to perform the parallel tempering exchanges
 """
 
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.numba_backend import jittable_exchange_manager
+from DTMCMC.numba_backend import NativeExchangeFunctions
 
 if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
@@ -23,6 +23,7 @@ REVERSE_SEQUENTIAL_TARGETS = 4  # target sequentially from front to back
 ALTERNATE_SEQUENTIAL_TARGETS = 5  # target sequentially from front to back and back to front alternating
 
 
+@runtime_checkable
 class AbstractExchangeManager(Protocol):
     """Structural exchange-manager interface used by sampler kernels."""
 
@@ -44,13 +45,6 @@ class AbstractExchangeManager(Protocol):
     def is_exchange_step(self, itrb: int) -> bool:
         """Return whether a sampler step is an exchange step."""
         ...
-
-
-class ExchangeNativeState(NamedTuple):
-    """Numba-compatible built-in exchange strategy state."""
-
-    strategy: int
-    track_full_exchanges: bool
 
 
 @njit()
@@ -248,50 +242,17 @@ def do_ptmcmc_exchange(
 
 
 @njit(inline='always')
-def exchange_is_step_helper(itrb: int, _state: ExchangeNativeState) -> bool:
+def exchange_is_step_native(itrb: int) -> bool:
     """Default alternating local/exchange cadence."""
     return itrb % 2 == 0
 
 
-@njit(inline='always')
-def exchange_native_helper(
-    itrb: int,
-    samples: NDArray[np.floating],
-    logLs: NDArray[np.floating],
-    n_chain: int,
-    betas: NDArray[np.floating],
-    exchange_tracker: NDArray[np.int64],
-    esd_exchange: NDArray[np.floating],
-    chain_track: NDArray[np.int64],
-    state: ExchangeNativeState,
-) -> None:
-    """Execute the built-in exchange operation from its registered state."""
-    do_ptmcmc_exchange(
-        itrb - 1,
-        samples,
-        logLs,
-        n_chain,
-        betas,
-        exchange_tracker,
-        esd_exchange,
-        chain_track,
-        state.strategy,
-        state.track_full_exchanges,
-    )
-
-
-def _get_exchange_native_state(manager: Any) -> ExchangeNativeState:
-    return ExchangeNativeState(manager.strategy, manager.track_full_exchanges)
-
-
-@jittable_exchange_manager(
-    state_getter=_get_exchange_native_state,
-    is_exchange_step=exchange_is_step_helper,
-    exchange=exchange_native_helper,
-)
 class ExchangeManager:
     """class to take a temperature ladder and state of a chain
     and define the strategy by which to propose exchanges
+
+    The strategy constants are fixed at construction: native bindings bake
+    them into compiled closures, so they must not be reassigned afterwards.
     """
 
     def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
@@ -311,8 +272,8 @@ class ExchangeManager:
     ) -> None:
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)
-        return exchange_native_helper(
-            itrb,
+        do_ptmcmc_exchange(
+            itrb - 1,
             samples,
             logLs,
             T_ladder.n_chain,
@@ -320,11 +281,43 @@ class ExchangeManager:
             exchange_tracker,
             esd_exchange,
             chain_track,
-            _get_exchange_native_state(self),
+            self.strategy,
+            self.track_full_exchanges,
         )
 
     def is_exchange_step(self, itrb: int) -> bool:
         """Check whether the step with the given index should be an exchange,
         currently based on alternating even and odd
         """
-        return exchange_is_step_helper(itrb, _get_exchange_native_state(self))
+        return exchange_is_step_native(itrb)
+
+    def bind_native(self) -> NativeExchangeFunctions:
+        """Bake the exchange schedule and executor into jitted closures."""
+        strategy = self.strategy
+        track_full_exchanges = self.track_full_exchanges
+
+        @njit(inline='always')
+        def exchange_native(
+            itrb: int,
+            samples: NDArray[np.floating],
+            logLs: NDArray[np.floating],
+            n_chain: int,
+            betas: NDArray[np.floating],
+            exchange_tracker: NDArray[np.int64],
+            esd_exchange: NDArray[np.floating],
+            chain_track: NDArray[np.int64],
+        ) -> None:
+            do_ptmcmc_exchange(
+                itrb - 1,
+                samples,
+                logLs,
+                n_chain,
+                betas,
+                exchange_tracker,
+                esd_exchange,
+                chain_track,
+                strategy,
+                track_full_exchanges,
+            )
+
+        return NativeExchangeFunctions(is_exchange_step=exchange_is_step_native, exchange=exchange_native)

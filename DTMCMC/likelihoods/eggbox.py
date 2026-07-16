@@ -1,13 +1,17 @@
 """the eggbox likelihood in n dimensions"""
 
 # see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
+from typing import TYPE_CHECKING
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.likelihood import RectangularLikelihood
-from DTMCMC.numba_backend import jittable_likelihood
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 tmax: float = 5.0 * np.pi
 
@@ -73,7 +77,6 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
 
 
 # @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-@jittable_likelihood(get_loglike, state_attrs=('n_par',))
 class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -84,8 +87,17 @@ class EggboxLikelihood(RectangularLikelihood):
 
     def get_loglike(self, v: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        self.n_evals += 1
         return get_loglike(v, self.n_par)
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """Return the module loglike with n_par baked in as a constant."""
+        n_par = self.n_par
+
+        @njit(inline='always')
+        def loglike_native(v: NDArray[np.floating]) -> float:
+            return get_loglike(v, n_par)
+
+        return loglike_native
 
     def get_epsilons(self) -> NDArray[np.floating]:
         """Get epsilons for fisher matrix calculation."""

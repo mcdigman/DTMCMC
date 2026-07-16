@@ -2,20 +2,29 @@
 abstract class to hold a likelihood object
 """
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
+from DTMCMC.numba_backend import NativeBackendUnsupportedError, NativeLikelihoodFunctions
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
+@runtime_checkable
 class AbstractLikelihood(Protocol):
-    """Structural interface the engine requires of a likelihood object."""
+    """Structural interface the engine requires of a likelihood object.
+
+    Likelihood objects are stateless: every attribute is fixed at
+    construction and no method mutates the object. Evaluation counting is
+    handled by the sampler's LikelihoodEvalTracker, not the likelihood.
+    """
 
     n_par: int
-    n_evals: int
 
     def __init__(self, n_par: int) -> None:
         """Initialize the likelihood.
@@ -136,20 +145,35 @@ def validate_bounds_rectangular(
     return new_point, success
 
 
+@njit(inline='always')
+def prior_factor_uniform(_params_in: NDArray[np.floating]) -> float:
+    """Log density of a uniform prior, up to an additive constant."""
+    return 0.0
+
+
 class RectangularLikelihood(AbstractLikelihood):
     """Handle a likelihood with rectangular bounds
     by default assume a uniform prior
+
+    The bounds arrays are copied and frozen read-only at construction:
+    native bindings bake them into compiled closures by reference, so they
+    must never be rebound or mutated afterwards. Subclasses opt into native
+    execution by overriding bind_native_loglike (and the other bind_native_*
+    hooks when they override the corresponding Python methods).
     """
 
     def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
-        self.low_lims: NDArray[np.floating] = low_lims
-        self.high_lims: NDArray[np.floating] = high_lims
+        low_arr = np.array(low_lims, dtype=np.float64)
+        high_arr = np.array(high_lims, dtype=np.float64)
+        low_arr.setflags(write=False)
+        high_arr.setflags(write=False)
+        self.low_lims: NDArray[np.floating] = low_arr
+        self.high_lims: NDArray[np.floating] = high_arr
 
         assert self.low_lims.size == n_par
         assert self.high_lims.size == n_par
 
         self.n_par = n_par
-        self.n_evals = 0
 
     def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct bounds for rectangular walls"""
@@ -192,3 +216,49 @@ class RectangularLikelihood(AbstractLikelihood):
         to Delta that parameter, or changing the units, we can do that here
         """
         return samples_store.copy(), params_fid.copy()
+
+    def bind_native_loglike(self) -> Callable[[NDArray[np.floating]], float]:
+        """Return a jitted ``(params) -> float`` log-likelihood closure.
+
+        Subclasses opt into native execution by returning an ``@njit``
+        closure with their instance constants baked in; the default
+        declines, which keeps the sampler on the Python path.
+        """
+        msg = f'{type(self).__qualname__} does not provide a native log-likelihood binding'
+        raise NativeBackendUnsupportedError(msg)
+
+    def bind_native_prior_draw(self) -> Callable[[], NDArray[np.floating]]:
+        """Return a jitted ``() -> params`` draw with the rectangular bounds baked in."""
+        n_par = self.n_par
+        low_lims = self.low_lims
+        high_lims = self.high_lims
+
+        @njit(inline='always')
+        def prior_draw_native() -> NDArray[np.floating]:
+            return prior_draw_rectangular(n_par, low_lims, high_lims)
+
+        return prior_draw_native
+
+    def bind_native_prior_factor(self) -> Callable[[NDArray[np.floating]], float]:
+        """Return a jitted ``(params) -> float`` log prior density (uniform default)."""
+        return prior_factor_uniform
+
+    def bind_native_validate_bounds(self) -> Callable[[NDArray[np.floating]], tuple[NDArray[np.floating], bool]]:
+        """Return a jitted ``(params) -> (params, ok)`` closure with the bounds baked in."""
+        low_lims = self.low_lims
+        high_lims = self.high_lims
+
+        @njit(inline='always')
+        def validate_bounds_native(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+            return validate_bounds_rectangular(params_in, low_lims, high_lims)
+
+        return validate_bounds_native
+
+    def bind_native(self) -> NativeLikelihoodFunctions:
+        """Assemble the baked native likelihood functions for the block kernel."""
+        return NativeLikelihoodFunctions(
+            loglike=self.bind_native_loglike(),
+            prior_draw=self.bind_native_prior_draw(),
+            prior_factor=self.bind_native_prior_factor(),
+            validate_bounds=self.bind_native_validate_bounds(),
+        )

@@ -9,16 +9,18 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.de_manager import DEJumpManager
+from DTMCMC.exchange_manager import AbstractExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
+from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager
+from DTMCMC.likelihood import AbstractLikelihood
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 from DTMCMC.numba_backend import NativeSerialBackend
+from DTMCMC.proposal_manager import AbstractProposalManager
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
-from DTMCMC.tracker_manager import TrackerManager
+from DTMCMC.tracker_manager import LikelihoodEvalTracker, TrackerManager
 
 if TYPE_CHECKING:
-    from DTMCMC.likelihood import AbstractLikelihood
-    from DTMCMC.proposal_manager import AbstractProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
@@ -71,6 +73,7 @@ def advance_step_ptmcmc(
     esd_record: NDArray[np.floating],
     proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
+    eval_tracker: LikelihoodEvalTracker,
 ) -> None:
     """Advance a single step step in the ptmcmc chain"""
     n_chain: int = T_ladder.n_chain
@@ -93,6 +96,7 @@ def advance_step_ptmcmc(
         if success:
             # if the point passes, get the likelihood
             logL_new: float = like_obj.get_loglike(new_point)
+            eval_tracker.count()
         else:
             # Failed, ensure the point will not be accepted
             logL_new = -np.inf
@@ -110,6 +114,7 @@ def advance_block_ptmcmc(
     proposal_manager: AbstractProposalManager,
     like_obj: AbstractLikelihood,
     tracker_manager: TrackerManager,
+    eval_tracker: LikelihoodEvalTracker,
 ) -> NDArray[np.floating]:
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals"""
     block_size: int = samples.shape[0] - 1
@@ -137,6 +142,7 @@ def advance_block_ptmcmc(
                 tracker_manager.esd_record,
                 proposal_manager,
                 like_obj,
+                eval_tracker,
             )
             # track the indexes of the chains, which only change on exchange steps
             chain_track[itrb, :] = chain_track[itrb - 1, :]
@@ -189,13 +195,15 @@ class DTMCMCSampler:
             arg_record columns follow in the given order, and an index that
             duplicates a readout chain is simply stored twice
         kernel_backend: {'auto', 'numba', 'python'}
-            Select the generated serial block kernel. 'numba' requires every
-            concrete graph component to be registered. 'auto' silently falls
-            back for a wholly undecorated graph and warns for a mixed graph;
-            registered compilation failures always raise. 'python' disables
-            only the generated block kernel, leaving existing jitted helpers
-            enabled.
+            Select the native serial block kernel. 'numba' requires every
+            concrete graph component to provide native bindings and raises
+            on binding or compilation failure. 'auto' silently falls back
+            for a graph with no native bindings and warns once for a mixed
+            graph or a compilation failure before using Python. 'python'
+            disables only the native block kernel, leaving existing jitted
+            helpers enabled.
         """
+        self.eval_tracker = LikelihoodEvalTracker()
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
         self.store_size: int = store_size
@@ -204,10 +212,8 @@ class DTMCMCSampler:
         self.store_counter: int = 0
         self.itrn: int = 0
         self.like_obj: AbstractLikelihood = like_obj
-        if kernel_backend not in {'auto', 'numba', 'python'}:
-            msg = f'Unrecognized kernel_backend: {kernel_backend!r}'
-            raise ValueError(msg)
         self.kernel_backend: str = kernel_backend
+        # the backend validates kernel_backend, raising NotImplementedError
         self._native_serial_backend = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: str = 'python'
         self.tracker_manager: TrackerManager
@@ -237,6 +243,39 @@ class DTMCMCSampler:
         self.initialize_state()
         self.initialize_jumps(proposal_manager)
         self.initialize_trackers(tracker_manager)
+        self.validate_protocol_conformance()
+
+    def validate_protocol_conformance(self) -> None:
+        """Fail fast when a component is missing structural protocol members.
+
+        runtime_checkable protocols verify member existence (not
+        signatures), which catches incomplete extensions at construction
+        in every kernel backend instead of failing obscurely mid-run.
+        """
+        problems: list[str] = []
+        if not isinstance(self.like_obj, AbstractLikelihood):
+            problems.append(f'likelihood {type(self.like_obj).__qualname__} does not implement AbstractLikelihood')
+        if not isinstance(self.proposal_manager, AbstractProposalManager):
+            problems.append(
+                f'proposal manager {type(self.proposal_manager).__qualname__} does not implement AbstractProposalManager'
+            )
+        else:
+            if not isinstance(self.proposal_manager.exchange_manager, AbstractExchangeManager):
+                problems.append(
+                    f'exchange manager {type(self.proposal_manager.exchange_manager).__qualname__} '
+                    'does not implement AbstractExchangeManager'
+                )
+            for idx, manager in enumerate(self.proposal_manager.managers):
+                if not isinstance(manager, AbstractJumpManager):
+                    problems.append(
+                        f'proposal manager {idx} {type(manager).__qualname__} does not implement AbstractJumpManager'
+                    )
+            for idx, jump in enumerate(self.proposal_manager.jumps):
+                if not isinstance(jump, AbstractJump):
+                    problems.append(f'jump {idx} {type(jump).__qualname__} does not implement AbstractJump')
+        if problems:
+            msg = '; '.join(problems)
+            raise TypeError(msg)
 
     def initialize_trackers(self, tracker_manager_in: TrackerManager | None = None) -> None:
         """Initialize the various trackers like acceptance rate and cycle times"""
@@ -283,7 +322,9 @@ class DTMCMCSampler:
     def initialize_jumps(self, proposal_manager_in: AbstractProposalManager | None = None) -> None:
         """Anything that needs to be done to initialize the various jumps"""
         if proposal_manager_in is None:
-            self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])
+            self.proposal_manager = get_default_proposal_manager(
+                self.T_ladder, self.like_obj, self.samples[0, :, :], eval_tracker=self.eval_tracker
+            )
         else:
             self.proposal_manager = proposal_manager_in
 
@@ -297,6 +338,7 @@ class DTMCMCSampler:
         self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
             self.starting_logLs[itrt] = self.like_obj.get_loglike(self.starting_samples[itrt, :])
+            self.eval_tracker.count()
 
         for itrt in range(self.n_chain):
             self.samples[0, itrt, :] = self.starting_samples[itrt, :]
@@ -381,6 +423,7 @@ class DTMCMCSampler:
             self.proposal_manager,
             self.like_obj,
             self.tracker_manager,
+            self.eval_tracker,
         ):
             self.last_kernel_backend = 'numba'
             return
@@ -393,6 +436,7 @@ class DTMCMCSampler:
             self.proposal_manager,
             self.like_obj,
             self.tracker_manager,
+            self.eval_tracker,
         )
 
     def block_end(self) -> None:
@@ -488,7 +532,10 @@ class DTMCMCSampler:
         for manager in self.proposal_manager.managers:
             manager.T_ladder = new_ladder
             if isinstance(manager, FisherJumpManager):
-                manager.sigma_scales, manager.gamma_mults = set_scales(self.n_par, new_ladder, manager.sigma_diags)
+                # in place: native jump bindings bake the scale arrays by reference
+                sigma_scales, gamma_mults = set_scales(self.n_par, new_ladder, manager.sigma_diags)
+                manager.sigma_scales[:] = sigma_scales
+                manager.gamma_mults[:] = gamma_mults
 
         # the readout chains may sit at different indices in the new ladder
         # (e.g. rungs added below T_cold): recompute the recorded set and log

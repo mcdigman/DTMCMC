@@ -1,14 +1,32 @@
-"""Registry-driven nopython backend for the serial PTMCMC block transition.
+"""Native (nopython) serial backend assembled from baked jitted closures.
 
-Likelihoods, jumps, component managers, and exchange managers opt in without
-becoming jitclasses.  The public objects remain ordinary Python objects; this
-module snapshots their Numba-compatible state at block entry and generates a
-monomorphic block function for the concrete ordered proposal graph.
+Every component of a proposal graph — the likelihood, each jump, each
+component manager, and the exchange manager — may opt into native execution
+by exposing ``bind_native*`` hooks that return Numba-jitted closures with the
+component's immutable configuration absorbed at bind time as compile-time
+constants (scalars, tuples, and frozen arrays such as rectangular bounds).
+
+Mutable state cannot be baked: Numba types closure-captured arrays as
+read-only and assumes they alias nothing, so a write through any other name
+is not reliably visible to a baked read within one kernel invocation.
+Arrays a manager mutates (the DE ring buffer and counters, the Fisher scale
+arrays) therefore travel as an opaque per-manager runtime state, must be
+identity-stable — updated in place, never rebound — for the lifetime of the
+sampler, and are routed to that manager's jumps and per-step update by the
+dispatch chain.
+
+The backend assembles one monomorphic block kernel per concrete object graph
+out of those closures using plain recursive closure factories (the Numba
+equivalent of ``functools.partial``): no strings, no ``exec``, and every line
+is visible to linters and type checkers. A bound native jump has the
+``AbstractJump.__call__`` signature plus the owning manager's runtime state,
+and the bound likelihood functions have the ``AbstractLikelihood`` method
+signatures minus ``self``, so the native contract mirrors the Python
+protocols directly.
 """
 
 from dataclasses import dataclass
-from types import FunctionType
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from warnings import warn
 
 import numpy as np
@@ -16,496 +34,526 @@ from numba import njit
 from numba.core.errors import NumbaError
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import prior_draw_rectangular, validate_bounds_rectangular
+from DTMCMC.jump_manager import JumpManager, choose_prob_helper
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from DTMCMC.jump_manager import AbstractJump
+    from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.proposal_manager import AbstractProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
-    from DTMCMC.tracker_manager import TrackerManager
+    from DTMCMC.tracker_manager import LikelihoodEvalTracker, TrackerManager
 
+    NativeJumpCall = Callable[..., tuple[NDArray[np.floating], float, bool]]
+    NativePostStepCall = Callable[..., None]
 
-ClassT = TypeVar('ClassT', bound=type[Any])
-
-
-class RectangularBoundsLikelihood(Protocol):
-    """Likelihood surface required by the default rectangular native adapter."""
-
-    n_par: int
-    n_evals: int
-    low_lims: NDArray[np.floating]
-    high_lims: NDArray[np.floating]
-
-
-class NativeSamplerState(NamedTuple):
-    """Mutable sampler arrays consumed by a generated block program."""
-
-    betas: NDArray[np.floating]
-    logLs: NDArray[np.floating]
-    samples: NDArray[np.floating]
-    chain_track: NDArray[np.int64]
-
-
-class NativeTrackerState(NamedTuple):
-    """Mutable diagnostic arrays consumed by a generated block program."""
-
-    exchange_tracker: NDArray[np.int64]
-    esd_exchange: NDArray[np.floating]
-    accept_record: NDArray[np.int64]
-    esd_record: NDArray[np.floating]
-
-
-class NativeLikelihoodState(NamedTuple):
-    """Runtime-constant likelihood values and extension-defined state."""
-
-    n_par: int
-    low_lims: NDArray[np.floating]
-    high_lims: NDArray[np.floating]
-    custom: tuple[Any, ...]
-
-
-class NativeProposalState(NamedTuple):
-    """Proposal probabilities and one native state per component manager."""
-
-    jump_probs: NDArray[np.floating]
-    manager_states: tuple[Any, ...]
-
-
-class NativeExchangeState(NamedTuple):
-    """One extension-defined native state for the exchange manager."""
-
-    custom: Any
-
-
-@njit(inline='always')
-def _uniform_prior_draw(
-    n_par: int,
-    low_lims: NDArray[np.floating],
-    high_lims: NDArray[np.floating],
-    _state: tuple[Any, ...],
-) -> NDArray[np.floating]:
-    return prior_draw_rectangular(n_par, low_lims, high_lims)
-
-
-@njit(inline='always')
-def _uniform_prior_factor(_params: NDArray[np.floating], _state: tuple[Any, ...]) -> float:
-    return 0.0
-
-
-@njit(inline='always')
-def _rectangular_validate_bounds(
-    params: NDArray[np.floating],
-    low_lims: NDArray[np.floating],
-    high_lims: NDArray[np.floating],
-    _state: tuple[Any, ...],
-) -> tuple[NDArray[np.floating], bool]:
-    return validate_bounds_rectangular(params, low_lims, high_lims)
-
-
-def _ensure_njit(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Return a Numba dispatcher for ``func`` without double-wrapping one."""
-    if hasattr(func, 'py_func'):
-        return func
-    return cast('Callable[..., Any]', njit(func))
-
-
-def _adapt_loglike(loglike: Callable[..., float], n_state: int) -> Callable[..., float]:
-    """Generate an adapter from ``(params, *state)`` to ``(params, state)``."""
-    native_loglike = _ensure_njit(loglike)
-    state_args = ''.join(f', state[{idx}]' for idx in range(n_state))
-    source = f'def adapted(params, state):\n    return native_loglike(params{state_args})\n'
-    namespace: dict[str, Any] = {'native_loglike': native_loglike}
-    exec(compile(source, '<dtmcmc-likelihood-adapter>', 'exec'), namespace)  # noqa: S102
-    return njit(inline='always')(namespace['adapted'])
-
-
-def _default_bounds_getter(
-    like_obj: RectangularBoundsLikelihood,
-) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    """Get rectangular bounds without copying them."""
-    return np.asarray(like_obj.low_lims), np.asarray(like_obj.high_lims)
-
-
-@dataclass(frozen=True)
-class NativeLikelihoodSpec:
-    """Native functions and Python-side state extraction for a likelihood."""
-
-    loglike: Callable[..., float]
-    state_getter: Callable[[Any], tuple[Any, ...]]
-    bounds_getter: Callable[[Any], tuple[NDArray[np.floating], NDArray[np.floating]]]
-    prior_draw: Callable[..., NDArray[np.floating]]
-    prior_factor: Callable[..., float]
-    validate_bounds: Callable[..., tuple[NDArray[np.floating], bool]]
-
-
-@dataclass(frozen=True)
-class NativeJumpSpec:
-    """Factory for a jump kernel specialized to one likelihood contract."""
-
-    factory: Callable[[NativeLikelihoodSpec], Callable[..., tuple[NDArray[np.floating], float, bool]]]
-
-
-@dataclass(frozen=True)
-class NativeJumpManagerSpec:
-    """State translation and per-step transition for a component manager."""
-
-    state_getter: Callable[[Any], Any]
-    state_setter: Callable[[Any, Any], None]
-    post_step: Callable[..., Any]
-
-
-@dataclass(frozen=True)
-class NativeExchangeManagerSpec:
-    """State translation, scheduling, and execution for an exchange manager."""
-
-    state_getter: Callable[[Any], Any]
-    is_exchange_step: Callable[..., bool]
-    exchange: Callable[..., None]
-
-
-_LIKELIHOOD_REGISTRY: dict[type[Any], NativeLikelihoodSpec] = {}
-_JUMP_REGISTRY: dict[type[Any], NativeJumpSpec] = {}
-_JUMP_MANAGER_REGISTRY: dict[type[Any], NativeJumpManagerSpec] = {}
-_EXCHANGE_MANAGER_REGISTRY: dict[type[Any], NativeExchangeManagerSpec] = {}
-
-
-def jittable_likelihood(
-    loglike: Callable[..., float],
-    *,
-    state_attrs: tuple[str, ...] = (),
-    prior_draw: Callable[..., NDArray[np.floating]] | None = None,
-    prior_factor: Callable[..., float] | None = None,
-    validate_bounds: Callable[..., tuple[NDArray[np.floating], bool]] | None = None,
-    bounds_getter: Callable[[Any], tuple[NDArray[np.floating], NDArray[np.floating]]] | None = None,
-) -> Callable[[ClassT], ClassT]:
-    """Register an ordinary likelihood class for generated native execution.
-
-    ``loglike`` has signature ``(params, *state)``. Values named by
-    ``state_attrs`` are read at each block entry. Rectangular bounds and a
-    uniform prior are supplied by default; non-uniform priors can provide
-    native draw and log-density functions using the standardized signatures
-    documented below::
-
-        prior_draw(n_par, low_lims, high_lims, state) -> params
-        prior_factor(params, state) -> log_density
-        validate_bounds(params, low_lims, high_lims, state) -> (params, ok)
-    """
-    adapted_loglike = _adapt_loglike(loglike, len(state_attrs))
-    native_prior_draw = _uniform_prior_draw if prior_draw is None else _ensure_njit(prior_draw)
-    native_prior_factor = _uniform_prior_factor if prior_factor is None else _ensure_njit(prior_factor)
-    native_validate = _rectangular_validate_bounds if validate_bounds is None else _ensure_njit(validate_bounds)
-    get_bounds = _default_bounds_getter if bounds_getter is None else bounds_getter
-
-    def decorate(cls: ClassT) -> ClassT:
-        def get_state(like_obj: Any) -> tuple[Any, ...]:
-            return tuple(getattr(like_obj, name) for name in state_attrs)
-
-        _LIKELIHOOD_REGISTRY[cls] = NativeLikelihoodSpec(
-            loglike=adapted_loglike,
-            state_getter=get_state,
-            bounds_getter=get_bounds,
-            prior_draw=native_prior_draw,
-            prior_factor=native_prior_factor,
-            validate_bounds=native_validate,
-        )
-        return cls
-
-    return decorate
-
-
-def jittable_jump(
-    native_function: Callable[..., tuple[NDArray[np.floating], float, bool]] | None = None,
-    *,
-    factory: Callable[[NativeLikelihoodSpec], Callable[..., tuple[NDArray[np.floating], float, bool]]] | None = None,
-) -> Callable[[ClassT], ClassT]:
-    """Register a jump class with a native function or likelihood-aware factory.
-
-    A direct native function receives ``(sample_point, itrt, manager_state,
-    likelihood_state)``. A factory receives the concrete native likelihood
-    specification and returns a function with that same runtime signature.
-    """
-    if (native_function is None) == (factory is None):
-        msg = 'jittable_jump requires exactly one of native_function or factory'
-        raise TypeError(msg)
-
-    jump_factory: Callable[[NativeLikelihoodSpec], Callable[..., tuple[NDArray[np.floating], float, bool]]]
-    if factory is None:
-        assert native_function is not None
-        ensured = _ensure_njit(native_function)
-
-        def direct_factory(_spec: NativeLikelihoodSpec) -> Callable[..., tuple[NDArray[np.floating], float, bool]]:
-            return ensured
-
-        jump_factory = direct_factory
-    else:
-        jump_factory = factory
-
-    def decorate(cls: ClassT) -> ClassT:
-        _JUMP_REGISTRY[cls] = NativeJumpSpec(factory=jump_factory)
-        return cls
-
-    return decorate
-
-
-def jittable_jump_manager(
-    *,
-    state_getter: Callable[[Any], Any],
-    state_setter: Callable[[Any, Any], None],
-    post_step: Callable[..., Any],
-) -> Callable[[ClassT], ClassT]:
-    """Register native state translation for a component proposal manager."""
-    native_post_step = _ensure_njit(post_step)
-
-    def decorate(cls: ClassT) -> ClassT:
-        _JUMP_MANAGER_REGISTRY[cls] = NativeJumpManagerSpec(
-            state_getter=state_getter,
-            state_setter=state_setter,
-            post_step=native_post_step,
-        )
-        return cls
-
-    return decorate
-
-
-def jittable_exchange_manager(
-    *,
-    state_getter: Callable[[Any], Any],
-    is_exchange_step: Callable[..., bool],
-    exchange: Callable[..., None],
-) -> Callable[[ClassT], ClassT]:
-    """Register native state, cadence, and execution for an exchange manager."""
-    native_schedule = _ensure_njit(is_exchange_step)
-    native_exchange = _ensure_njit(exchange)
-
-    def decorate(cls: ClassT) -> ClassT:
-        _EXCHANGE_MANAGER_REGISTRY[cls] = NativeExchangeManagerSpec(
-            state_getter=state_getter,
-            is_exchange_step=native_schedule,
-            exchange=native_exchange,
-        )
-        return cls
-
-    return decorate
+_VALID_MODES = ('auto', 'numba', 'python')
 
 
 class NativeBackendUnsupportedError(RuntimeError):
-    """The requested object graph has no complete native registration."""
+    """The requested object graph has no complete native binding."""
 
 
 class NativeBackendCompilationError(RuntimeError):
-    """A fully registered native graph failed to compile or execute in Numba."""
+    """A fully bindable native graph failed to compile or execute in Numba."""
 
 
 @dataclass(frozen=True)
-class NativeSerialProgram:
-    """Compiled generated kernel plus Python-side state translators."""
+class NativeLikelihoodFunctions:
+    """Jitted likelihood closures with all instance state baked in.
 
-    kernel: Callable[..., tuple[tuple[Any, ...], int]]
-    manager_specs: tuple[NativeJumpManagerSpec, ...]
-    likelihood_spec: NativeLikelihoodSpec
-    exchange_spec: NativeExchangeManagerSpec
-    source: str
+    Signatures match the ``AbstractLikelihood`` methods minus ``self``;
+    the kernel never sees bounds, priors, or any other likelihood state.
+    """
 
-
-_PROGRAM_CACHE: dict[tuple[Any, ...], NativeSerialProgram] = {}
-
-
-def _graph_signature(proposal_manager: AbstractProposalManager, like_obj: Any) -> tuple[Any, ...]:
-    manager_graph = tuple(
-        (type(manager), tuple(type(jump) for jump in manager.jumps)) for manager in proposal_manager.managers
-    )
-    return type(like_obj), manager_graph, type(proposal_manager.exchange_manager)
+    loglike: Callable[[NDArray[np.floating]], float]
+    prior_draw: Callable[[], NDArray[np.floating]]
+    prior_factor: Callable[[NDArray[np.floating]], float]
+    validate_bounds: Callable[[NDArray[np.floating]], tuple[NDArray[np.floating], bool]]
 
 
-def _registration_inventory(proposal_manager: AbstractProposalManager, like_obj: Any) -> tuple[list[str], int, int]:
-    """Return missing component descriptions and registered/total counts."""
-    components: list[tuple[str, type[Any], dict[type[Any], Any]]] = [
-        ('likelihood', type(like_obj), _LIKELIHOOD_REGISTRY),
-        ('exchange manager', type(proposal_manager.exchange_manager), _EXCHANGE_MANAGER_REGISTRY),
-    ]
+@dataclass(frozen=True)
+class NativeExchangeFunctions:
+    """Jitted exchange schedule and executor with strategy constants baked in.
+
+    ``exchange`` receives ``(itrb, samples, logLs, n_chain, betas,
+    exchange_tracker, esd_exchange, chain_track)``.
+    """
+
+    is_exchange_step: Callable[[int], bool]
+    exchange: Callable[..., None]
+
+
+@runtime_checkable
+class NativeBindableLikelihood(Protocol):
+    """Likelihood that can bake its state into jitted closures."""
+
+    def bind_native(self) -> NativeLikelihoodFunctions:
+        """Return the baked native likelihood functions."""
+        ...
+
+
+@runtime_checkable
+class NativeBindableJump(Protocol):
+    """Jump that can bind a jitted equivalent of its ``__call__`` method.
+
+    The bound closure has signature ``(sample_point, itrt, manager_state) ->
+    (new_point, density_fac, success)``: ``__call__`` plus the owning
+    manager's runtime native state (None for a stateless manager), which
+    carries any mutable arrays that Numba's read-only closure capture cannot.
+    """
+
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions) -> NativeJumpCall:
+        """Return the jitted jump closure."""
+        ...
+
+
+@runtime_checkable
+class NativeBindableJumpManager(Protocol):
+    """Component manager that can bind its mutable state and per-step update.
+
+    ``bind_native_state`` returns the manager's identity-stable mutable
+    runtime state (e.g. a tuple of arrays updated in place), shared by its
+    jumps and its per-step update; leave it undefined for a stateless
+    manager. ``bind_native_post_step`` returns a jitted ``(state,
+    samples_row) -> None`` closure, or None when there is no per-step work.
+    """
+
+    def bind_native_state(self) -> object:
+        """Return the manager's mutable runtime native state."""
+        ...
+
+    def bind_native_post_step(self) -> NativePostStepCall | None:
+        """Return the jitted per-step update closure, or None if idle."""
+        ...
+
+
+@runtime_checkable
+class NativeBindableExchangeManager(Protocol):
+    """Exchange manager that can bake its schedule and executor."""
+
+    def bind_native(self) -> NativeExchangeFunctions:
+        """Return the baked native exchange functions."""
+        ...
+
+
+def _defining_class(cls: type, name: str) -> type | None:
+    """Return the most-derived class in the MRO that defines ``name``."""
+    for klass in cls.__mro__:
+        if name in vars(klass):
+            return klass
+    return None
+
+
+def _stale_native_override(cls: type, method_name: str, hook_names: tuple[str, ...]) -> str | None:
+    """Detect a Python-behavior override that outruns its native binding.
+
+    A native hook only describes the Python methods defined at or above the
+    class that defines the hook. If a subclass overrides a paired Python
+    method without also overriding a hook, the inherited binding would bake
+    the ancestor's behavior — silently wrong results — so the component is
+    reported unsupported instead.
+    """
+    py_cls = _defining_class(cls, method_name)
+    if py_cls is None:
+        return None
+    native_cls: type | None = None
+    for hook_name in hook_names:
+        hook_cls = _defining_class(cls, hook_name)
+        if hook_cls is not None and (native_cls is None or issubclass(hook_cls, native_cls)):
+            native_cls = hook_cls
+    if native_cls is None:
+        return f'{cls.__qualname__} defines {method_name} without defining {" or ".join(hook_names)}'
+    if py_cls is not native_cls and issubclass(py_cls, native_cls):
+        return f'{cls.__qualname__} overrides {method_name} without overriding {" or ".join(hook_names)}'
+    return None
+
+
+_LIKELIHOOD_NATIVE_PAIRS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ('get_loglike', ('bind_native_loglike', 'bind_native')),
+    ('prior_draw', ('bind_native_prior_draw', 'bind_native')),
+    ('prior_factor', ('bind_native_prior_factor', 'bind_native')),
+    ('validate_bounds', ('bind_native_validate_bounds', 'bind_native')),
+)
+
+
+def _likelihood_problem(like_obj: AbstractLikelihood) -> str | None:
+    cls = type(like_obj)
+    if _defining_class(cls, 'bind_native') is None:
+        return f'{cls.__qualname__} does not define bind_native'
+    for method_name, hook_names in _LIKELIHOOD_NATIVE_PAIRS:
+        problem = _stale_native_override(cls, method_name, hook_names)
+        if problem is not None:
+            return problem
+    return None
+
+
+def _jump_problem(jump: object) -> str | None:
+    cls = type(jump)
+    if _defining_class(cls, 'bind_native') is None:
+        return f'{cls.__qualname__} does not define bind_native'
+    return _stale_native_override(cls, '__call__', ('bind_native',))
+
+
+def _exchange_problem(exchange_manager: object) -> str | None:
+    cls = type(exchange_manager)
+    if _defining_class(cls, 'bind_native') is None:
+        return f'{cls.__qualname__} does not define bind_native'
+    for method_name in ('is_exchange_step', 'do_ptmcmc_exchange'):
+        problem = _stale_native_override(cls, method_name, ('bind_native',))
+        if problem is not None:
+            return problem
+    return None
+
+
+def _manager_binding(manager: object) -> tuple[str | None, bool]:
+    """Classify a component manager's native binding.
+
+    Returns ``(problem, explicit)``. A manager that inherits the base
+    ``JumpManager.post_step_update`` no-op is bindable with no native work
+    at all, but that passive eligibility does not count as explicit native
+    intent for the mixed-graph warning.
+    """
+    cls = type(manager)
+    hook_cls = _defining_class(cls, 'bind_native_post_step')
+    py_cls = _defining_class(cls, 'post_step_update')
+    if hook_cls is not None:
+        if py_cls is not None and py_cls is not hook_cls and issubclass(py_cls, hook_cls):
+            return (
+                f'{cls.__qualname__} overrides post_step_update without overriding bind_native_post_step',
+                False,
+            )
+        return None, True
+    if py_cls is not None and py_cls is not JumpManager:
+        return f'{cls.__qualname__} overrides post_step_update without defining bind_native_post_step', False
+    return None, _defining_class(cls, 'bind_native_state') is not None
+
+
+def _binding_inventory(
+    proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood
+) -> tuple[list[str], int]:
+    """Return unsupported-component descriptions and the explicit-binding count."""
+    problems: list[str] = []
+    explicit = 0
+
+    problem = _likelihood_problem(like_obj)
+    if problem is None:
+        explicit += 1
+    else:
+        problems.append(f'likelihood {problem}')
+
+    problem = _exchange_problem(proposal_manager.exchange_manager)
+    if problem is None:
+        explicit += 1
+    else:
+        problems.append(f'exchange manager {problem}')
+
     for idx, manager in enumerate(proposal_manager.managers):
-        components.append((f'proposal manager {idx}', type(manager), _JUMP_MANAGER_REGISTRY))
+        problem, is_explicit = _manager_binding(manager)
+        if problem is not None:
+            problems.append(f'proposal manager {idx} {problem}')
+        elif is_explicit:
+            explicit += 1
         for jump_idx, jump in enumerate(manager.jumps):
-            components.append((f'proposal manager {idx} jump {jump_idx}', type(jump), _JUMP_REGISTRY))
+            problem = _jump_problem(jump)
+            if problem is None:
+                explicit += 1
+            else:
+                problems.append(f'proposal manager {idx} jump {jump_idx} {problem}')
 
-    missing = [
-        f'{role} {component_type.__qualname__}'
-        for role, component_type, registry in components
-        if component_type not in registry
-    ]
-    registered = len(components) - len(missing)
-    return missing, registered, len(components)
+    return problems, explicit
 
 
-def _jump_manager_indices(proposal_manager: AbstractProposalManager) -> tuple[int, ...]:
-    """Map the aggregate flattened jump order back to component-manager states."""
-    flattened: list[AbstractJump] = []
-    manager_indices: list[int] = []
-    for manager_idx, manager in enumerate(proposal_manager.managers):
-        flattened.extend(manager.jumps)
-        manager_indices.extend([manager_idx] * len(manager.jumps))
+def _check_flattening(proposal_manager: AbstractProposalManager) -> None:
+    """Require the aggregate jump list to be the ordered flattening of the managers'."""
+    flattened = [jump for manager in proposal_manager.managers for jump in manager.jumps]
     if len(flattened) != len(proposal_manager.jumps) or any(
         actual is not expected for actual, expected in zip(proposal_manager.jumps, flattened, strict=True)
     ):
         msg = 'proposal_manager.jumps must be the ordered identity-preserving flattening of managers[*].jumps'
         raise NativeBackendUnsupportedError(msg)
-    return tuple(manager_indices)
 
 
-def _make_serial_program(
-    proposal_manager: AbstractProposalManager,
-    likelihood_spec: NativeLikelihoodSpec,
-    exchange_spec: NativeExchangeManagerSpec,
-) -> NativeSerialProgram:
-    """Generate and JIT a monomorphic block program for one concrete graph."""
-    manager_specs = tuple(_JUMP_MANAGER_REGISTRY[type(manager)] for manager in proposal_manager.managers)
-    manager_indices = _jump_manager_indices(proposal_manager)
-    jump_specs = tuple(_JUMP_REGISTRY[type(jump)] for jump in proposal_manager.jumps)
-    jump_functions = tuple(spec.factory(likelihood_spec) for spec in jump_specs)
+def _build_local_dispatch(jump_calls: tuple[NativeJumpCall, ...]) -> NativeJumpCall:
+    """Dispatch a manager-local jump index over one manager's bound jumps.
 
-    namespace: dict[str, Any] = {
-        'choose_prob_helper': __import__('DTMCMC.jump_manager', fromlist=['choose_prob_helper']).choose_prob_helper,
-        'mcmc_decision_helper': mcmc_decision_helper,
-        'loglike': likelihood_spec.loglike,
-        'prior_factor': likelihood_spec.prior_factor,
-        'validate_bounds': likelihood_spec.validate_bounds,
-        'exchange_is_step': exchange_spec.is_exchange_step,
-        'exchange_execute': exchange_spec.exchange,
-    }
-    for idx, jump_function in enumerate(jump_functions):
-        namespace[f'jump_{idx}'] = jump_function
-    for idx, manager_spec in enumerate(manager_specs):
-        namespace[f'manager_post_{idx}'] = manager_spec.post_step
+    The recursion happens in Python at bind time; with ``inline='always'``
+    Numba flattens the chain into the same branch sequence a hand-written
+    ``if/elif`` ladder would produce. The caller guarantees the index is
+    within range, so the final leaf executes unconditionally.
+    """
+    head = jump_calls[0]
+    if len(jump_calls) == 1:
 
-    lines = [
-        'def advance_block_numba_serial(sampler, tracker, likelihood, proposal, exchange):',
-        '    samples = sampler.samples',
-        '    logLs = sampler.logLs',
-        '    chain_track = sampler.chain_track',
-        '    betas = sampler.betas',
-        '    block_size = samples.shape[0] - 1',
-        '    n_chain = samples.shape[1]',
-        '    n_evals = 0',
-    ]
-    lines.extend(f'    manager_state_{idx} = proposal.manager_states[{idx}]' for idx in range(len(manager_specs)))
-    lines.extend(
-        [
-            '    for itrb in range(1, block_size + 1):',
-            '        if exchange_is_step(itrb, exchange.custom):',
-            '            exchange_execute(',
-            '                itrb, samples, logLs, n_chain, betas,',
-            '                tracker.exchange_tracker, tracker.esd_exchange,',
-            '                chain_track, exchange.custom,',
-            '            )',
-            '        else:',
-            '            for itrt in range(n_chain):',
-            '                idx_jump = choose_prob_helper(proposal.jump_probs[itrt])',
-            '                sample_point = samples[itrb - 1, itrt]',
-        ]
+        @njit(inline='always')
+        def dispatch_leaf(
+            _idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object
+        ) -> tuple[NDArray[np.floating], float, bool]:
+            return head(sample_point, itrt, state)
+
+        return dispatch_leaf
+    rest = _build_local_dispatch(jump_calls[1:])
+
+    @njit(inline='always')
+    def dispatch(
+        idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        if idx_jump == 0:
+            return head(sample_point, itrt, state)
+        return rest(idx_jump - 1, sample_point, itrt, state)
+
+    return dispatch
+
+
+def _build_manager_dispatch(per_manager_calls: tuple[tuple[NativeJumpCall, ...], ...]) -> NativeJumpCall:
+    """Dispatch a flattened jump index over the managers' bound jumps.
+
+    Peels the heterogeneous ``manager_states`` runtime tuple with static
+    indexing (``states[0]`` / ``states[1:]``) so each manager's jumps see
+    exactly their own manager's mutable native state.
+    """
+    head = _build_local_dispatch(per_manager_calls[0])
+    n_head = len(per_manager_calls[0])
+    if len(per_manager_calls) == 1:
+
+        @njit(inline='always')
+        def dispatch_last(
+            idx_jump: int, sample_point: NDArray[np.floating], itrt: int, states: tuple[object, ...]
+        ) -> tuple[NDArray[np.floating], float, bool]:
+            return head(idx_jump, sample_point, itrt, states[0])
+
+        return dispatch_last
+    rest = _build_manager_dispatch(per_manager_calls[1:])
+
+    @njit(inline='always')
+    def dispatch(
+        idx_jump: int, sample_point: NDArray[np.floating], itrt: int, states: tuple[object, ...]
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        if idx_jump < n_head:
+            return head(idx_jump, sample_point, itrt, states[0])
+        return rest(idx_jump - n_head, sample_point, itrt, states[1:])
+
+    return dispatch
+
+
+@njit(inline='always')
+def _post_step_noop(_states: tuple[object, ...], _samples: NDArray[np.floating]) -> None:
+    """Per-step update for managers with no native per-step work."""
+    return
+
+
+def _build_post_chain(post_steps: tuple[NativePostStepCall | None, ...]) -> NativePostStepCall:
+    """Chain the managers' bound per-step updates in manager order.
+
+    ``post_steps`` has one entry per manager (None when idle) so the chain
+    peels the ``manager_states`` tuple in step with the dispatch chain.
+    """
+    if not post_steps:
+        return _post_step_noop
+    head = post_steps[0]
+    rest = _build_post_chain(post_steps[1:]) if len(post_steps) > 1 else None
+    if head is None:
+        if rest is None:
+            return _post_step_noop
+        rest_after_skip = rest
+
+        @njit(inline='always')
+        def post_skip(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
+            rest_after_skip(states[1:], samples_row)
+
+        return post_skip
+    if rest is None:
+
+        @njit(inline='always')
+        def post_leaf(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
+            head(states[0], samples_row)
+
+        return post_leaf
+    rest_fn = rest
+
+    @njit(inline='always')
+    def post_all(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
+        head(states[0], samples_row)
+        rest_fn(states[1:], samples_row)
+
+    return post_all
+
+
+def make_serial_kernel(
+    per_manager_calls: tuple[tuple[NativeJumpCall, ...], ...],
+    post_steps: tuple[NativePostStepCall | None, ...],
+    likelihood_natives: NativeLikelihoodFunctions,
+    exchange_natives: NativeExchangeFunctions,
+) -> Callable[..., int]:
+    """Assemble the jitted serial block kernel for one bound object graph.
+
+    All graph structure is closed over as compile-time constants; the
+    runtime arguments are the sampler-owned mutable arrays plus the
+    ``manager_states`` tuple of per-manager mutable state (Numba treats
+    captured arrays as read-only non-aliasing constants, so mutated state
+    cannot be baked). Returns the number of likelihood evaluations performed
+    in the block.
+    """
+    dispatch = _build_manager_dispatch(per_manager_calls)
+    post_all = _build_post_chain(post_steps)
+    loglike = likelihood_natives.loglike
+    prior_factor = likelihood_natives.prior_factor
+    validate_bounds = likelihood_natives.validate_bounds
+    is_exchange_step = exchange_natives.is_exchange_step
+    do_exchange = exchange_natives.exchange
+
+    @njit()
+    def advance_block_numba_serial(
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
+        betas: NDArray[np.floating],
+        jump_probs: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        accept_record: NDArray[np.int64],
+        esd_record: NDArray[np.floating],
+        manager_states: tuple[object, ...],
+    ) -> int:
+        block_size = samples.shape[0] - 1
+        n_chain = samples.shape[1]
+        n_evals = 0
+        for itrb in range(1, block_size + 1):
+            if is_exchange_step(itrb):
+                do_exchange(itrb, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track)
+            else:
+                for itrt in range(n_chain):
+                    idx_jump = choose_prob_helper(jump_probs[itrt])
+                    sample_point = samples[itrb - 1, itrt]
+                    new_point, density_fac, success = dispatch(idx_jump, sample_point, itrt, manager_states)
+                    if success:
+                        new_point, success = validate_bounds(new_point)
+                    if success:
+                        density_fac += prior_factor(new_point) - prior_factor(sample_point)
+                    if success:
+                        logL_new = loglike(new_point)
+                        n_evals += 1
+                    else:
+                        logL_new = -np.inf
+                    mcmc_decision_helper(
+                        itrb,
+                        samples,
+                        logLs,
+                        betas,
+                        accept_record,
+                        esd_record,
+                        itrt,
+                        new_point,
+                        logL_new,
+                        density_fac,
+                        idx_jump,
+                    )
+                chain_track[itrb, :] = chain_track[itrb - 1, :]
+            post_all(manager_states, samples[itrb])
+        return n_evals
+
+    return advance_block_numba_serial
+
+
+@dataclass(frozen=True)
+class NativeSerialProgram:
+    """Bound kernel plus strong references to the objects baked into it.
+
+    ``manager_states`` holds the per-manager mutable state tuple passed to
+    the kernel on every block. Holding the bound components prevents garbage
+    collection (and therefore ``id`` reuse) from aliasing a stale kernel onto
+    a new object graph while the program is cached.
+    """
+
+    kernel: Callable[..., int]
+    manager_states: tuple[object, ...]
+    bound_refs: tuple[object, ...]
+
+
+def _graph_signature(proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood) -> tuple[object, ...]:
+    """Identity signature of the bound graph: baked closures are per-instance."""
+    manager_graph = tuple(
+        (type(manager), id(manager), tuple((type(jump), id(jump)) for jump in manager.jumps))
+        for manager in proposal_manager.managers
     )
-    for jump_idx, manager_idx in enumerate(manager_indices):
-        keyword = 'if' if jump_idx == 0 else 'elif'
-        lines.extend(
-            [
-                f'                {keyword} idx_jump == {jump_idx}:',
-                f'                    new_point, density_fac, success = jump_{jump_idx}(',
-                f'                        sample_point, itrt, manager_state_{manager_idx}, likelihood,',
-                '                    )',
-            ]
+    exchange_manager = proposal_manager.exchange_manager
+    return (
+        (type(like_obj), id(like_obj)),
+        manager_graph,
+        (type(exchange_manager), id(exchange_manager)),
+    )
+
+
+def _bind_program(proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood) -> NativeSerialProgram:
+    """Bind every component and assemble the kernel for one concrete graph."""
+    _check_flattening(proposal_manager)
+    likelihood_natives = like_obj.bind_native()  # type: ignore[attr-defined]
+    per_manager_calls = []
+    post_steps: list[NativePostStepCall | None] = []
+    manager_states = []
+    for manager in proposal_manager.managers:
+        per_manager_calls.append(
+            tuple(
+                jump.bind_native(likelihood_natives)  # type: ignore[attr-defined]
+                for jump in manager.jumps
+            )
         )
-    lines.extend(
-        [
-            '                else:',
-            "                    raise RuntimeError('generated proposal index out of range')",
-            '                if success:',
-            '                    new_point, success = validate_bounds(',
-            '                        new_point, likelihood.low_lims, likelihood.high_lims, likelihood.custom,',
-            '                    )',
-            '                if success:',
-            '                    density_fac += prior_factor(new_point, likelihood.custom) - prior_factor(',
-            '                        sample_point, likelihood.custom,',
-            '                    )',
-            '                if success:',
-            '                    logL_new = loglike(new_point, likelihood.custom)',
-            '                    n_evals += 1',
-            '                else:',
-            '                    logL_new = -np.inf',
-            '                mcmc_decision_helper(',
-            '                    itrb, samples, logLs, betas, tracker.accept_record, tracker.esd_record,',
-            '                    itrt, new_point, logL_new, density_fac, idx_jump,',
-            '                )',
-            '            chain_track[itrb, :] = chain_track[itrb - 1, :]',
-        ]
+        has_state = _defining_class(type(manager), 'bind_native_state') is not None
+        manager_states.append(manager.bind_native_state() if has_state else None)  # type: ignore[attr-defined]
+        has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
+        post_steps.append(manager.bind_native_post_step() if has_post else None)  # type: ignore[attr-defined]
+    assert sum(len(calls) for calls in per_manager_calls) == proposal_manager.jump_probs.shape[1]
+    exchange_natives = proposal_manager.exchange_manager.bind_native()  # type: ignore[attr-defined]
+    kernel = make_serial_kernel(tuple(per_manager_calls), tuple(post_steps), likelihood_natives, exchange_natives)
+    return NativeSerialProgram(
+        kernel=kernel, manager_states=tuple(manager_states), bound_refs=(like_obj, proposal_manager)
     )
-    namespace['np'] = np
-    lines.extend(
-        f'        manager_state_{idx} = manager_post_{idx}(manager_state_{idx}, samples[itrb])'
-        for idx in range(len(manager_specs))
-    )
-    states_expr = ', '.join(f'manager_state_{idx}' for idx in range(len(manager_specs)))
-    if len(manager_specs) == 1:
-        states_expr += ','
-    lines.append(f'    return ({states_expr}), n_evals')
-    source = '\n'.join(lines) + '\n'
-
-    exec(compile(source, '<dtmcmc-generated-serial-kernel>', 'exec'), namespace)  # noqa: S102
-    function = namespace['advance_block_numba_serial']
-    if not isinstance(function, FunctionType):
-        msg = 'generated serial kernel was not a Python function'
-        raise TypeError(msg)
-    kernel = njit()(function)
-    return NativeSerialProgram(kernel, manager_specs, likelihood_spec, exchange_spec, source)
-
-
-def _resolve_program(
-    signature: tuple[Any, ...], proposal_manager: AbstractProposalManager, like_obj: Any
-) -> NativeSerialProgram:
-    cached = _PROGRAM_CACHE.get(signature)
-    if cached is not None:
-        return cached
-    likelihood_spec = _LIKELIHOOD_REGISTRY[type(like_obj)]
-    exchange_spec = _EXCHANGE_MANAGER_REGISTRY[type(proposal_manager.exchange_manager)]
-    program = _make_serial_program(proposal_manager, likelihood_spec, exchange_spec)
-    _PROGRAM_CACHE[signature] = program
-    return program
 
 
 class NativeSerialBackend:
-    """Resolve, cache, and execute the generated backend for one sampler."""
+    """Bind, cache, and execute the native serial block kernel for one sampler."""
 
     def __init__(self, mode: str) -> None:
+        if mode not in _VALID_MODES:
+            msg = f'kernel_backend must be one of {_VALID_MODES}; got {mode!r}'
+            raise NotImplementedError(msg)
         self.mode = mode
-        self.signature: tuple[Any, ...] | None = None
+        self.signature: tuple[object, ...] | None = None
         self.program: NativeSerialProgram | None = None
-        self.warned_signatures: set[tuple[Any, ...]] = set()
+        self.warned_signatures: set[tuple[object, ...]] = set()
 
-    def _resolve(self, proposal_manager: AbstractProposalManager, like_obj: Any) -> None:
+    def _resolve(self, proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood) -> None:
         signature = _graph_signature(proposal_manager, like_obj)
         if signature == self.signature:
             return
 
+        problems, explicit = _binding_inventory(proposal_manager, like_obj)
+        if not problems:
+            try:
+                program = _bind_program(proposal_manager, like_obj)
+            except NativeBackendUnsupportedError as exc:
+                # a hook declined at bind time (e.g. no native log-likelihood)
+                problems = [str(exc)]
+            else:
+                self.signature = signature
+                self.program = program
+                return
+
+        detail = '; '.join(problems)
+        if self.mode == 'numba':
+            # not memoized: strict mode re-raises on every attempted block
+            msg = f"kernel_backend='numba' requires a fully native-bindable graph; missing: {detail}"
+            raise NativeBackendUnsupportedError(msg)
         self.signature = signature
         self.program = None
-        missing, registered, total = _registration_inventory(proposal_manager, like_obj)
-        if missing:
-            detail = '; '.join(missing)
-            if self.mode == 'numba':
-                msg = f"kernel_backend='numba' requires a fully registered graph; missing: {detail}"
-                raise NativeBackendUnsupportedError(msg)
-            if registered and signature not in self.warned_signatures:
-                warn(
-                    f"kernel_backend='auto' found a mixed native/Python graph and will use Python; missing: {detail}",
-                    RuntimeWarning,
-                    stacklevel=3,
-                )
-                self.warned_signatures.add(signature)
-            assert 0 <= registered < total
-            return
-
-        self.program = _resolve_program(signature, proposal_manager, like_obj)
+        if explicit and signature not in self.warned_signatures:
+            warn(
+                f"kernel_backend='auto' found a mixed native/Python graph and will use Python; missing: {detail}",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            self.warned_signatures.add(signature)
 
     def try_advance_block(
         self,
@@ -514,10 +562,11 @@ class NativeSerialBackend:
         samples: NDArray[np.floating],
         chain_track: NDArray[np.int64],
         proposal_manager: AbstractProposalManager,
-        like_obj: Any,
+        like_obj: AbstractLikelihood,
         tracker_manager: TrackerManager,
+        eval_tracker: LikelihoodEvalTracker,
     ) -> bool:
-        """Run a native block when the graph is eligible, otherwise return false."""
+        """Run a native block when the graph is bindable, otherwise return False."""
         if self.mode == 'python':
             return False
         self._resolve(proposal_manager, like_obj)
@@ -525,40 +574,32 @@ class NativeSerialBackend:
             return False
 
         program = self.program
-        low_lims, high_lims = program.likelihood_spec.bounds_getter(like_obj)
-        likelihood_state = NativeLikelihoodState(
-            like_obj.n_par,
-            low_lims,
-            high_lims,
-            program.likelihood_spec.state_getter(like_obj),
-        )
-        manager_states = tuple(
-            spec.state_getter(manager)
-            for spec, manager in zip(program.manager_specs, proposal_manager.managers, strict=True)
-        )
-        exchange_state = NativeExchangeState(program.exchange_spec.state_getter(proposal_manager.exchange_manager))
-        sampler_state = NativeSamplerState(T_ladder.betas, logLs, samples, chain_track)
-        tracker_state = NativeTrackerState(
-            tracker_manager.exchange_tracker,
-            tracker_manager.esd_exchange,
-            tracker_manager.accept_record,
-            tracker_manager.esd_record,
-        )
-        proposal_state = NativeProposalState(proposal_manager.jump_probs, manager_states)
-
         try:
-            updated_states, n_evals = program.kernel(
-                sampler_state,
-                tracker_state,
-                likelihood_state,
-                proposal_state,
-                exchange_state,
+            n_evals = program.kernel(
+                samples,
+                logLs,
+                chain_track,
+                T_ladder.betas,
+                proposal_manager.jump_probs,
+                tracker_manager.exchange_tracker,
+                tracker_manager.esd_exchange,
+                tracker_manager.accept_record,
+                tracker_manager.esd_record,
+                program.manager_states,
             )
         except NumbaError as exc:
-            msg = 'fully registered serial-native graph failed Numba compilation or execution'
-            raise NativeBackendCompilationError(msg) from exc
-
-        for spec, manager, state in zip(program.manager_specs, proposal_manager.managers, updated_states, strict=True):
-            spec.state_setter(manager, state)
-        like_obj.n_evals += n_evals
+            # NumbaError here means the kernel failed to compile, which
+            # happens before any execution, so the block arrays are untouched
+            # and the Python path can rerun the block from samples[0]
+            if self.mode == 'numba':
+                msg = 'fully native-bindable graph failed Numba compilation or execution'
+                raise NativeBackendCompilationError(msg) from exc
+            self.program = None
+            warn(
+                f"kernel_backend='auto' native kernel failed to compile and will use Python: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return False
+        eval_tracker.count(n_evals)
         return True

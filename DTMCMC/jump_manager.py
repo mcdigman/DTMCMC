@@ -4,7 +4,7 @@ in order to be properly recognized by the framework
 """
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -20,8 +20,14 @@ if TYPE_CHECKING:
 # TODO jump name length check
 
 
+@runtime_checkable
 class AbstractJump(Protocol):
-    """An object that performs a single proposal from its __call__ method."""
+    """An object that performs a single proposal from its __call__ method.
+
+    A jump may additionally opt into native execution by defining
+    ``bind_native(likelihood_natives)`` returning a jitted closure with
+    exactly this ``__call__`` signature (see DTMCMC.numba_backend).
+    """
 
     print_name: str
 
@@ -39,8 +45,16 @@ class AbstractJump(Protocol):
         ...
 
 
+@runtime_checkable
 class AbstractJumpManager(Protocol):
-    """Structural component-manager interface used by aggregate dispatchers."""
+    """Structural component-manager interface used by aggregate dispatchers.
+
+    A manager whose ``post_step_update`` does real work may opt into native
+    execution by defining ``bind_native_post_step()`` returning a jitted
+    ``(state, samples_row) -> None`` closure paired with its writable runtime
+    state (see DTMCMC.numba_backend); a manager that inherits the base no-op
+    needs nothing.
+    """
 
     T_ladder: TemperatureLadder
 
