@@ -6,7 +6,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
-from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState
+from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
 from DTMCMC.numba_backend import NativeLoglikeCall
 
 tmax: float = 5.0 * np.pi
@@ -32,7 +32,7 @@ def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: RectangularNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], state: RectangularInputs) -> float:
     """Per-class native log likelihood reading n_par from the state bundle."""
     return get_loglike(params_in, state.n_par)
 
@@ -91,7 +91,7 @@ class EggboxLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(v, self.n_par)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native
 

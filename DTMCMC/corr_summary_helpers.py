@@ -2,7 +2,7 @@
 helpers to summarize the auto and cross-correlations and sampling efficiency for an mcmc run
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import scipy.signal
@@ -13,10 +13,13 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.tracker_manager import TrackerManager
 
 
-def restrict_n_burnin(mcc: DTMCMCSampler | StoreView, n_burnin: int) -> int:
+def restrict_n_burnin[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int
+) -> int:
     """Helper to restrict n_burnin to last block"""
     if mcc.store_size * mcc.store_thin < n_burnin:
         # handle burning more than 1 entire storage block
@@ -30,8 +33,8 @@ def restrict_n_burnin(mcc: DTMCMCSampler | StoreView, n_burnin: int) -> int:
     return n_burnin
 
 
-def autocorr_helper(
-    mcc: DTMCMCSampler | StoreView, itrp: int, n_burnin_thin: int
+def autocorr_helper[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType] | StoreView, itrp: int, n_burnin_thin: int
 ) -> tuple[NDArray[np.floating], int, float]:
     """Helper to get the autocorrleation functions for a particular parameter"""
     n_use: int = mcc.store_size - n_burnin_thin
@@ -48,8 +51,8 @@ def autocorr_helper(
     return autocorr_lim, autocorr_cut, est_var_auto
 
 
-def get_crosscorr_sum(
-    mcc: DTMCMCSampler | StoreView,
+def get_crosscorr_sum[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType] | StoreView,
     n_burnin_thin: int,
     itrp: int,
     autocorr_lim: NDArray[np.floating],
@@ -206,7 +209,9 @@ def autocorr_summary_print(n_par: int, autocorr_lims: list[NDArray[np.floating]]
     print('best estimate of autocorrelation lengths:', autocorr_len_str)
 
 
-def summarize_logLs(mcc: DTMCMCSampler | StoreView, N_blocks: int) -> tuple[NDArray[np.floating], int, int]:
+def summarize_logLs[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType] | StoreView, N_blocks: int
+) -> tuple[NDArray[np.floating], int, int]:
     """Get useful summary statistics about the likelihoods"""
     block_size: int = mcc.block_size // mcc.store_thin
     logL_block_mean: NDArray[np.floating] = np.zeros(N_blocks)
@@ -229,8 +234,8 @@ def summarize_logLs(mcc: DTMCMCSampler | StoreView, N_blocks: int) -> tuple[NDAr
     return logL_block_mean, arg_logL_burn, arg_logL_deviant
 
 
-def summarize_vars(
-    mcc: DTMCMCSampler | StoreView, n_burnin_thin: int
+def summarize_vars[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin_thin: int
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Get the means and variances for the samples"""
     n_par = mcc.n_par
@@ -242,7 +247,7 @@ def summarize_vars(
     return obs_means, obs_vars
 
 
-class CorrelationSummary:
+class CorrelationSummary[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """class to store various attributes memorializing the correlations of a chain across multiple runs"""
 
     def __init__(self, do_corr_summary: bool = True, do_autocorr: bool = True, do_cross: bool = True) -> None:
@@ -268,13 +273,18 @@ class CorrelationSummary:
         self.arg_logL_burns: list[int] = []
         self.arg_logL_deviant: list[int] = []
 
-    def final_prints(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
+    def final_prints(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int) -> None:
         """Printouts to do after all the runs have been done"""
         if self.do_corr_summary:
             self.n_eff_summary_print(mcc, n_burnin)
             self.autocorr_summary_print(mcc)
 
-    def summarize_blocks(self, mcc: DTMCMCSampler | StoreView, tracker_manager: TrackerManager, n_burnin: int) -> None:
+    def summarize_blocks(
+        self,
+        mcc: DTMCMCSampler[LikelihoodType] | StoreView,
+        tracker_manager: TrackerManager[LikelihoodType],
+        n_burnin: int,
+    ) -> None:
         """Summary functions that can be printed after a run has been executed"""
         self.summarize_logLs(mcc)
         self.summarize_vars(mcc, n_burnin)
@@ -287,7 +297,7 @@ class CorrelationSummary:
         n_complete_hc_cycles = tracker_manager.n_cycles
         print(n_complete_hc_cycles.sum())
 
-    def corr_summary(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
+    def corr_summary(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int) -> None:
         """The summaries of correlations that need to be computed after every run"""
         n_par: int = mcc.n_par
         n_cold: int = mcc.n_cold
@@ -360,14 +370,14 @@ class CorrelationSummary:
         self.est_vars_auto.append(est_vars_auto)
         self.est_vars.append(est_vars)
 
-    def summarize_vars(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
+    def summarize_vars(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int) -> None:
         """Get the means and vars for the whole run"""
         n_burnin_thin: int = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
         obs_mean, obs_var = summarize_vars(mcc, n_burnin_thin)
         self.obs_means.append(obs_mean)
         self.obs_vars.append(obs_var)
 
-    def n_eff_summary_print(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> None:
+    def n_eff_summary_print(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int) -> None:
         """Print salient information about the number of effective samples"""
         n_burnin_thin: int = restrict_n_burnin(mcc, n_burnin) // mcc.store_thin
         n_par: int = mcc.n_par
@@ -386,11 +396,11 @@ class CorrelationSummary:
             np.array(self.obs_means),
         )
 
-    def autocorr_summary_print(self, mcc: DTMCMCSampler | StoreView) -> None:
+    def autocorr_summary_print(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView) -> None:
         """Print salient information about autocorrelation functions"""
         autocorr_summary_print(mcc.n_par, self.autocorr_lims, self.do_cross)
 
-    def summarize_logLs(self, mcc: DTMCMCSampler | StoreView) -> None:
+    def summarize_logLs(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView) -> None:
         """Save some summary statistics related to the likelihoods"""
         N_blocks = mcc.store_size // (mcc.block_size // mcc.store_thin)
         logL_block_mean, arg_logL_burn, arg_logL_deviant = summarize_logLs(mcc, N_blocks)
@@ -398,6 +408,6 @@ class CorrelationSummary:
         self.arg_logL_burns.append(arg_logL_burn)
         self.arg_logL_deviant.append(arg_logL_deviant)
 
-    def restrict_n_burnin(self, mcc: DTMCMCSampler | StoreView, n_burnin: int) -> int:
+    def restrict_n_burnin(self, mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int) -> int:
         """Restrict n_burnin based on storage size"""
         return restrict_n_burnin(mcc, n_burnin)

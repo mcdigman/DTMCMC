@@ -4,7 +4,7 @@ import configparser
 import typing
 import warnings
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 import pytest
@@ -133,7 +133,7 @@ def _run(
         like_obj = None if like_factory is None else like_factory()
         sampler, _like_obj = build_sampler(spec, like_obj=like_obj, kernel_backend=backend)  # type: ignore[arg-type]
         if jump_label is not None:
-            jump_idx = sampler.proposal_manager.jump_labels_array.index(jump_label)
+            jump_idx = sampler.proposal_manager.jump_labels.index(jump_label)
             sampler.proposal_manager.jump_probs.fill(0.0)
             sampler.proposal_manager.jump_probs[:, jump_idx] = 1.0
         for _ in range(spec.n_blocks):
@@ -320,7 +320,9 @@ class _ExtensionLikelihood(RectangularLikelihood):
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         return _extension_prior_factor(params_in, self.prior_rate)
 
-    def native_state(self) -> _ExtensionNativeState:
+    @property
+    @override
+    def inputs(self) -> _ExtensionNativeState:
         return _ExtensionNativeState(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
 
     def bind_native_loglike(self) -> NativeLoglikeCall[_ExtensionNativeState]:
@@ -590,7 +592,9 @@ class _ManyStateLikelihood(RectangularLikelihood):
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         return _many_state_loglike(params_in, self.a, self.b, self.c, self.d, self.e)
 
-    def native_state(self) -> _ManyStateNativeState:
+    @property
+    @override
+    def inputs(self) -> _ManyStateNativeState:
         return _ManyStateNativeState(self.n_par, self.low_lims, self.high_lims, self.a, self.b, self.c, self.d, self.e)
 
     def bind_native_loglike(self) -> NativeLoglikeCall[_ManyStateNativeState]:
@@ -773,7 +777,7 @@ def test_rectangular_bounds_are_immutable() -> None:
         like.high_lims = np.full(2, 1.0)  # type: ignore[misc]
     with pytest.raises(ValueError, match='read-only'):
         like.low_lims[0] = 0.0
-    state = like.native_state()
+    state = like.inputs
     assert state.low_lims is like.low_lims
     assert state.high_lims is like.high_lims
 
@@ -825,12 +829,12 @@ def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
     missing method.
     """
     ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
-    with pytest.raises(TypeError, match='CoreLikelihood'):
+    with pytest.raises(TypeError, match='(n_par, get_loglike, prior_draw, prior_factor, validate_bounds)'):
         DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')  # type: ignore[arg-type]
 
 
-class _CoreOnlyLikelihood:
-    """Implements CoreLikelihood but not the Fisher support methods."""
+class _FisherDeficientLikelihood:
+    """Implements a Likelihood Without Required Fisher support methods."""
 
     def __init__(self) -> None:
         self.n_par = 2
@@ -854,8 +858,8 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
     config = configparser.ConfigParser()
     config.read('default_config.ini')
-    with pytest.raises(TypeError, match='FisherSupportLikelihood'):
-        FisherJumpManager(ladder, _CoreOnlyLikelihood(), np.zeros((4, 2)), config)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match='(correct_bounds and get_epsilons)'):
+        FisherJumpManager(ladder, _FisherDeficientLikelihood(), np.zeros((4, 2)), config)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -863,7 +867,7 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     [
         RectangularLikelihood.bind_native,
         RectangularLikelihood.bind_native_loglike,
-        RectangularLikelihood.native_state,
+        RectangularLikelihood.inputs.fget,
         GaussianLikelihood.bind_native_loglike,
         SigmaFullJump.bind_native,
         DEStandardFullJump.bind_native,

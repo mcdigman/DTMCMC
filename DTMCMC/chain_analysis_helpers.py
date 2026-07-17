@@ -3,7 +3,7 @@ helpers to analyze the results of an mcmc chain
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 import scipy.signal
@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from DTMCMC.likelihood import AbstractLikelihood
 
 
 @dataclass
@@ -74,8 +75,8 @@ def get_blockwise_vars_scramble(
     return blockwise_vars_scramble, blockwise_means_scramble
 
 
-def get_autocorr_sum(
-    n_burnin: int, mcc: DTMCMCSampler | StoreView, itrp: int, autocorr_sum: NDArray[np.floating]
+def get_autocorr_sum[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    n_burnin: int, mcc: DTMCMCSampler[LikelihoodType] | StoreView, itrp: int, autocorr_sum: NDArray[np.floating]
 ) -> None:
     """Get the sum of the autocorrelations of all the cold chains"""
     for itrt in range(mcc.n_cold):

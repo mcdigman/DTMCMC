@@ -17,7 +17,7 @@ declared costs equal observed calls.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class EvalAccounting:
+class EvalAccounting[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """Likelihood-evaluation totals by source phase.
 
     ``complete`` is False when any component could not declare its cost
@@ -49,7 +49,7 @@ class EvalAccounting:
         return self.initialization + self.proposal_targets + self.proposal_internal + self.post_block
 
 
-class LoglikeCallSpy:
+class LoglikeCallSpy[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """Independently count actual ``get_loglike`` calls on one likelihood.
 
     Context manager that wraps the instance's ``get_loglike`` with a
@@ -61,11 +61,11 @@ class LoglikeCallSpy:
         assert spy.n_calls == declared_cost
     """
 
-    def __init__(self, like_obj: AbstractLikelihood) -> None:
-        self.like_obj = like_obj
-        self.n_calls = 0
+    def __init__(self, like_obj: LikelihoodType) -> None:
+        self.like_obj: LikelihoodType = like_obj
+        self.n_calls: int = 0
 
-    def __enter__(self) -> LoglikeCallSpy:
+    def __enter__(self) -> LoglikeCallSpy[LikelihoodType]:
         original: Callable[[NDArray[np.floating]], float] = self.like_obj.get_loglike
 
         def counting_loglike(params_in: NDArray[np.floating]) -> float:

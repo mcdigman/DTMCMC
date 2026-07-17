@@ -22,9 +22,13 @@ import itertools
 import shlex
 import tomllib
 from pathlib import Path
+from typing import TYPE_CHECKING, NamedTuple
 
 from .paths import resolve
 from .spec import RunSpec, dumps_toml
+
+if TYPE_CHECKING:
+    from DTMCMC.likelihood import AbstractLikelihood
 
 
 def _apply_dotted_override(data: dict[str, object], dotted_key: str, value: object) -> None:
@@ -40,7 +44,7 @@ def _apply_dotted_override(data: dict[str, object], dotted_key: str, value: obje
     table[keys[-1]] = value
 
 
-def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec]]:
+def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec[AbstractLikelihood[NamedTuple]]]]:
     """Expand a sweep file into fully validated per-run specs.
 
     Returns
@@ -80,7 +84,7 @@ def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec]]:
     grid_keys = sorted(grid)
     grid_values = [grid[key] for key in grid_keys]
 
-    specs: list[RunSpec] = []
+    specs: list[RunSpec[AbstractLikelihood[NamedTuple]]] = []
     for point_index, combo in enumerate(itertools.product(*grid_values)):
         for seed in seeds:
             data = RunSpec.from_dict(base_data).to_dict()
@@ -95,6 +99,7 @@ def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec]]:
 
 def write_batch(sweep_path: str | Path) -> Path:
     """Write expanded spec files and the run manifest; return the manifest path."""
+    specs: list[RunSpec[AbstractLikelihood[NamedTuple]]]
     _name, out_dir, specs = expand_sweep(sweep_path)
 
     specs_dir = out_dir / 'specs'

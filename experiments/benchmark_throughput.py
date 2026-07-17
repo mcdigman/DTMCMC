@@ -9,6 +9,7 @@ best-of-3, measured locally; CI timing is never used). Usage::
 
 import sys
 import time
+from typing import Any
 
 from DTMCMC.rng_helpers import seed_run
 
@@ -23,7 +24,7 @@ SEGMENTS = 3
 def run_benchmark(spec_path: str) -> float:
     """Run the benchmark and return the best chain-steps/s over the segments."""
     chdir_repo_root()
-    spec = RunSpec.from_toml(resolve(spec_path))
+    spec: RunSpec[Any] = RunSpec.from_toml(resolve(spec_path))
     seed_run(spec.seed)
     sampler, _like_obj = build_sampler(spec)
 

@@ -16,7 +16,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple, cast, override
 from warnings import warn
 
 import numpy as np
@@ -78,7 +78,7 @@ DE_MEMORY_MIN_BLOCKS_FIXED = 4
 # one constructor per spec likelihood name; a test asserts the keys stay in
 # sync with spec.LIKELIHOOD_NAMES (spec.py cannot import these back without a
 # circular import, so drift is caught by CI instead)
-LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
+LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood[NamedTuple]]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
     'constant_rectangular': ConstantRectangularLikelihood,
@@ -96,7 +96,7 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
 }
 
 
-def build_likelihood(spec: RunSpec) -> AbstractLikelihood:
+def build_likelihood(spec: RunSpec[AbstractLikelihood[NamedTuple]]) -> AbstractLikelihood[NamedTuple]:
     """Construct the likelihood object named by the spec."""
     params: dict[str, Any] = dict(spec.likelihood_params)
     builder = LIKELIHOOD_BUILDERS.get(spec.likelihood_name)
@@ -114,7 +114,9 @@ def _scalar(value: object) -> float:
     return float(value)
 
 
-def _build_geometric_ladder(spec: RunSpec) -> TemperatureLadder:
+def _build_geometric_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
+) -> TemperatureLadder:
     """Construct a geometric ladder from the spec's ladder table."""
     ladder = spec.ladder
     return GeometricTemperatureLadder(
@@ -127,7 +129,9 @@ def _build_geometric_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
-def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
+def _build_entropy_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
+) -> TemperatureLadder:
     """Construct an entropy ladder from reference data files named by the spec."""
     ladder = spec.ladder
     return entropy_ladder_fromfile(
@@ -141,7 +145,9 @@ def _build_entropy_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
-def _load_ladder_inputs(spec: RunSpec, *stat_file_keys: str) -> tuple[np.ndarray, ...]:
+def _load_ladder_inputs[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType], *stat_file_keys: str
+) -> tuple[np.ndarray, ...]:
     """Load Ts plus stat arrays named by the spec, with the from-file filter.
 
     The Ts array is always loaded from 'Ts_file' explicitly (no
@@ -154,7 +160,9 @@ def _load_ladder_inputs(spec: RunSpec, *stat_file_keys: str) -> tuple[np.ndarray
     return filter_ladder_inputs(Ts_in, *stats)
 
 
-def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
+def _build_length_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
+) -> TemperatureLadder:
     """Construct a thermodynamic-length ladder from reference data files."""
     ladder = spec.ladder
     Ts_in, vars_in = _load_ladder_inputs(spec, 'vars_file')
@@ -169,7 +177,9 @@ def _build_length_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
-def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
+def _build_acceptance_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
+) -> TemperatureLadder:
     """Construct a predicted-acceptance ladder from reference data files."""
     ladder = spec.ladder
     Ts_in, means_in, vars_in = _load_ladder_inputs(spec, 'means_file', 'vars_file')
@@ -184,7 +194,9 @@ def _build_acceptance_file_ladder(spec: RunSpec) -> TemperatureLadder:
     )
 
 
-def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
+def _build_explicit_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
+) -> TemperatureLadder:
     """Construct a ladder directly from the spec's Ts list.
 
     RunSpec validation guarantees Ts is a numeric list of length n_chain.
@@ -198,7 +210,7 @@ def _build_explicit_ladder(spec: RunSpec) -> TemperatureLadder:
 
 # one builder per spec ladder kind; a test asserts the keys stay in sync with
 # spec.LADDER_KINDS (see LIKELIHOOD_BUILDERS note)
-LADDER_BUILDERS: dict[str, Callable[[RunSpec], TemperatureLadder]] = {
+LADDER_BUILDERS: dict[str, Callable[[RunSpec[AbstractLikelihood[NamedTuple]]], TemperatureLadder]] = {
     'geometric': _build_geometric_ladder,
     'entropy_file': _build_entropy_file_ladder,
     'length_file': _build_length_file_ladder,
@@ -207,7 +219,7 @@ LADDER_BUILDERS: dict[str, Callable[[RunSpec], TemperatureLadder]] = {
 }
 
 
-def build_ladder(spec: RunSpec) -> TemperatureLadder:
+def build_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](spec: RunSpec[LikelihoodType]) -> TemperatureLadder:
     """Construct the temperature ladder described by the spec."""
     kind = spec.ladder['kind']
     builder = LADDER_BUILDERS.get(str(kind))
@@ -217,7 +229,7 @@ def build_ladder(spec: RunSpec) -> TemperatureLadder:
     return builder(spec)
 
 
-class HarnessSampler(DTMCMCSampler):
+class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampler[LikelihoodType]):
     """DTMCMCSampler wired to the harness through the extension API.
 
     The subclass carries the run-level context its hooks need (spec,
@@ -240,12 +252,12 @@ class HarnessSampler(DTMCMCSampler):
 
     def __init__(
         self,
-        spec: RunSpec,
+        spec: RunSpec[LikelihoodType],
         T_ladder: TemperatureLadder,
-        like_obj: AbstractLikelihood,
+        like_obj: LikelihoodType,
         config: configparser.ConfigParser,
         *,
-        controller: AdaptiveLadderController | None = None,
+        controller: AdaptiveLadderController[LikelihoodType] | None = None,
         artifact_path: Path | None = None,
         provenance: RunProvenance | None = None,
         start_monotonic: float | None = None,
@@ -319,9 +331,10 @@ class HarnessSampler(DTMCMCSampler):
                 )
         # run-start ladder snapshot for the artifact: adaptive updates mutate
         # Ts in place, so the copy must be taken before the first block runs
-        self.initial_Ts = np.array(self.Ts, dtype=np.float64)
+        self.initial_Ts = self.Ts.copy()
 
-    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager | None = None) -> None:
+    @override
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
 
         Runs inside super().__init__ after initialize_state has filled
@@ -344,6 +357,7 @@ class HarnessSampler(DTMCMCSampler):
             exchange_manager_loc=exchange_manager,
         )
 
+    @override
     def postblock_operations(self) -> None:
         """Advance the adaptive controller's schedule at the block boundary."""
         if self.controller is not None:
@@ -372,6 +386,7 @@ class HarnessSampler(DTMCMCSampler):
                 de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng)
             )
 
+    @override
     def post_Nblock_teardown(self) -> None:
         """Checkpoint at the end of each advance_N_blocks segment.
 
@@ -419,24 +434,24 @@ class HarnessSampler(DTMCMCSampler):
             if self.sampler_verbosity >= 2:
                 # burn-in from the adaptive freeze; 0 for fixed-ladder runs
                 n_burnin = self.adaptive_burnin_iterations()
-                corr_sum = CorrelationSummary()
+                corr_sum: CorrelationSummary[LikelihoodType] = CorrelationSummary()
                 corr_sum.summarize_blocks(self, self.tracker_manager, n_burnin)
                 corr_sum.final_prints(self, n_burnin)
 
 
-def build_sampler(
-    spec: RunSpec,
+def build_sampler[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType],
     config: configparser.ConfigParser | None = None,
-    like_obj: AbstractLikelihood | None = None,
+    like_obj: LikelihoodType | None = None,
     T_ladder: TemperatureLadder | None = None,
     *,
-    controller: AdaptiveLadderController | None = None,
+    controller: AdaptiveLadderController[LikelihoodType] | None = None,
     artifact_path: Path | None = None,
     provenance: RunProvenance | None = None,
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
     kernel_backend: str = 'auto',
-) -> tuple[HarnessSampler, AbstractLikelihood]:
+) -> tuple[HarnessSampler[LikelihoodType], LikelihoodType]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
     Assumes both RNG streams are already seeded (see run_from_spec):
@@ -450,7 +465,7 @@ def build_sampler(
     modes, including zero_loglike, come from the serializable RunSpec.
     """
     if like_obj is None:
-        like_obj = build_likelihood(spec)
+        like_obj = cast('LikelihoodType', build_likelihood(spec))
     if T_ladder is None:
         T_ladder = build_ladder(spec)
     if config is None:
@@ -471,7 +486,9 @@ def build_sampler(
     return sampler, like_obj
 
 
-def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderController:
+def build_adaptive_controller(
+    adaptive_table: dict[str, Any],
+) -> AdaptiveLadderController[AbstractLikelihood[NamedTuple]]:
     """Construct the adaptive controller from a spec [adaptive] table.
 
     Keys (validated against ADAPTIVE_KEYS at spec load; see
@@ -528,8 +545,8 @@ def build_adaptive_controller(adaptive_table: dict[str, Any]) -> AdaptiveLadderC
     )
 
 
-def run_from_spec(
-    spec: RunSpec, out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0
+def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    spec: RunSpec[LikelihoodType], out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0
 ) -> Path:
     """Execute one run end to end and return the artifact path.
 
@@ -557,15 +574,16 @@ def run_from_spec(
         proposal_config_ini=config_to_text(config),
     )
 
-    controller = None
-    like_obj: AbstractLikelihood | None = None
+    controller: AdaptiveLadderController[LikelihoodType] | None = None
+    like_obj: LikelihoodType | None = None
     initial_ladder: TemperatureLadder | None = None
     if spec.adaptive is not None:
-        controller = build_adaptive_controller(spec.adaptive)
-        like_obj = build_likelihood(spec)
+        controller_temp = build_adaptive_controller(spec.adaptive)
+        like_obj = cast('LikelihoodType', build_likelihood(spec))
         # prior-draw anchoring consumes run-stream draws and counted evals,
         # deliberately: adaptive burn-in is charged in full (plan C3)
-        initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+        initial_ladder = controller_temp.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+        controller = cast('AdaptiveLadderController[LikelihoodType]', controller_temp)
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -576,9 +594,9 @@ def run_from_spec(
     sampler, _like_obj = build_sampler(
         spec,
         config=config,
+        controller=controller,
         like_obj=like_obj,
         T_ladder=initial_ladder,
-        controller=controller,
         artifact_path=artifact_path,
         provenance=provenance,
         start_monotonic=start_monotonic,
