@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState, check_bounds_rectangular
+from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
 from DTMCMC.numba_backend import NativeLoglikeCall
 
 # constants
@@ -46,7 +46,7 @@ def get_loglike(v: NDArray[np.floating]) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
     """Per-class native log likelihood; the wheel needs no instance state."""
     return get_loglike(params_in)
 
@@ -68,7 +68,7 @@ class SpokeWheelLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native
 
@@ -78,13 +78,14 @@ def gen_draws(n_draws: int, n_par: int, attempt_lim: int = 10000) -> NDArray[np.
     """Get posterior draws"""
     low_lims = np.full(n_par, low_lim)
     high_lims = np.full(n_par, high_lim)
+    inputs = RectangularInputs(n_par, low_lims, high_lims)
     draws = np.zeros((n_draws, n_par))
     for itrk in range(n_draws):
         itra = 0
         while True:
             mode_choose = np.random.randint(0, cs.shape[0])
             draw_loc = cs[mode_choose] + np.random.normal(0.0, w, cs.shape[1])
-            if check_bounds_rectangular(draw_loc, low_lims, high_lims):
+            if check_bounds_rectangular(draw_loc, inputs):
                 break
             itra += 1
             if itra == attempt_lim:

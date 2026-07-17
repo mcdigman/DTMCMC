@@ -1,7 +1,7 @@
 """an n dimensional normal distribution"""
 
 from math import gamma
-from typing import NamedTuple
+from typing import NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -89,21 +89,21 @@ def _get_loglike_2tier(
     return res
 
 
-class CakeNativeState(NamedTuple):
+class CakeInputs(NamedTuple):
     """Runtime state bundle: the rectangular fields plus the tier constants."""
 
     n_par: int
-    low_lims: NDArray[np.float64]
-    high_lims: NDArray[np.float64]
-    tier_lognorms: tuple[float, float]
-    tier_coefs: tuple[float, float]
-    tier_powers: tuple[float, float]
+    low_lims: NDArray[np.floating]
+    high_lims: NDArray[np.floating]
+    tier_lognorms: tuple[float, ...]
+    tier_coefs: tuple[float, ...]
+    tier_powers: tuple[float, ...]
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: CakeNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], state: CakeInputs) -> float:
     """Per-class native log likelihood reading the tier constants from the state bundle."""
-    return _get_loglike_2tier(params_in, state.tier_lognorms, state.tier_coefs, state.tier_powers)
+    return _get_loglike(params_in, state.tier_lognorms, state.tier_coefs, state.tier_powers)
 
 
 # n dimensional unit normal motivated by the 100d considerations in
@@ -140,23 +140,27 @@ class CakeLikelihood(RectangularLikelihood):
         # identical to get_cake_tier_logL's, so values are bit-identical
         # (guarded by the golden-run test)
         dim_part = gamma(1 + n_par / 2) / (np.pi ** (n_par / 2))
-        self._tier_lognorms: tuple[float, float] = tuple(
+        self._tier_lognorms: tuple[float, ...] = tuple(
             np.log(amp * dim_part / (2 ** (n_par / exponent) * width**n_par * gamma((exponent + n_par) / exponent)))
             for amp, width, exponent in zip(self.amps, self.widths, self.exponents, strict=True)
         )
-        self._tier_coefs: tuple[float, float] = tuple(
+        self._tier_coefs: tuple[float, ...] = tuple(
             -1 / (2 * width**exponent) for width, exponent in zip(self.widths, self.exponents, strict=True)
         )
-        self._tier_powers: tuple[float, float] = tuple(exponent / 2 for exponent in self.exponents)  # type: ignore[assignment]
+        self._tier_powers: tuple[float, ...] = tuple(exponent / 2 for exponent in self.exponents)
 
         low_lims = np.full(n_par, -cutoff)
         high_lims = np.full(n_par, cutoff)
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
+        self._inputs = CakeInputs(
+            self.n_par, self.low_lims, self.high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
+        )
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood given a set of parameters v"""
-        res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
+        # res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
+        res = _get_loglike(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
         # r2_got: float = 0.0
         # for itrp in range(params_in.shape[0]):
         #    r2_got += params_in[itrp] ** 2
@@ -168,12 +172,12 @@ class CakeLikelihood(RectangularLikelihood):
         #    )
         return res
 
-    def native_state(self) -> CakeNativeState:
+    @property
+    @override
+    def inputs(self) -> CakeInputs:
         """Return the rectangular fields plus the tier constants."""
-        return CakeNativeState(
-            self.n_par, self.low_lims, self.high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
-        )
+        return self._inputs
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[CakeNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[CakeInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native

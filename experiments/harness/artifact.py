@@ -23,7 +23,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, SupportsInt, cast
+from typing import TYPE_CHECKING, NamedTuple, SupportsInt, cast
 
 import h5py
 import numpy as np
@@ -33,6 +33,7 @@ from .paths import repo_root
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
     from DTMCMC.eval_accounting import EvalAccounting
+    from DTMCMC.likelihood import AbstractLikelihood
     from experiments.adaptive import AdaptiveLadderController
 
     from .spec import RunSpec
@@ -197,16 +198,16 @@ class CheckpointLog:
     de_spectrum_eigvals: list[np.ndarray] = dataclass_field(default_factory=list)
 
 
-def write_artifact(
+def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
     path: Path,
-    spec: RunSpec,
-    sampler: DTMCMCSampler,
-    eval_accounting: EvalAccounting,
+    spec: RunSpec[LikelihoodType],
+    sampler: DTMCMCSampler[LikelihoodType],
+    eval_accounting: EvalAccounting[LikelihoodType],
     provenance: RunProvenance,
     finalized: bool,
     wall_seconds: float,
     checkpoints: CheckpointLog | None = None,
-    adaptive_state: AdaptiveLadderController | None = None,
+    adaptive_state: AdaptiveLadderController[LikelihoodType] | None = None,
 ) -> None:
     """Write the full run artifact, atomically replacing any previous flush."""
     tracker = sampler.tracker_manager
@@ -299,7 +300,7 @@ def write_artifact(
         trackers_grp = hf.create_group('trackers')
         # jump-type names aligned with the accept/esd records' last axis, so
         # per-proposal figures can be labeled without engine objects
-        trackers_grp.attrs['jump_labels'] = list(sampler.proposal_manager.get_jump_labels())
+        trackers_grp.attrs['jump_labels'] = list(sampler.proposal_manager.jump_labels)
         trackers_grp.create_dataset('accept_record', data=tracker.accept_record)
         trackers_grp.create_dataset('cycle_tracker', data=tracker.cycle_tracker)
         trackers_grp.create_dataset('exchange_tracker', data=tracker.exchange_tracker)

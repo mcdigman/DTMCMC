@@ -3,7 +3,7 @@ blank manager to serve as template for adding more draw types
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -26,13 +26,13 @@ def _blank_jump_native(
     return sample_point.copy(), 0.0, True
 
 
-class BlankJump(AbstractJump):
+class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     """Template jump for future extensions"""
 
     declared_internal_evals = 0
 
-    def __init__(self, manager: JumpManager) -> None:
-        self.manager: JumpManager = manager
+    def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
+        self.manager: JumpManager[LikelihoodType] = manager
         self.print_name = 'Blank Jump'
 
     def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
@@ -66,19 +66,20 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-class AuxilliaryJumpManager(JumpManager):
+class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
     """template manager for an extra jump type,
     subclass of DTMCMC.jump_manager.JumpManager
     """
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """A blank proposal as a template"""
         self.strategy_params = AuxilliaryStrategyParameters(config)
 
-        jumps: list[AbstractJump] = [BlankJump(self)]
+        jumps: list[AbstractJump[LikelihoodType]] = [BlankJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
+    @override
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_chain: int = self.T_ladder.n_chain
@@ -87,10 +88,11 @@ class AuxilliaryJumpManager(JumpManager):
         # default to equal weight
         jump_weights[:] = self.strategy_params.auxilliary_jump_weight
 
-        self.jump_weights = jump_weights
+        self._jump_weights = jump_weights
 
-        assert np.all(self.jump_weights >= 0.0)
+        assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

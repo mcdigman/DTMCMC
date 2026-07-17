@@ -21,14 +21,12 @@ plain recursive closure factories (the Numba equivalent of
 to linters and type checkers.
 
 A bound native jump has the ``AbstractJump.__call__`` signature plus the
-owning manager's runtime state and the likelihood's runtime state; the bound
-likelihood functions have the ``AbstractLikelihood`` method signatures minus
-``self`` plus the likelihood state, so the native contract mirrors the
-Python protocols directly.
+owning manager's runtime state and the likelihood's runtime state.
+likelihood functions have the ``AbstractLikelihood`` method signatures.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, NamedTuple, Protocol, TypeVar
 from warnings import warn
 
 import numpy as np
@@ -175,69 +173,6 @@ class NativeExchangeFunctions(Generic[ExchangeStateT]):
     exchange: NativeExchangeCall[Any]
 
 
-@runtime_checkable
-class NativeBindableLikelihood(Protocol):
-    """Likelihood that can bind per-class native functions and a state bundle."""
-
-    def bind_native(self) -> NativeLikelihoodFunctions[Any]:
-        """Return the per-class native likelihood functions."""
-        ...
-
-    def native_state(self) -> Any:
-        """Return the runtime state bundle, re-read at each block entry."""
-        ...
-
-
-@runtime_checkable
-class NativeBindableJump(Protocol):
-    """Jump that can bind a jitted equivalent of its ``__call__`` method.
-
-    The bound function has signature ``(sample_point, itrt, manager_state,
-    like_state) -> (new_point, density_fac, success)``: ``__call__`` plus the
-    owning manager's runtime state (None for a stateless manager) and the
-    likelihood's runtime state. Bindings must be per-class stable: return
-    module-level jitted functions, or memoize any composition so repeated
-    binds return the same objects.
-    """
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[Any, Any]:
-        """Return the jitted jump function."""
-        ...
-
-
-@runtime_checkable
-class NativeBindableJumpManager(Protocol):
-    """Component manager that can expose runtime state and a per-step update.
-
-    ``native_state`` returns the manager's runtime state bundle (arrays it
-    mutates plus any configuration its jumps read), re-read at each block
-    entry; leave it undefined for a stateless manager.
-    ``bind_native_post_step`` returns a per-class jitted ``(state,
-    samples_row) -> None`` function, or None when there is no per-step work.
-    """
-
-    def native_state(self) -> Any:
-        """Return the manager's runtime state bundle."""
-        ...
-
-    def bind_native_post_step(self) -> NativePostStepCall[Any] | None:
-        """Return the jitted per-step update, or None if idle."""
-        ...
-
-
-@runtime_checkable
-class NativeBindableExchangeManager(Protocol):
-    """Exchange manager that can bind native functions and a state bundle."""
-
-    def bind_native(self) -> NativeExchangeFunctions[Any]:
-        """Return the per-class native exchange functions."""
-        ...
-
-    def native_state(self) -> Any:
-        """Return the runtime state bundle, re-read at each block entry."""
-        ...
-
-
 def _defining_class(cls: type, name: str) -> type | None:
     """Return the most-derived class in the MRO that defines ``name``."""
     for klass in cls.__mro__:
@@ -278,12 +213,12 @@ _LIKELIHOOD_NATIVE_PAIRS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
-def _likelihood_problem(like_obj: AbstractLikelihood) -> str | None:
+def _likelihood_problem(like_obj: AbstractLikelihood[NamedTuple]) -> str | None:
     cls = type(like_obj)
     if _defining_class(cls, 'bind_native') is None:
         return f'{cls.__qualname__} does not define bind_native'
-    if _defining_class(cls, 'native_state') is None:
-        return f'{cls.__qualname__} does not define native_state'
+    if _defining_class(cls, 'inputs') is None:
+        return f'{cls.__qualname__} does not define inputs'
     for method_name, hook_names in _LIKELIHOOD_NATIVE_PAIRS:
         problem = _stale_native_override(cls, method_name, hook_names)
         if problem is not None:
@@ -334,8 +269,8 @@ def _manager_binding(manager: object) -> tuple[str | None, bool]:
     return None, _defining_class(cls, 'native_state') is not None
 
 
-def _binding_inventory(
-    proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood
+def _binding_inventory[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
 ) -> tuple[list[str], int]:
     """Return unsupported-component descriptions and the explicit-binding count."""
     problems: list[str] = []
@@ -369,7 +304,9 @@ def _binding_inventory(
     return problems, explicit
 
 
-def _check_flattening(proposal_manager: AbstractProposalManager) -> None:
+def _check_flattening[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    proposal_manager: AbstractProposalManager[LikelihoodType],
+) -> None:
     """Require the aggregate jump list to be the ordered flattening of the managers'."""
     flattened = [jump for manager in proposal_manager.managers for jump in manager.jumps]
     if len(flattened) != len(proposal_manager.jumps) or any(
@@ -627,7 +564,9 @@ class NativeSerialProgram:
 _PROGRAM_CACHE: dict[tuple[object, ...], NativeSerialProgram] = {}
 
 
-def _graph_identity(proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood) -> tuple[object, ...]:
+def _graph_identity[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
+) -> tuple[object, ...]:
     """Cheap per-block identity of the component object graph.
 
     Used only to detect that the graph changed and a re-resolve is needed;
@@ -672,7 +611,7 @@ def _structural_key(
     )
 
 
-class NativeSerialBackend:
+class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """Bind, cache, and execute the native serial block kernel for one sampler."""
 
     def __init__(self, mode: str) -> None:
@@ -688,23 +627,23 @@ class NativeSerialBackend:
         self._jump_internal_known: bool = True
 
     def _bind_program(
-        self, proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood
+        self, proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
     ) -> NativeSerialProgram:
         """Bind every component and fetch or assemble the structural program."""
         _check_flattening(proposal_manager)
-        likelihood_natives = like_obj.bind_native()  # type: ignore[attr-defined]
+        likelihood_natives = like_obj.bind_native()
         per_manager_calls: list[tuple[NativeJumpCall[Any, Any], ...]] = []
         post_steps: list[NativePostStepCall[Any] | None] = []
         manager_has_state: list[bool] = []
         for manager in proposal_manager.managers:
-            per_manager_calls.append(tuple(jump.bind_native(likelihood_natives) for jump in manager.jumps))  # type: ignore[attr-defined]
+            per_manager_calls.append(tuple(jump.bind_native(likelihood_natives) for jump in manager.jumps))
             manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
             has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
-            post_steps.append(manager.bind_native_post_step() if has_post else None)  # type: ignore[attr-defined]
+            post_steps.append(manager.bind_native_post_step() if has_post else None)
         assert sum(len(calls) for calls in per_manager_calls) == proposal_manager.jump_probs.shape[1]
-        exchange_natives = proposal_manager.exchange_manager.bind_native()  # type: ignore[attr-defined]
+        exchange_natives = proposal_manager.exchange_manager.bind_native()
 
-        declared = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
+        declared: list[int | None] = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
         self._jump_internal_known = all(value is not None for value in declared)
         self._jump_internal_evals = np.array([0 if value is None else value for value in declared], dtype=np.int64)
         self._manager_has_state = tuple(manager_has_state)
@@ -724,7 +663,7 @@ class NativeSerialBackend:
         _PROGRAM_CACHE[key] = program
         return program
 
-    def _resolve(self, proposal_manager: AbstractProposalManager, like_obj: AbstractLikelihood) -> None:
+    def _resolve(self, proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType) -> None:
         identity = _graph_identity(proposal_manager, like_obj)
         if identity == self.graph_identity:
             return
@@ -762,10 +701,10 @@ class NativeSerialBackend:
         logLs: NDArray[np.floating],
         samples: NDArray[np.floating],
         chain_track: NDArray[np.int64],
-        proposal_manager: AbstractProposalManager,
-        like_obj: AbstractLikelihood,
-        tracker_manager: TrackerManager,
-        eval_accounting: EvalAccounting,
+        proposal_manager: AbstractProposalManager[LikelihoodType],
+        like_obj: LikelihoodType,
+        tracker_manager: TrackerManager[LikelihoodType],
+        eval_accounting: EvalAccounting[LikelihoodType],
         zero_loglike: bool,
     ) -> bool:
         """Run a native block when the graph is bindable, otherwise return False."""
@@ -778,12 +717,12 @@ class NativeSerialBackend:
         program = self.program
         # runtime state bundles are re-read at every block entry, so
         # configuration changes between blocks behave like the Python path
-        like_state = like_obj.native_state()  # type: ignore[attr-defined]
+        like_state = like_obj.inputs
         manager_states = tuple(
-            manager.native_state() if has_state else None  # type: ignore[attr-defined]
+            manager.native_state() if has_state else None
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
         )
-        exchange_state = proposal_manager.exchange_manager.native_state()  # type: ignore[attr-defined]
+        exchange_state = proposal_manager.exchange_manager.native_state()
         try:
             n_target_evals, n_internal_evals = program.kernel(
                 samples,

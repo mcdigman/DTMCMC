@@ -19,7 +19,7 @@ comparable across targets rather than absolute wall-clock promises. Usage::
 
 import argparse
 import timeit
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
@@ -72,7 +72,7 @@ def _best_seconds_per_call(func: Callable[[], Any], repeats: int) -> float:
     return best / number
 
 
-def _build_perturb_pool(like: AbstractLikelihood, seed: int) -> NDArray[np.floating]:
+def _build_perturb_pool(like: AbstractLikelihood[NamedTuple], seed: int) -> NDArray[np.floating]:
     """Build a pool of prior draws perturbed off their valid points.
 
     Fresh points are needed because ``correct_bounds`` reflects in place, so
@@ -84,7 +84,7 @@ def _build_perturb_pool(like: AbstractLikelihood, seed: int) -> NDArray[np.float
     return base
 
 
-def _out_of_bounds_pool(like: AbstractLikelihood, pool: NDArray[np.floating]) -> NDArray[np.floating]:
+def _out_of_bounds_pool(like: AbstractLikelihood[NamedTuple], pool: NDArray[np.floating]) -> NDArray[np.floating]:
     """Subset of ``pool`` whose points fail check_bounds and so need correction.
 
     validate_bounds only runs its correct-and-recheck branch on
@@ -105,7 +105,7 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     """
     target = BENCHMARKS[name]
     builder = LIKELIHOOD_BUILDERS[name]
-    like: AbstractLikelihood = builder(**target.default_params)
+    like: AbstractLikelihood[NamedTuple] = builder(**target.default_params)
 
     # a valid point for get_loglike, and a fresh pool for correct_bounds
     point = np.asarray(like.prior_draw(), dtype=np.float64)

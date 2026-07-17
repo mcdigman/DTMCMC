@@ -3,7 +3,7 @@ manager to manage prior-draw based jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -45,11 +45,11 @@ def _make_prior_native(
     return prior_native
 
 
-class PriorFullJump(AbstractJump):
+class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     declared_internal_evals = 0
 
-    def __init__(self, manager: JumpManager) -> None:
-        self.manager: JumpManager = manager
+    def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
+        self.manager: JumpManager[LikelihoodType] = manager
         self.print_name = 'Prior All-D'
 
     def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
@@ -88,17 +88,18 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager(JumpManager):
+class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config: ConfigParser) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
         self.strategy_params = PriorStrategyParameters(config)
 
-        jumps: list[AbstractJump] = [PriorFullJump(self)]
+        jumps: list[AbstractJump[LikelihoodType]] = [PriorFullJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
+    @override
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_cold = self.T_ladder.n_cold
@@ -124,9 +125,10 @@ class PriorManager(JumpManager):
         )[1:]
         jump_weights[:n_cold, idx_prior_full] = cold_prior_weight
 
-        self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.0)
+        self._jump_weights = jump_weights
+        assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

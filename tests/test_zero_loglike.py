@@ -98,15 +98,20 @@ def _snapshot(sampler: Any) -> dict[str, object]:
 
 
 def _run(
-    likelihood_table: dict[str, Any], backend: str, jump_label: str | None, *, zero_loglike: bool
+    likelihood_table: dict[str, Any],
+    backend: str,
+    jump_label: str | None,
+    *,
+    zero_loglike: bool,
+    like_obj: ConstantRectangularLikelihood | None = None,
 ) -> tuple[dict[str, object], Any]:
     reset_seed_guard_for_tests()
     try:
         spec = _make_spec(likelihood_table, zero_loglike=zero_loglike)
         seed_run(spec.seed)
-        sampler, _like_obj = build_sampler(spec, kernel_backend=backend)
+        sampler, _like_obj = build_sampler(spec, like_obj=like_obj, kernel_backend=backend)
         if jump_label is not None:
-            jump_idx = sampler.proposal_manager.jump_labels_array.index(jump_label)
+            jump_idx = sampler.proposal_manager.jump_labels.index(jump_label)
             sampler.proposal_manager.jump_probs.fill(0.0)
             sampler.proposal_manager.jump_probs[:, jump_idx] = 1.0
         for _ in range(spec.n_blocks):
@@ -126,13 +131,18 @@ def test_zero_mode_matches_constant_target(backend: str, jump_label: str) -> Non
     its log likelihood zeroed must reproduce the constant-rectangular run
     exactly for these proposals — every sample, tracker, and DE-buffer entry.
     """
-    constant_table = {
-        'name': 'constant_rectangular',
-        'n_par': N_PAR,
-        'low_lims': _BANANA_BOUNDS.low_lims.tolist(),
-        'high_lims': _BANANA_BOUNDS.high_lims.tolist(),
-    }
-    constant_state, constant_sampler = _run(constant_table, backend, jump_label, zero_loglike=False)
+    constant_like = ConstantRectangularLikelihood(
+        n_par=N_PAR,
+        low_lims=_BANANA_BOUNDS.low_lims,
+        high_lims=_BANANA_BOUNDS.high_lims,
+    )
+    constant_state, constant_sampler = _run(
+        {'name': 'constant_rectangular', 'n_par': N_PAR},
+        backend,
+        jump_label,
+        zero_loglike=False,
+        like_obj=constant_like,
+    )
     zeroed_state, zeroed_sampler = _run({'name': 'banana', 'n_par': N_PAR}, backend, jump_label, zero_loglike=True)
 
     assert isinstance(constant_sampler.like_obj, ConstantRectangularLikelihood)
@@ -188,7 +198,7 @@ def test_constant_rectangular_defaults() -> None:
     np.testing.assert_array_equal(like.high_lims, np.full(3, high_lim))
     assert like.get_loglike(np.zeros(3)) == 0.0
     assert like.prior_factor(np.zeros(3)) == 0.0
-    assert like.bind_native().loglike(np.zeros(3), like.native_state()) == 0.0
+    assert like.bind_native().loglike(np.zeros(3), like.inputs) == 0.0
 
 
 def test_zero_mode_preserves_original_fisher_likelihood() -> None:
@@ -240,7 +250,7 @@ def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
             )
             assert spy.n_calls == fisher.declared_construction_evals
             assert sampler.eval_accounting.initialization == spy.n_calls + sampler.n_chain
-            jump_idx = sampler.proposal_manager.jump_labels_array.index('Blank Jump')
+            jump_idx = sampler.proposal_manager.jump_labels.index('Blank Jump')
             sampler.proposal_manager.jump_probs.fill(0.0)
             sampler.proposal_manager.jump_probs[:, jump_idx] = 1.0
             sampler.advance_block()

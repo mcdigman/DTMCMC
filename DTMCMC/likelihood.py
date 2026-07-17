@@ -2,7 +2,7 @@
 abstract class to hold a likelihood object
 """
 
-from typing import Any, NamedTuple, Protocol, runtime_checkable
+from typing import Any, NamedTuple, Protocol, override, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -20,15 +20,23 @@ from DTMCMC.numba_backend import (
 
 
 @runtime_checkable
-class CoreLikelihood(Protocol):
-    """Minimal structural interface the sampler core requires of a likelihood.
+class AbstractLikelihood[InputType: NamedTuple](Protocol):
+    """Structural interface the engine requires of a likelihood object.
 
     Likelihood objects are stateless: every attribute is fixed at
     construction and no method mutates the object. Evaluation counting is
-    handled by the sampler's EvalAccounting, not the likelihood.
+    handled by the sampler's LikelihoodEvalTracker, not the likelihood.
     """
 
-    n_par: int
+    @property
+    def inputs(self) -> InputType:
+        """Get the read-only NamedTuple storing all likelihood input attributes."""
+        ...
+
+    @property
+    def n_par(self) -> int:
+        """Get the read-only number of parameters."""
+        ...
 
     def get_loglike(self, params_in: NDArray[np.floating], /) -> float:
         """Get the log likelihood at the specified parameters.
@@ -55,15 +63,6 @@ class CoreLikelihood(Protocol):
         """
         ...
 
-    def validate_bounds(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], bool]:
-        """Check if the specified point is within the prior volume, try to correct if not."""
-        ...
-
-
-@runtime_checkable
-class FisherSupportLikelihood(Protocol):
-    """Additional structural interface the Fisher jump manager requires."""
-
     def correct_bounds(self, params_in: NDArray[np.floating], /) -> NDArray[np.floating]:
         """Correct the bounds for the input parameters to be within the prior range.
         input:
@@ -72,39 +71,6 @@ class FisherSupportLikelihood(Protocol):
             params_out: the point with corrected parameters
         """
         ...
-
-    def get_epsilons(self, /) -> NDArray[np.floating]:
-        """Get epsilons by dimension for fisher matrix computation."""
-        ...
-
-
-@runtime_checkable
-class PresentableLikelihood(Protocol):
-    """Presentation/output interface used by plotting and reporting helpers."""
-
-    def get_labels(self) -> list[str]:
-        """Get formatted axis labels for corner plots"""
-        ...
-
-    def format_samples_output(
-        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
-    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-        """Purely a convenience function for making corner plots:
-        if we desire to do any adjustments to input samples to make corner plots
-        look nice, for example converting some dimension the raw parameter
-        to Delta that parameter, or changing the units, we can do that here
-        """
-        ...
-
-
-@runtime_checkable
-class AbstractLikelihood(CoreLikelihood, FisherSupportLikelihood, PresentableLikelihood, Protocol):
-    """Full structural likelihood interface: core sampling, Fisher support, and presentation.
-
-    The sampler itself only requires CoreLikelihood; FisherSupportLikelihood
-    is validated by the Fisher jump manager, and PresentableLikelihood by
-    the plotting helpers that consume it.
-    """
 
     def check_bounds(self, params_in: NDArray[np.floating], /) -> bool:
         """Check if the specified point is within the prior volume
@@ -115,155 +81,17 @@ class AbstractLikelihood(CoreLikelihood, FisherSupportLikelihood, PresentableLik
         """
         ...
 
+    def validate_bounds(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], bool]:
+        """Check if the specified point is within the prior volume, try to correct if not."""
+        ...
 
-@njit()
-def correct_bounds_rectangular(
-    v: NDArray[np.floating], low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
-) -> NDArray[np.floating]:
-    """Wrap parameters into range"""
-    for itrp in range(v.size):
-        v[itrp] = reflect_into_range(v[itrp], low_lims[itrp], high_lims[itrp])
-    return v
-
-
-@njit()
-def prior_draw_rectangular(
-    n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
-) -> NDArray[np.floating]:
-    """Get a uniform prior draw with rectangular walls"""
-    draw = np.zeros(n_par)
-    for itrp in range(n_par):
-        draw[itrp] = np.random.uniform(low_lims[itrp], high_lims[itrp])
-
-    return draw
-
-
-@njit()
-def check_bounds_rectangular(
-    v: NDArray[np.floating], low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
-) -> bool:
-    """Check if a sample is within the prior range"""
-    for itrp in range(v.size):
-        if not low_lims[itrp] <= v[itrp] <= high_lims[itrp]:
-            return False
-    return True
-
-
-@njit()
-def validate_bounds_rectangular(
-    params_in: NDArray[np.floating], low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
-) -> tuple[NDArray[np.floating], bool]:
-    success: bool = check_bounds_rectangular(params_in, low_lims, high_lims)
-    if not success:
-        # try to make the point in bounds and fail if unsuccesful
-        new_point = correct_bounds_rectangular(params_in, low_lims, high_lims)
-        success = check_bounds_rectangular(params_in, low_lims, high_lims)
-    else:
-        new_point = params_in
-    return new_point, success
-
-
-class RectangularNativeState(NamedTuple):
-    """Runtime state bundle for the rectangular native likelihood defaults.
-
-    Subclasses whose native functions need extra instance values define
-    their own NamedTuple that also exposes ``n_par``/``low_lims``/
-    ``high_lims`` fields (the rectangular default functions access them
-    structurally) and override ``native_state``.
-    """
-
-    n_par: int
-    low_lims: NDArray[np.float64]
-    high_lims: NDArray[np.float64]
-
-
-@njit(inline='always')
-def _prior_draw_rectangular_native(state: RectangularNativeState) -> NDArray[np.floating]:
-    """Uniform prior draw over the rectangular bounds in the state bundle."""
-    return prior_draw_rectangular(state.n_par, state.low_lims, state.high_lims)
-
-
-@njit(inline='always')
-def _prior_factor_uniform_native(_params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
-    """Log density of a uniform prior, up to an additive constant."""
-    return 0.0
-
-
-@njit(inline='always')
-def _validate_bounds_rectangular_native(
-    params_in: NDArray[np.floating], state: RectangularNativeState
-) -> tuple[NDArray[np.floating], bool]:
-    """Validate against the rectangular bounds in the state bundle."""
-    return validate_bounds_rectangular(params_in, state.low_lims, state.high_lims)
-
-
-class RectangularLikelihood(AbstractLikelihood):
-    """Handle a likelihood with rectangular bounds
-    by default assume a uniform prior
-
-    The bounds are copied at construction into private read-only arrays
-    exposed through the ``low_lims``/``high_lims`` properties, so they can
-    be neither rebound nor mutated afterwards: the Python path and the
-    native state bundles always agree. Subclasses opt into native execution
-    by overriding bind_native_loglike (plus the other bind_native_* hooks
-    and native_state when they override the corresponding Python methods or
-    need extra state fields).
-    """
-
-    def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
-        low_arr = np.array(low_lims, dtype=np.float64)
-        high_arr = np.array(high_lims, dtype=np.float64)
-        low_arr.setflags(write=False)
-        high_arr.setflags(write=False)
-        self._low_lims: NDArray[np.float64] = low_arr
-        self._high_lims: NDArray[np.float64] = high_arr
-
-        assert self._low_lims.size == n_par
-        assert self._high_lims.size == n_par
-
-        self.n_par = n_par
-
-    @property
-    def low_lims(self) -> NDArray[np.float64]:
-        """Read-only lower rectangular bounds (fixed at construction)."""
-        return self._low_lims
-
-    @property
-    def high_lims(self) -> NDArray[np.float64]:
-        """Read-only upper rectangular bounds (fixed at construction)."""
-        return self._high_lims
-
-    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
-        """Correct bounds for rectangular walls"""
-        return correct_bounds_rectangular(params_in, self._low_lims, self._high_lims)
-
-    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
-        """Check bounds for rectangular walls"""
-        return check_bounds_rectangular(params_in, self._low_lims, self._high_lims)
-
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        """Get the density factor for prior draws assuming a uniform prior"""
-        del params_in
-        return 0.0
-
-    def prior_draw(self) -> NDArray[np.floating]:
-        """Get a draw from the prior"""
-        return prior_draw_rectangular(self.n_par, self._low_lims, self._high_lims)
-
-    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
-        """Check the parameters and correct if required."""
-        return validate_bounds_rectangular(params_in, self._low_lims, self._high_lims)
-
-    def get_epsilons(self) -> NDArray[np.floating]:
-        """Special helper for FisherJumpManager
-        if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
-        otherwise just return zeros
-        """
-        return np.zeros(self.n_par)
+    def get_epsilons(self, /) -> NDArray[np.floating]:
+        """Get epsilons by dimension for fisher matrix computation."""
+        ...
 
     def get_labels(self) -> list[str]:
         """Get formatted axis labels for corner plots"""
-        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
+        ...
 
     def format_samples_output(
         self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
@@ -273,23 +101,164 @@ class RectangularLikelihood(AbstractLikelihood):
         look nice, for example converting some dimension the raw parameter
         to Delta that parameter, or changing the units, we can do that here
         """
-        return samples_store.copy(), params_fid.copy()
+        ...
 
-    # the hooks are typed over an Any state so a subclass can narrow every
-    # return to its own state bundle type (a concrete NamedTuple is not a
-    # subtype of RectangularNativeState, so a nominal base type would make
-    # precise subclass annotations override-incompatible); the rectangular
-    # defaults themselves require the bundle to expose the
-    # RectangularNativeState fields structurally
 
-    def native_state(self) -> Any:
-        """Return the runtime state bundle consumed by the native functions.
+class RectangularInputs(NamedTuple):
+    """Compile-time inputs for the stateless rectangular likelihood parent class.
 
-        Re-read at every block entry; subclasses with extra native state
-        return their own NamedTuple exposing at least the rectangular
-        fields.
+    Subclasses whose functions need extra instance values define
+    their own NamedTuple that also exposes ``n_par``/``low_lims``/
+    ``high_lims`` fields.
+    """
+
+    n_par: int
+    low_lims: NDArray[np.floating]
+    high_lims: NDArray[np.floating]
+
+
+@njit()
+def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInputs) -> NDArray[np.floating]:
+    """Wrap parameters into range"""
+    for itrp in range(v.size):
+        v[itrp] = reflect_into_range(v[itrp], inputs.low_lims[itrp], inputs.high_lims[itrp])
+    return v
+
+
+@njit()
+def prior_draw_rectangular(inputs: RectangularInputs) -> NDArray[np.floating]:
+    """Get a uniform prior draw with rectangular walls"""
+    draw = np.zeros(inputs.n_par)
+    for itrp in range(inputs.n_par):
+        draw[itrp] = np.random.uniform(inputs.low_lims[itrp], inputs.high_lims[itrp])
+
+    return draw
+
+
+@njit()
+def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInputs) -> bool:
+    """Check if a sample is within the prior range"""
+    for itrp in range(v.size):
+        if not inputs.low_lims[itrp] <= v[itrp] <= inputs.high_lims[itrp]:
+            return False
+    return True
+
+
+@njit()
+def validate_bounds_rectangular(
+    params_in: NDArray[np.floating], inputs: RectangularInputs
+) -> tuple[NDArray[np.floating], bool]:
+    success: bool = check_bounds_rectangular(params_in, inputs)
+    if not success:
+        # try to make the point in bounds and fail if unsuccesful
+        new_point = correct_bounds_rectangular(params_in, inputs)
+        success = check_bounds_rectangular(params_in, inputs)
+    else:
+        new_point = params_in
+    return new_point, success
+
+
+@njit(inline='always')
+def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
+    """Log density of a uniform prior, up to an additive constant."""
+    return 0.0
+
+
+class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
+    """Handle a likelihood with rectangular bounds
+    by default assume a uniform prior
+
+    The bounds arrays are copied and frozen read-only at construction:
+    bindings bake them into compiled closures by reference, so they
+    must never be rebound or mutated afterwards. Subclasses opt into native
+    execution by overriding bind_native_loglike (and the other bind_native_*
+    hooks when they override the corresponding Python methods).
+
+    """
+
+    def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
+        if low_lims.size != n_par or high_lims.size != n_par:
+            msg = 'Input arrays must have size=n_par'
+            raise ValueError(msg)
+
+        low_arr = low_lims.copy()
+        low_arr.setflags(write=False)
+
+        high_arr = high_lims.copy()
+        high_arr.setflags(write=False)
+
+        self._inputs_rect: RectangularInputs = RectangularInputs(n_par, low_arr, high_arr)
+
+    @property
+    @override
+    def inputs(self) -> NamedTuple:
+        """Read-only return of the inputs fixed at construction."""
+        return self._inputs_rect
+
+    @property
+    def low_lims(self) -> NDArray[np.floating]:
+        """Read-only lower rectangular bounds (fixed at construction)."""
+        return self._inputs_rect.low_lims
+
+    @property
+    def high_lims(self) -> NDArray[np.floating]:
+        """Read-only upper rectangular bounds (fixed at construction)."""
+        return self._inputs_rect.high_lims
+
+    @property
+    @override
+    def n_par(self) -> int:
+        """Read-only return of the number of parameters."""
+        return self._inputs_rect.n_par
+
+    @override
+    def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
+        """Correct bounds for rectangular walls"""
+        return correct_bounds_rectangular(params_in, self._inputs_rect)
+
+    @override
+    def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
+        """Check bounds for rectangular walls"""
+        return check_bounds_rectangular(params_in, self._inputs_rect)
+
+    @override
+    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
+        """Get the density factor for prior draws assuming a uniform prior"""
+        return prior_factor_rectangular(params_in, self._inputs_rect)
+
+    @override
+    def prior_draw(self) -> NDArray[np.floating]:
+        """Get a draw from the prior"""
+        return prior_draw_rectangular(self._inputs_rect)
+
+    @override
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check the parameters and correct if required."""
+        return validate_bounds_rectangular(params_in, self._inputs_rect)
+
+    @override
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Special helper for FisherJumpManager
+        if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
+        otherwise just return zeros
         """
-        return RectangularNativeState(self.n_par, self._low_lims, self._high_lims)
+        return np.zeros(self._inputs_rect.n_par)
+
+    @override
+    def get_labels(self) -> list[str]:
+        """Get formatted axis labels for corner plots"""
+        return [r'$v_' + str(itrp) + '$' for itrp in range(self._inputs_rect.n_par)]
+
+    @override
+    def format_samples_output(
+        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Purely a convenience function for making corner plots:
+        if we desire to do any adjustments to input samples to make corner plots
+        look nice, for example converting some dimension the raw parameter
+        to Delta that parameter, or changing the units, we can do that here
+        """
+        return samples_store.copy(), params_fid.copy()
 
     def bind_native_loglike(self) -> NativeLoglikeCall[Any]:
         """Return the per-class jitted ``(params, state) -> float`` log likelihood.
@@ -304,15 +273,15 @@ class RectangularLikelihood(AbstractLikelihood):
 
     def bind_native_prior_draw(self) -> NativePriorDrawCall[Any]:
         """Return the per-class jitted ``(state) -> params`` rectangular uniform draw."""
-        return _prior_draw_rectangular_native
+        return prior_draw_rectangular
 
     def bind_native_prior_factor(self) -> NativePriorFactorCall[Any]:
         """Return the per-class jitted ``(params, state) -> float`` uniform log density."""
-        return _prior_factor_uniform_native
+        return prior_factor_rectangular
 
     def bind_native_validate_bounds(self) -> NativeValidateBoundsCall[Any]:
         """Return the per-class jitted ``(params, state) -> (params, ok)`` validator."""
-        return _validate_bounds_rectangular_native
+        return validate_bounds_rectangular
 
     def bind_native(self) -> NativeLikelihoodFunctions[Any]:
         """Assemble the per-class native likelihood functions for the block kernel."""

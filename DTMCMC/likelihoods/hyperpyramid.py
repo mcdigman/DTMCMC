@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState
+from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
 from DTMCMC.numba_backend import NativeLoglikeCall
 
 # constants
@@ -23,7 +23,7 @@ def get_loglike(x: NDArray[np.floating]) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
     """Per-class native log likelihood; the pyramid needs no instance state."""
     return get_loglike(params_in)
 
@@ -45,6 +45,6 @@ class HyperpyramidLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native
