@@ -2,13 +2,14 @@
 module to store various trackers about the state of chains
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
+    from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.proposal_manager import AbstractProposalManager
 
 
@@ -85,7 +86,7 @@ def process_chain_cycles(
 # TODO clean up tracker reporting
 
 
-class TrackerManager:
+class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """track various things about chains like acceptance rates and cycle times."""
 
     def __init__(
@@ -296,7 +297,11 @@ class TrackerManager:
         return res
 
     def print_tracker_summary(
-        self, n_cold: int, Ts: NDArray[np.floating], proposal_manager: AbstractProposalManager, last_itrn: int = -1
+        self,
+        n_cold: int,
+        Ts: NDArray[np.floating],
+        proposal_manager: AbstractProposalManager[LikelihoodType],
+        last_itrn: int = -1,
     ) -> None:
         """Print a summmary of results from this tracker object."""
         with np.errstate(invalid='ignore', divide='ignore'):
@@ -319,7 +324,7 @@ class TrackerManager:
             a_no_unique = a_no_unique[:, a_any_mask]
             a_tot_unique = a_tot_unique[:, a_any_mask]
             jump_labels_need = [
-                label for label, keep in zip(proposal_manager.get_jump_labels(), a_any_mask, strict=True) if keep
+                label for label, keep in zip(proposal_manager.jump_labels, a_any_mask, strict=True) if keep
             ]
 
             # build the print string for jump labels

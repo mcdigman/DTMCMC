@@ -249,7 +249,7 @@ def _copy_full_state(source, target) -> None:
     tgt_fisher.gamma_mults = src_fisher.gamma_mults.copy()
 
     target.proposal_manager.jump_weights = source.proposal_manager.jump_weights.copy()
-    target.proposal_manager.jump_probs = source.proposal_manager.jump_probs.copy()
+    # target.proposal_manager.jump_probs = source.proposal_manager.jump_probs.copy()
 
     target.tracker_manager.cycle_tracker[:] = source.tracker_manager.cycle_tracker
     target.tracker_manager.accept_record[:] = source.tracker_manager.accept_record

@@ -5,7 +5,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path  # noqa: TC003 — runtime Path construction
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import h5py
 import numpy as np
@@ -17,6 +17,8 @@ from experiments.metrics import round_trip_counts, round_trip_rate, scramble_blo
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+
+    from DTMCMC.likelihood import AbstractLikelihood
 
 PILOT_ROOT = repo_root() / 'artifacts' / 'pilots'
 
@@ -159,7 +161,7 @@ def run_spec_files(spec_paths: list[Path], out_dir: Path, jobs: int = 8) -> list
         if result.returncode != 0:
             msg = f'pilot run failed for {spec_path.name}:\n{result.stdout[-2000:]}\n{result.stderr[-2000:]}'
             raise RuntimeError(msg)
-        spec = RunSpec.from_toml(spec_path)
+        spec: RunSpec[AbstractLikelihood[NamedTuple]] = RunSpec.from_toml(spec_path)
         return out_dir / f'{spec.name}_seed{spec.seed}.h5'
 
     with ThreadPoolExecutor(max_workers=jobs) as pool:

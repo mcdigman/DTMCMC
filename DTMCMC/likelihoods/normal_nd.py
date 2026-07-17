@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood, RectangularNativeState, check_bounds_rectangular
+from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
 from DTMCMC.numba_backend import NativeLoglikeCall
 
 
@@ -19,7 +19,7 @@ def get_loglike(v: NDArray[np.floating]) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: RectangularNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
     """Per-class native log likelihood; the gaussian needs no instance state."""
     return get_loglike(params_in)
 
@@ -43,7 +43,7 @@ class GaussianLikelihood(RectangularLikelihood):
         """Get the log likelihood given a set of parameters v"""
         return get_loglike(params_in)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native
 
@@ -54,10 +54,11 @@ def gen_draws(
 ) -> NDArray[np.floating]:
     """Get posterior draws"""
     draws = np.zeros((n_draws, n_par))
+    inputs = RectangularInputs(n_par, low_lims, high_lims)
     for itrk in range(n_draws):
         itra = 0
         draw_loc = np.random.normal(0.0, 1, n_par)
-        while not check_bounds_rectangular(draw_loc, low_lims, high_lims):
+        while not check_bounds_rectangular(draw_loc, inputs):
             if itra == attempt_lim:
                 msg = 'failed to find valid posterior point'
                 raise RuntimeError(msg)
@@ -72,13 +73,14 @@ def drawposterior(
     n: int, Ts: NDArray[np.floating], n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """For truncated normal we can draw from the posterior for testing purposes"""
+    inputs = RectangularInputs(n_par, low_lims, high_lims)
     samples = np.zeros((n, Ts.size, n_par))
     for itrt in range(Ts.size):
         for itrn in range(n):
             if np.isfinite(Ts[itrt]):
                 sample_loc = np.random.normal(0.0, np.sqrt(Ts[itrt]), n_par)
                 itrlim = 0
-                while not check_bounds_rectangular(sample_loc, low_lims, high_lims):
+                while not check_bounds_rectangular(sample_loc, inputs):
                     if itrlim == 100000:
                         print(itrt, itrn, itrlim)
                         msg = 'failed to find valid posterior point'

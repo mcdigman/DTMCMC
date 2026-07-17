@@ -3,7 +3,7 @@ blank manager to serve as template for adding more draw types
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, override
 
 import numpy as np
 
@@ -41,7 +41,7 @@ class HistoryStrategyParameters:
         config_h['history_jump_weight'] = str(self.history_jump_weight)
 
 
-class LadderHistoryJumpManager(JumpManager):
+class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
     """manager for a jump that proposes jumps to historical states
     at different temperatures
     """
@@ -49,7 +49,7 @@ class LadderHistoryJumpManager(JumpManager):
     def __init__(
         self,
         T_ladder: TemperatureLadder,
-        like_obj: AbstractLikelihood,
+        like_obj: LikelihoodType,
         config: ConfigParser,
         T_ladder_old: TemperatureLadder,
         logLs_old: NDArray[np.floating],
@@ -62,10 +62,11 @@ class LadderHistoryJumpManager(JumpManager):
 
         self.strategy_params: HistoryStrategyParameters = HistoryStrategyParameters(config)
 
-        jumps: list[AbstractJump] = [LadderHistoryJump(self)]
+        jumps: list[AbstractJump[LikelihoodType]] = [LadderHistoryJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
+    @override
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_chain: int = self.T_ladder.n_chain
@@ -73,23 +74,24 @@ class LadderHistoryJumpManager(JumpManager):
         # default to equal weight
         jump_weights[:] = self.strategy_params.history_jump_weight
 
-        self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.0)
+        self._jump_weights = jump_weights
+        assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
 
-class LadderHistoryJump(AbstractJump):
+class LadderHistoryJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     """Get a proposal from a random draw from the recorded historical points"""
 
     # each dispatch evaluates the likelihood once at the current point
     declared_internal_evals = 1
 
-    def __init__(self, manager: LadderHistoryJumpManager) -> None:
+    def __init__(self, manager: LadderHistoryJumpManager[LikelihoodType]) -> None:
         """Get the object to propose ladder history draws"""
-        self.manager: LadderHistoryJumpManager = manager
+        self.manager: LadderHistoryJumpManager[LikelihoodType] = manager
         self.print_name = 'Ladder History'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:

@@ -2,7 +2,7 @@
 Module with the overall PTMCMC Chain object
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -13,7 +13,7 @@ from DTMCMC.eval_accounting import EvalAccounting
 from DTMCMC.exchange_manager import AbstractExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
 from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager
-from DTMCMC.likelihood import AbstractLikelihood, CoreLikelihood
+from DTMCMC.likelihood import AbstractLikelihood
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 from DTMCMC.numba_backend import NativeSerialBackend
 from DTMCMC.proposal_manager import AbstractProposalManager
@@ -65,15 +65,15 @@ def store_sample_helper(
     return store_idx, store_counter
 
 
-def advance_step_ptmcmc(
+def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
     itrb: int,
     samples: NDArray[np.floating],
     logLs: NDArray[np.floating],
     T_ladder: TemperatureLadder,
     accept_record: NDArray[np.int64],
     esd_record: NDArray[np.floating],
-    proposal_manager: AbstractProposalManager,
-    like_obj: AbstractLikelihood,
+    proposal_manager: AbstractProposalManager[LikelihoodType],
+    like_obj: LikelihoodType,
     jump_internal_evals: NDArray[np.int64],
     zero_loglike: bool,
 ) -> tuple[int, int]:
@@ -121,7 +121,9 @@ def advance_step_ptmcmc(
     return n_target_evals, n_internal_evals
 
 
-def declared_jump_internal_evals(proposal_manager: AbstractProposalManager) -> tuple[NDArray[np.int64], bool]:
+def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    proposal_manager: AbstractProposalManager[LikelihoodType],
+) -> tuple[NDArray[np.int64], bool]:
     """Collect the per-jump declared internal evaluation costs in flattened order.
 
     Returns the cost array and whether every jump declared one; a missing
@@ -133,14 +135,14 @@ def declared_jump_internal_evals(proposal_manager: AbstractProposalManager) -> t
     return np.array([0 if value is None else value for value in declared], dtype=np.int64), known
 
 
-def advance_block_ptmcmc(
+def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
     T_ladder: TemperatureLadder,
     logLs: NDArray[np.floating],
     samples: NDArray[np.floating],
     chain_track: NDArray[np.int64],
-    proposal_manager: AbstractProposalManager,
-    like_obj: AbstractLikelihood,
-    tracker_manager: TrackerManager,
+    proposal_manager: AbstractProposalManager[LikelihoodType],
+    like_obj: LikelihoodType,
+    tracker_manager: TrackerManager[LikelihoodType],
     zero_loglike: bool,
 ) -> tuple[int, int, bool]:
     """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals.
@@ -194,17 +196,17 @@ def advance_block_ptmcmc(
 # TODO add any necessary handlers for block length
 
 
-class DTMCMCSampler:
+class DTMCMCSampler[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """object to manage the overall chain evolution"""
 
     def __init__(
         self,
         T_ladder_in: TemperatureLadder,
-        like_obj: AbstractLikelihood,
+        like_obj: LikelihoodType,
         block_size: int,
         store_size: int,
-        tracker_manager: TrackerManager | None = None,
-        proposal_manager: AbstractProposalManager | None = None,
+        tracker_manager: TrackerManager[LikelihoodType] | None = None,
+        proposal_manager: AbstractProposalManager[LikelihoodType] | None = None,
         starting_samples: NDArray[np.floating] | None = None,
         store_thin: int = 1,
         arg_record: list[int] | None = None,
@@ -248,13 +250,13 @@ class DTMCMCSampler:
         """
         # fail fast before the likelihood is used: initialization below
         # draws from the prior and evaluates the likelihood
-        if not isinstance(like_obj, CoreLikelihood):
+        if not isinstance(like_obj, AbstractLikelihood):
             msg = (
-                f'likelihood {type(like_obj).__qualname__} does not implement CoreLikelihood '
+                f'likelihood {type(like_obj).__qualname__} does not implement AbstractLikelihood '
                 '(n_par, get_loglike, prior_draw, prior_factor, validate_bounds)'
             )
             raise TypeError(msg)
-        self.eval_accounting = EvalAccounting()
+        self.eval_accounting: EvalAccounting[LikelihoodType] = EvalAccounting()
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
         self.store_size: int = store_size
@@ -262,14 +264,14 @@ class DTMCMCSampler:
         self.store_idx: int = 0
         self.store_counter: int = 0
         self.itrn: int = 0
-        self.like_obj: AbstractLikelihood = like_obj
+        self.like_obj: LikelihoodType = like_obj
         self.zero_loglike: bool = zero_loglike
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
         self._native_serial_backend = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: str = 'python'
-        self.tracker_manager: TrackerManager
-        self.proposal_manager: AbstractProposalManager
+        self.tracker_manager: TrackerManager[LikelihoodType]
+        self.proposal_manager: AbstractProposalManager[LikelihoodType]
         self.starting_samples = starting_samples
 
         self.T_ladder: TemperatureLadder = T_ladder_in
@@ -345,7 +347,7 @@ class DTMCMCSampler:
             msg = '; '.join(problems)
             raise TypeError(msg)
 
-    def initialize_trackers(self, tracker_manager_in: TrackerManager | None = None) -> None:
+    def initialize_trackers(self, tracker_manager_in: TrackerManager[LikelihoodType] | None = None) -> None:
         """Initialize the various trackers like acceptance rate and cycle times"""
         if tracker_manager_in is None:
             track_full_exchanges = self.proposal_manager.exchange_manager.track_full_exchanges
@@ -387,7 +389,7 @@ class DTMCMCSampler:
         self.samples_store = np.zeros((self.store_size, len(self.record_indices), self.n_par))
         self.logLs_store = np.zeros((self.store_size, len(self.record_indices)))
 
-    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager | None = None) -> None:
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
         """Anything that needs to be done to initialize the various jumps"""
         if proposal_manager_in is None:
             self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])

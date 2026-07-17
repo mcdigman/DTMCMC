@@ -22,7 +22,7 @@ called again, matching the fixed-ladder path.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -116,7 +116,7 @@ class LadderUpdateRecord:
 
 
 @dataclass
-class AdaptiveLadderController:
+class AdaptiveLadderController[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """Annealing-style adaptive ladder controller around DTMCMCSampler.
 
     Parameters (interface fixed by the plan)
@@ -280,7 +280,7 @@ class AdaptiveLadderController:
                 return record.block_index
         return self.budget_blocks
 
-    def initial_ladder(self, like_obj: AbstractLikelihood, n_chain: int, n_cold: int) -> TemperatureLadder:
+    def initial_ladder(self, like_obj: LikelihoodType, n_chain: int, n_cold: int) -> TemperatureLadder:
         """Build the hot-anchored initial ladder from prior-draw logL statistics.
 
         Draws from the run streams (the controller runs inside the run,
@@ -338,7 +338,7 @@ class AdaptiveLadderController:
         idx = int(np.argmin(dlogs))
         return idx if dlogs[idx] <= self.pool_dlog_tol else None
 
-    def _absorb_segment_stats(self, sampler: DTMCMCSampler) -> None:
+    def _absorb_segment_stats(self, sampler: DTMCMCSampler[LikelihoodType]) -> None:
         """Pool the current segment's per-chain logL cumulants.
 
         Uses the stationary estimator E[logL^2] - E[logL]^2 over the
@@ -548,7 +548,7 @@ class AdaptiveLadderController:
             )
         return self._cap_cold_links(ladder, n_cold)
 
-    def post_block(self, sampler: DTMCMCSampler) -> bool:
+    def post_block(self, sampler: DTMCMCSampler[LikelihoodType]) -> bool:
         """Advance the schedule after a block; returns True when the ladder updated.
 
         Sub-threshold rebuilds (max |dlog T| within the freeze

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -6,9 +6,12 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
+    from DTMCMC.likelihood import AbstractLikelihood
 
 
-def get_averaged_means(mcc: DTMCMCSampler, length: int, cut: int = 0) -> list[NDArray[np.floating]]:
+def get_averaged_means[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType], length: int, cut: int = 0
+) -> list[NDArray[np.floating]]:
     l1_means = np.array(mcc.logL_means)
     l2_means = np.array(mcc.logL2_means)
     l3_means = np.array(mcc.logL3_means)
@@ -66,7 +69,9 @@ def get_cumulants(l_means: list[NDArray[np.floating]]) -> list[NDArray[np.floati
     return [l_cum1, l_cum2, l_cum3, l_cum4, l_cum5, l_cum6]
 
 
-def get_averaged_adjacents(mcc: DTMCMCSampler, length: int, cut: int = 0) -> list[NDArray[np.floating]]:
+def get_averaged_adjacents[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    mcc: DTMCMCSampler[LikelihoodType], length: int, cut: int = 0
+) -> list[NDArray[np.floating]]:
     l_p11_means = np.array(mcc.logL_prod11_means)
     l_p21_means = np.array(mcc.logL_prod21_means)
     l_p12_means = np.array(mcc.logL_prod12_means)

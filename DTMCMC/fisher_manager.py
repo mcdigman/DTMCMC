@@ -3,7 +3,7 @@ module to store objects related to fisher matrix jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -11,13 +11,12 @@ from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
-from DTMCMC.likelihood import FisherSupportLikelihood
+from DTMCMC.likelihood import AbstractLikelihood
 from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
-    from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
@@ -109,14 +108,14 @@ def _fisher_full_native(
     return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
 
 
-class SigmaFullJump(AbstractJump):
+class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     """Standard Deviation Jump in Full Dimensions"""
 
     declared_internal_evals = 0
 
-    def __init__(self, manager: FisherJumpManager) -> None:
+    def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         """Create the jump"""
-        self.manager: FisherJumpManager = manager
+        self.manager: FisherJumpManager[LikelihoodType] = manager
         self.print_name = 'Std All-D'
         # n_par = self.manager.n_par
         # mult = np.random.normal(0., 1., n_par)
@@ -142,13 +141,13 @@ class SigmaFullJump(AbstractJump):
         )
 
 
-class SigmaRandomSubspaceJump(AbstractJump):
+class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     """Standard deviation jump in random subspaces"""
 
     declared_internal_evals = 0
 
-    def __init__(self, manager: FisherJumpManager) -> None:
-        self.manager: FisherJumpManager = manager
+    def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
+        self.manager: FisherJumpManager[LikelihoodType] = manager
         self.print_name = 'Std Random-D'
 
     def bind_native(
@@ -246,7 +245,7 @@ def set_fishers(
     sample_set: NDArray[np.floating],
     strategy_params: FisherStrategyParameters,
     n_chain: int,
-    like_obj: AbstractLikelihood,
+    like_obj: AbstractLikelihood[NamedTuple],
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Set up the fisher matrices"""
     use_chol_fishers = strategy_params.use_chol_fishers
@@ -372,7 +371,7 @@ def set_scales(
     return sigma_scales, gamma_mults
 
 
-class FisherJumpManager(JumpManager):
+class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The fisher arrays are allocated once and refreshed in place; the native
@@ -383,20 +382,24 @@ class FisherJumpManager(JumpManager):
     def __init__(
         self,
         T_ladder: TemperatureLadder,
-        like_obj: AbstractLikelihood,
+        like_obj: LikelihoodType,
         sample_set: NDArray[np.floating],
         config: ConfigParser,
     ) -> None:
         """Create the object"""
-        if not isinstance(like_obj, FisherSupportLikelihood):
+        if not isinstance(like_obj, AbstractLikelihood):
             msg = (
-                f'likelihood {type(like_obj).__qualname__} does not implement FisherSupportLikelihood '
+                f'likelihood {type(like_obj).__qualname__} does not implement AbstractLikelihood '
                 '(correct_bounds and get_epsilons), which FisherJumpManager requires'
             )
             raise TypeError(msg)
         self.strategy_params = FisherStrategyParameters(config)
 
-        jumps: list[AbstractJump] = [FisherFullJump(self), SigmaFullJump(self), SigmaRandomSubspaceJump(self)]
+        jumps: list[AbstractJump[LikelihoodType]] = [
+            FisherFullJump(self),
+            SigmaFullJump(self),
+            SigmaRandomSubspaceJump(self),
+        ]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
@@ -429,6 +432,7 @@ class FisherJumpManager(JumpManager):
             self.gamma_mults,
         )
 
+    @override
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_cold = self.T_ladder.n_cold
@@ -477,9 +481,10 @@ class FisherJumpManager(JumpManager):
             jump_weights[n_cold:, sigma_full_idx] = hot_weight * full_weight
             jump_weights[n_cold:, sigma_random_idx] = hot_weight * subspace_weight
 
-        self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.0)
+        self._jump_weights = jump_weights
+        assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
     ) -> int:
@@ -520,16 +525,17 @@ class FisherJumpManager(JumpManager):
             return self.declared_refresh_evals()
         return 0
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
 
-class FisherFullJump(AbstractJump):
+class FisherFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
     declared_internal_evals = 0
 
-    def __init__(self, manager: FisherJumpManager) -> None:
-        self.manager: FisherJumpManager = manager
+    def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
+        self.manager: FisherJumpManager[LikelihoodType] = manager
         self.print_name = 'Fisher All-D'
 
     def bind_native(

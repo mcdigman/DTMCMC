@@ -21,6 +21,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path  # noqa: TC003 — runtime Path construction
+from typing import Any
 
 import numpy as np
 
@@ -61,7 +62,9 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
     chdir_repo_root()
     seed_run(seed)
 
-    spec = RunSpec.from_dict(make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2))
+    spec: RunSpec[Any] = RunSpec.from_dict(
+        make_spec('remap', seed, cake5_likelihood(), entropy_gold_ladder(N_CHAIN), BLOCK_SIZE * 2)
+    )
     like_obj = build_likelihood(spec)
     config = spec.build_proposal_config()
 

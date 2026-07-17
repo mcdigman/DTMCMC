@@ -1,6 +1,6 @@
 """Constant likelihood with an independent Gaussian prior in every dimension."""
 
-from typing import NamedTuple
+from typing import NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -37,30 +37,30 @@ def gaussian_prior_factor(
     return -0.5 * float(np.sum(standardized * standardized)) - float(np.sum(np.log(prior_std)))
 
 
-class UniformGaussianNativeState(NamedTuple):
+class UniformRectangularGaussianInputs(NamedTuple):
     """Runtime state bundle: the rectangular fields plus the Gaussian prior arrays."""
 
     n_par: int
-    low_lims: NDArray[np.float64]
-    high_lims: NDArray[np.float64]
-    prior_mean: NDArray[np.float64]
-    prior_std: NDArray[np.float64]
+    low_lims: NDArray[np.floating]
+    high_lims: NDArray[np.floating]
+    prior_mean: NDArray[np.floating]
+    prior_std: NDArray[np.floating]
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: UniformGaussianNativeState) -> float:
+def _loglike_native(params_in: NDArray[np.floating], _state: UniformRectangularGaussianInputs) -> float:
     """Per-class native log likelihood; the constant needs no instance state."""
     return get_loglike(params_in)
 
 
 @njit(inline='always')
-def _prior_draw_native(state: UniformGaussianNativeState) -> NDArray[np.floating]:
+def _prior_draw_native(state: UniformRectangularGaussianInputs) -> NDArray[np.floating]:
     """Per-class native Gaussian prior draw reading the state bundle."""
     return gaussian_prior_draw(state.n_par, state.prior_mean, state.prior_std)
 
 
 @njit(inline='always')
-def _prior_factor_native(params_in: NDArray[np.floating], state: UniformGaussianNativeState) -> float:
+def _prior_factor_native(params_in: NDArray[np.floating], state: UniformRectangularGaussianInputs) -> float:
     """Per-class native Gaussian log prior density reading the state bundle."""
     return gaussian_prior_factor(params_in, state.prior_mean, state.prior_std)
 
@@ -78,6 +78,9 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood):
         self.prior_std = np.full(n_par, prior_std)
         self.prior_mean.setflags(write=False)
         self.prior_std.setflags(write=False)
+        self._inputs_gauss: UniformRectangularGaussianInputs = UniformRectangularGaussianInputs(
+            self.n_par, self.low_lims, self.high_lims, self.prior_mean, self.prior_std
+        )
 
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Evaluate the constant likelihood."""
@@ -91,18 +94,20 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood):
         """Return the Gaussian log prior density up to a constant."""
         return gaussian_prior_factor(params_in, self.prior_mean, self.prior_std)
 
-    def native_state(self) -> UniformGaussianNativeState:
+    @property
+    @override
+    def inputs(self) -> UniformRectangularGaussianInputs:
         """Return the rectangular fields plus the Gaussian prior arrays."""
-        return UniformGaussianNativeState(self.n_par, self.low_lims, self.high_lims, self.prior_mean, self.prior_std)
+        return self._inputs_gauss
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[UniformGaussianNativeState]:
+    def bind_native_loglike(self) -> NativeLoglikeCall[UniformRectangularGaussianInputs]:
         """Return the per-class native log likelihood."""
         return _loglike_native
 
-    def bind_native_prior_draw(self) -> NativePriorDrawCall[UniformGaussianNativeState]:
+    def bind_native_prior_draw(self) -> NativePriorDrawCall[UniformRectangularGaussianInputs]:
         """Return the per-class native Gaussian prior draw."""
         return _prior_draw_native
 
-    def bind_native_prior_factor(self) -> NativePriorFactorCall[UniformGaussianNativeState]:
+    def bind_native_prior_factor(self) -> NativePriorFactorCall[UniformRectangularGaussianInputs]:
         """Return the per-class native Gaussian log prior density."""
         return _prior_factor_native
