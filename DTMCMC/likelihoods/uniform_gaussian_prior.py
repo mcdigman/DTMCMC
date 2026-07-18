@@ -37,7 +37,7 @@ def gaussian_prior_factor(
 
 
 class UniformRectangularGaussianInputs(NamedTuple):
-    """Runtime state bundle: the rectangular fields plus the Gaussian prior arrays."""
+    """Compile-time fixed inputs."""
 
     n_par: int
     low_lims: NDArray[np.floating]
@@ -47,21 +47,21 @@ class UniformRectangularGaussianInputs(NamedTuple):
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: UniformRectangularGaussianInputs) -> float:
-    """Per-class native log likelihood; the constant needs no instance state."""
+def _loglike_native(params_in: NDArray[np.floating], _inputs: UniformRectangularGaussianInputs) -> float:
+    """Per-class native log likelihood."""
     return get_loglike(params_in)
 
 
 @njit(inline='always')
-def _prior_draw_native(state: UniformRectangularGaussianInputs) -> NDArray[np.floating]:
-    """Per-class native Gaussian prior draw reading the state bundle."""
-    return gaussian_prior_draw(state.n_par, state.prior_mean, state.prior_std)
+def _prior_draw_native(inputs: UniformRectangularGaussianInputs) -> NDArray[np.floating]:
+    """Per-class native Gaussian prior draw."""
+    return gaussian_prior_draw(inputs.n_par, inputs.prior_mean, inputs.prior_std)
 
 
 @njit(inline='always')
-def _prior_factor_native(params_in: NDArray[np.floating], state: UniformRectangularGaussianInputs) -> float:
-    """Per-class native Gaussian log prior density reading the state bundle."""
-    return gaussian_prior_factor(params_in, state.prior_mean, state.prior_std)
+def _prior_factor_native(params_in: NDArray[np.floating], inputs: UniformRectangularGaussianInputs) -> float:
+    """Per-class native Gaussian log prior density."""
+    return gaussian_prior_factor(params_in, inputs.prior_mean, inputs.prior_std)
 
 
 class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGaussianInputs]):
@@ -76,7 +76,7 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
             msg = 'prior_std must be positive'
             raise ValueError(msg)
         super().__init__(n_par, np.full(n_par, -np.inf), np.full(n_par, np.inf))
-        # frozen so the Python path and the native state bundles always agree
+        
         prior_mean_arr = np.full(n_par, prior_mean)
         prior_std_arr = np.full(n_par, prior_std)
         prior_mean_arr.setflags(write=False)
