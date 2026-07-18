@@ -2,7 +2,8 @@
 abstract class to hold a likelihood object
 """
 
-from typing import Any, NamedTuple, Protocol, override, runtime_checkable
+from abc import ABC
+from typing import Any, NamedTuple, Protocol, cast, override, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -20,7 +21,7 @@ from DTMCMC.numba_backend import (
 
 
 @runtime_checkable
-class AbstractLikelihood[InputType: NamedTuple](Protocol):
+class AbstractLikelihood[InputType](Protocol):
     """Structural interface the engine requires of a likelihood object.
 
     Likelihood objects are stateless: every attribute is fixed at
@@ -104,6 +105,17 @@ class AbstractLikelihood[InputType: NamedTuple](Protocol):
         ...
 
 
+class RectangularBoundsProtocol(Protocol):
+    @property
+    def n_par(self) -> int: ...
+
+    @property
+    def low_lims(self) -> NDArray[np.floating]: ...
+
+    @property
+    def high_lims(self) -> NDArray[np.floating]: ...
+
+
 class RectangularInputs(NamedTuple):
     """Compile-time inputs for the stateless rectangular likelihood parent class.
 
@@ -118,7 +130,7 @@ class RectangularInputs(NamedTuple):
 
 
 @njit()
-def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInputs) -> NDArray[np.floating]:
+def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsProtocol) -> NDArray[np.floating]:
     """Wrap parameters into range"""
     for itrp in range(v.size):
         v[itrp] = reflect_into_range(v[itrp], inputs.low_lims[itrp], inputs.high_lims[itrp])
@@ -126,7 +138,7 @@ def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInput
 
 
 @njit()
-def prior_draw_rectangular(inputs: RectangularInputs) -> NDArray[np.floating]:
+def prior_draw_rectangular(inputs: RectangularBoundsProtocol) -> NDArray[np.floating]:
     """Get a uniform prior draw with rectangular walls"""
     draw = np.zeros(inputs.n_par)
     for itrp in range(inputs.n_par):
@@ -136,7 +148,7 @@ def prior_draw_rectangular(inputs: RectangularInputs) -> NDArray[np.floating]:
 
 
 @njit()
-def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInputs) -> bool:
+def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsProtocol) -> bool:
     """Check if a sample is within the prior range"""
     for itrp in range(v.size):
         if not inputs.low_lims[itrp] <= v[itrp] <= inputs.high_lims[itrp]:
@@ -146,7 +158,7 @@ def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularInputs)
 
 @njit()
 def validate_bounds_rectangular(
-    params_in: NDArray[np.floating], inputs: RectangularInputs
+    params_in: NDArray[np.floating], inputs: RectangularBoundsProtocol
 ) -> tuple[NDArray[np.floating], bool]:
     success: bool = check_bounds_rectangular(params_in, inputs)
     if not success:
@@ -159,12 +171,51 @@ def validate_bounds_rectangular(
 
 
 @njit(inline='always')
-def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
+def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
     """Log density of a uniform prior, up to an additive constant."""
     return 0.0
 
 
-class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
+@njit(inline='always')
+def _unavailable_loglike_fn(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
+    """Return the per-class jitted ``(params, state) -> float`` log likelihood."""
+    msg = 'No wired native log-likelihood binding for this path.'
+    raise NativeBackendUnsupportedError(msg)
+
+
+class AbstractNativeLikelihood[InputType](AbstractLikelihood[InputType], ABC):
+    loglike_fn: NativeLoglikeCall[InputType]
+    prior_draw_fn: NativePriorDrawCall[InputType]
+    prior_factor_fn: NativePriorFactorCall[InputType]
+    validate_bounds_fn: NativeValidateBoundsCall[InputType]
+
+    @override
+    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
+        """Get the density factor for prior draws assuming a uniform prior"""
+        return self.prior_factor_fn(params_in, self.inputs)
+
+    @override
+    def prior_draw(self) -> NDArray[np.floating]:
+        """Get a draw from the prior"""
+        return self.prior_draw_fn(self.inputs)
+
+    @override
+    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
+        """Check the parameters and correct if required."""
+        return self.validate_bounds_fn(params_in, self.inputs)
+
+    @override
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+        """Get the log likelihood at the specified parameters.
+        input:
+            params_in: a 1D float array of parameters
+        output:
+            logL: a scalar float likelihood
+        """
+        return self.loglike_fn(params_in, self.inputs)
+
+
+class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNativeLikelihood[InputType]):
     """Handle a likelihood with rectangular bounds
     by default assume a uniform prior
 
@@ -175,6 +226,11 @@ class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
     hooks when they override the corresponding Python methods).
 
     """
+
+    prior_draw_fn: NativePriorDrawCall[InputType] = staticmethod(prior_draw_rectangular)
+    prior_factor_fn: NativePriorFactorCall[InputType] = staticmethod(prior_factor_rectangular)
+    validate_bounds_fn: NativeValidateBoundsCall[InputType] = staticmethod(validate_bounds_rectangular)
+    loglike_fn: NativeLoglikeCall[InputType] = staticmethod(_unavailable_loglike_fn)
 
     def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
         if low_lims.size != n_par or high_lims.size != n_par:
@@ -191,9 +247,9 @@ class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
 
     @property
     @override
-    def inputs(self) -> NamedTuple:
+    def inputs(self) -> InputType:
         """Read-only return of the inputs fixed at construction."""
-        return self._inputs_rect
+        return cast('InputType', self._inputs_rect)
 
     @property
     def low_lims(self) -> NDArray[np.floating]:
@@ -222,32 +278,17 @@ class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
         return check_bounds_rectangular(params_in, self._inputs_rect)
 
     @override
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        """Get the density factor for prior draws assuming a uniform prior"""
-        return prior_factor_rectangular(params_in, self._inputs_rect)
-
-    @override
-    def prior_draw(self) -> NDArray[np.floating]:
-        """Get a draw from the prior"""
-        return prior_draw_rectangular(self._inputs_rect)
-
-    @override
-    def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
-        """Check the parameters and correct if required."""
-        return validate_bounds_rectangular(params_in, self._inputs_rect)
-
-    @override
     def get_epsilons(self) -> NDArray[np.floating]:
         """Special helper for FisherJumpManager
         if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
         otherwise just return zeros
         """
-        return np.zeros(self._inputs_rect.n_par)
+        return np.zeros(self.n_par)
 
     @override
     def get_labels(self) -> list[str]:
         """Get formatted axis labels for corner plots"""
-        return [r'$v_' + str(itrp) + '$' for itrp in range(self._inputs_rect.n_par)]
+        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
 
     @override
     def format_samples_output(
@@ -260,34 +301,23 @@ class RectangularLikelihood(AbstractLikelihood[NamedTuple]):
         """
         return samples_store.copy(), params_fid.copy()
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[Any]:
-        """Return the per-class jitted ``(params, state) -> float`` log likelihood.
+    # def bind_native_prior_draw(self) -> NativePriorDrawCall[Any]:
+    #    """Return the per-class jitted ``(state) -> params`` rectangular uniform draw."""
+    #    return prior_draw_rectangular
 
-        Subclasses opt into native execution by returning a module-level
-        ``@njit`` function reading any instance values from the state
-        bundle; the default declines, which keeps the sampler on the Python
-        path.
-        """
-        msg = f'{type(self).__qualname__} does not provide a native log-likelihood binding'
-        raise NativeBackendUnsupportedError(msg)
+    # def bind_native_prior_factor(self) -> NativePriorFactorCall[Any]:
+    #    """Return the per-class jitted ``(params, state) -> float`` uniform log density."""
+    #    return prior_factor_rectangular
 
-    def bind_native_prior_draw(self) -> NativePriorDrawCall[Any]:
-        """Return the per-class jitted ``(state) -> params`` rectangular uniform draw."""
-        return prior_draw_rectangular
-
-    def bind_native_prior_factor(self) -> NativePriorFactorCall[Any]:
-        """Return the per-class jitted ``(params, state) -> float`` uniform log density."""
-        return prior_factor_rectangular
-
-    def bind_native_validate_bounds(self) -> NativeValidateBoundsCall[Any]:
-        """Return the per-class jitted ``(params, state) -> (params, ok)`` validator."""
-        return validate_bounds_rectangular
+    # def bind_native_validate_bounds(self) -> NativeValidateBoundsCall[Any]:
+    #     """Return the per-class jitted ``(params, state) -> (params, ok)`` validator."""
+    #     return validate_bounds_rectangular
 
     def bind_native(self) -> NativeLikelihoodFunctions[Any]:
         """Assemble the per-class native likelihood functions for the block kernel."""
         return NativeLikelihoodFunctions(
-            loglike=self.bind_native_loglike(),
-            prior_draw=self.bind_native_prior_draw(),
-            prior_factor=self.bind_native_prior_factor(),
-            validate_bounds=self.bind_native_validate_bounds(),
+            loglike=self.loglike_fn,
+            prior_draw=self.prior_draw_fn,
+            prior_factor=self.prior_factor_fn,
+            validate_bounds=self.validate_bounds_fn,
         )

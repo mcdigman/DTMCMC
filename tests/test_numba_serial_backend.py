@@ -305,14 +305,17 @@ def _extension_prior_factor_native(params: NDArray[np.floating], state: _Extensi
 
 class _ExtensionLikelihood(RectangularLikelihood):
     """Small external-style likelihood with a non-uniform prior."""
+    prior_draw_fn = staticmethod(_extension_prior_draw_native)
+    prior_factor_fn = staticmethod(_extension_prior_factor_native)
+    loglike_fn = staticmethod(_extension_loglike_native)
 
     def __init__(self, n_par: int = 4, center: float = 0.75, prior_rate: float = 0.5) -> None:
         super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
         self.center = center
         self.prior_rate = prior_rate
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        return _extension_loglike(params_in, self.center, self.prior_rate)
+    #def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    return _extension_loglike(params_in, self.center, self.prior_rate)
 
     def prior_draw(self) -> NDArray[np.floating]:
         return _extension_prior_draw(self.n_par, self.low_lims, self.high_lims, self.prior_rate)
@@ -325,14 +328,14 @@ class _ExtensionLikelihood(RectangularLikelihood):
     def inputs(self) -> _ExtensionNativeState:
         return _ExtensionNativeState(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[_ExtensionNativeState]:
-        return _extension_loglike_native
+    #def bind_native_loglike(self) -> NativeLoglikeCall[_ExtensionNativeState]:
+    #    return _extension_loglike_native
 
-    def bind_native_prior_draw(self) -> NativePriorDrawCall[_ExtensionNativeState]:
-        return _extension_prior_draw_native
+    #def bind_native_prior_draw(self) -> NativePriorDrawCall[_ExtensionNativeState]:
+    #    return _extension_prior_draw_native
 
-    def bind_native_prior_factor(self) -> NativePriorFactorCall[_ExtensionNativeState]:
-        return _extension_prior_factor_native
+    #def bind_native_prior_factor(self) -> NativePriorFactorCall[_ExtensionNativeState]:
+    #    return _extension_prior_factor_native
 
 
 @njit(inline='always')
@@ -550,15 +553,16 @@ def _bad_native_loglike(params: NDArray[np.floating], _state: Any) -> float:
 
 class _BadNativeLikelihood(RectangularLikelihood):
     """Valid Python likelihood with an intentionally invalid native function."""
+    loglike_fn = staticmethod(njit(inline='always')(_bad_native_loglike))
 
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        return -float(np.sum(params_in * params_in))
+    #def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    return -float(np.sum(params_in * params_in))
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[Any]:
-        return njit(inline='always')(_bad_native_loglike)
+    #def bind_native_loglike(self) -> NativeLoglikeCall[Any]:
+    #    return njit(inline='always')(_bad_native_loglike)
 
 
 @njit(inline='always')
@@ -584,21 +588,22 @@ def _many_state_loglike_native(params: NDArray[np.floating], state: _ManyStateNa
 
 class _ManyStateLikelihood(RectangularLikelihood):
     """Regression likelihood whose state bundle carries many extension fields."""
+    loglike_fn = _many_state_loglike_native
 
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
         self.a, self.b, self.c, self.d, self.e = 1.0, 2.0, 3.0, 4.0, 5.0
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        return _many_state_loglike(params_in, self.a, self.b, self.c, self.d, self.e)
+    #def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    return _many_state_loglike(params_in, self.a, self.b, self.c, self.d, self.e)
 
     @property
     @override
     def inputs(self) -> _ManyStateNativeState:
         return _ManyStateNativeState(self.n_par, self.low_lims, self.high_lims, self.a, self.b, self.c, self.d, self.e)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[_ManyStateNativeState]:
-        return _many_state_loglike_native
+    #def bind_native_loglike(self) -> NativeLoglikeCall[_ManyStateNativeState]:
+    #    return _many_state_loglike_native
 
 
 def test_external_nonuniform_prior_contract_is_bit_exact() -> None:
@@ -866,9 +871,9 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     'hook',
     [
         RectangularLikelihood.bind_native,
-        RectangularLikelihood.bind_native_loglike,
+        RectangularLikelihood.loglike_fn,
         RectangularLikelihood.inputs.fget,
-        GaussianLikelihood.bind_native_loglike,
+        GaussianLikelihood.loglike_fn,
         SigmaFullJump.bind_native,
         DEStandardFullJump.bind_native,
         PriorFullJump.bind_native,
