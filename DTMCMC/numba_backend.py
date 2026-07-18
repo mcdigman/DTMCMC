@@ -206,10 +206,10 @@ def _stale_native_override(cls: type, method_name: str, hook_names: tuple[str, .
 
 
 _LIKELIHOOD_NATIVE_PAIRS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ('get_loglike', ('bind_native_loglike', 'bind_native')),
-    ('prior_draw', ('bind_native_prior_draw', 'bind_native')),
-    ('prior_factor', ('bind_native_prior_factor', 'bind_native')),
-    ('validate_bounds', ('bind_native_validate_bounds', 'bind_native')),
+    ('get_loglike', ('loglike_fn', 'bind_native')),
+    ('prior_draw', ('prior_draw_fn', 'bind_native')),
+    ('prior_factor', ('prior_factor_fn', 'bind_native')),
+    ('validate_bounds', ('validate_bounds_fn', 'bind_native')),
 )
 
 
