@@ -79,7 +79,7 @@ class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
         high_lims = np.array([self.xs_grid.max(), self.ys_grid.max()])
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
-        self._inputs = HawaiiInputs(n_par, low_lims, high_lims, hawaii_interp)
+        self._inputs = HawaiiInputs(n_par, self.low_lims, self.high_lims, hawaii_interp)
 
     @property
     @override
