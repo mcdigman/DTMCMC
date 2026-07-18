@@ -22,7 +22,7 @@ def get_loglike(x: NDArray[np.floating]) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
+def _loglike_native(params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
     """Per-class native log likelihood."""
     return get_loglike(params_in)
 

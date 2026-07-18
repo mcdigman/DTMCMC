@@ -22,9 +22,9 @@ def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: RectangularInputs) -> float:
+def _loglike_native(params_in: NDArray[np.floating], inputs: RectangularInputs) -> float:
     """Per-class native log likelihood."""
-    return get_loglike(params_in, state.n_par)
+    return get_loglike(params_in, inputs.n_par)
 
 
 class RosenbrockLikelihood(RectangularLikelihood[RectangularInputs]):
