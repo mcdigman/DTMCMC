@@ -11,7 +11,6 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
-from DTMCMC.numba_backend import NativeLoglikeCall
 
 # default rectangular bounds, borrowed from the banana likelihood's
 # n >= 2 dimensions; override per instance via the constructor
@@ -20,13 +19,15 @@ high_lim: float = 100.0
 
 
 @njit(inline='always')
-def _loglike_native(_params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
+def _loglike_native(_params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
     """Return the constant log likelihood in the native kernel."""
     return 0.0
 
 
-class ConstantRectangularLikelihood(RectangularLikelihood):
+class ConstantRectangularLikelihood(RectangularLikelihood[RectangularInputs]):
     """Identically-zero log likelihood over standard rectangular bounds."""
+
+    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(
         self,
@@ -40,11 +41,11 @@ class ConstantRectangularLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_arr, high_arr)
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Return a constant log likelihood over the whole parameter space."""
-        del params_in
-        return 0.0
+    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    """Return a constant log likelihood over the whole parameter space."""
+    #    del params_in
+    #    return 0.0
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-        """Return the per-class native zero log likelihood."""
-        return _loglike_native
+    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
+    #    """Return the per-class native zero log likelihood."""
+    #    return _loglike_native

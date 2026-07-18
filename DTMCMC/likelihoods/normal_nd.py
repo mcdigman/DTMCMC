@@ -5,7 +5,6 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
-from DTMCMC.numba_backend import NativeLoglikeCall
 
 
 @njit()
@@ -19,8 +18,8 @@ def get_loglike(v: NDArray[np.floating]) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) -> float:
-    """Per-class native log likelihood; the gaussian needs no instance state."""
+def _loglike_native(params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
+    """Per-class native log likelihood."""
     return get_loglike(params_in)
 
 
@@ -29,8 +28,10 @@ def _loglike_native(params_in: NDArray[np.floating], _state: RectangularInputs) 
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-class GaussianLikelihood(RectangularLikelihood):
+class GaussianLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
+
+    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 100, cutoff: int = 5) -> None:
         """Create the class and store any object specific variables"""
@@ -39,13 +40,14 @@ class GaussianLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Get the log likelihood given a set of parameters v"""
-        return get_loglike(params_in)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-        """Return the per-class native log likelihood."""
-        return _loglike_native
+#    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+#        """Get the log likelihood given a set of parameters v"""
+#        return get_loglike(params_in)
+#
+#    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
+#        """Return the per-class native log likelihood."""
+#        return _loglike_native
 
 
 @njit()

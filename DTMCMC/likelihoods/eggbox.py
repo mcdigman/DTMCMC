@@ -1,13 +1,14 @@
 """the eggbox likelihood in n dimensions"""
 
 # see MNRAS 455, 1919-1937 (2016) doi:10.1093/mnras/stv2422 for 5D extension
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
-from DTMCMC.numba_backend import NativeLoglikeCall
 
 tmax: float = 5.0 * np.pi
 
@@ -32,9 +33,9 @@ def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: RectangularInputs) -> float:
-    """Per-class native log likelihood reading n_par from the state bundle."""
-    return get_loglike(params_in, state.n_par)
+def _loglike_native(params_in: NDArray[np.floating], inputs: RectangularInputs) -> float:
+    """Per-class native log likelihood."""
+    return get_loglike(params_in, inputs.n_par)
 
 
 @njit()
@@ -79,22 +80,25 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
 
 
 # @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-class EggboxLikelihood(RectangularLikelihood):
+class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
+
+    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
         super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
         self.epsilons = np.zeros(n_par) + eps_default
 
-    def get_loglike(self, v: NDArray[np.floating]) -> float:
-        """Get the log likelihood given a set of parameters v"""
-        return get_loglike(v, self.n_par)
+    # def get_loglike(self, v: NDArray[np.floating]) -> float:
+    #    """Get the log likelihood given a set of parameters v"""
+    #    return get_loglike(v, self.n_par)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-        """Return the per-class native log likelihood."""
-        return _loglike_native
+    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
+    #    """Return the per-class native log likelihood."""
+    #    return _loglike_native
 
+    @override
     def get_epsilons(self) -> NDArray[np.floating]:
         """Get epsilons for fisher matrix calculation."""
         return self.epsilons

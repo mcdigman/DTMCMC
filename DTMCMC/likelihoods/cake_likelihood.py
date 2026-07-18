@@ -8,7 +8,6 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularLikelihood
-from DTMCMC.numba_backend import NativeLoglikeCall
 
 
 @njit()
@@ -90,7 +89,7 @@ def _get_loglike_2tier(
 
 
 class CakeInputs(NamedTuple):
-    """Runtime state bundle: the rectangular fields plus the tier constants."""
+    """Compile-time fixed inputs: the rectangular fields plus the tier constants."""
 
     n_par: int
     low_lims: NDArray[np.floating]
@@ -101,9 +100,9 @@ class CakeInputs(NamedTuple):
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: CakeInputs) -> float:
-    """Per-class native log likelihood reading the tier constants from the state bundle."""
-    return _get_loglike(params_in, state.tier_lognorms, state.tier_coefs, state.tier_powers)
+def _loglike_native(params_in: NDArray[np.floating], inputs: CakeInputs) -> float:
+    """Per-class native log likelihood."""
+    return _get_loglike(params_in, inputs.tier_lognorms, inputs.tier_coefs, inputs.tier_powers)
 
 
 # n dimensional unit normal motivated by the 100d considerations in
@@ -111,8 +110,10 @@ def _loglike_native(params_in: NDArray[np.floating], state: CakeInputs) -> float
 
 
 # @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-class CakeLikelihood(RectangularLikelihood):
+class CakeLikelihood(RectangularLikelihood[CakeInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
+
+    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(
         self,
@@ -157,20 +158,20 @@ class CakeLikelihood(RectangularLikelihood):
             self.n_par, self.low_lims, self.high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
         )
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Get the log likelihood given a set of parameters v"""
-        # res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
-        res = _get_loglike(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
-        # r2_got: float = 0.0
-        # for itrp in range(params_in.shape[0]):
-        #    r2_got += params_in[itrp] ** 2
+    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    """Get the log likelihood given a set of parameters v"""
+    #    # res = _get_loglike_2tier(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
+    #    res = _get_loglike(params_in, self._tier_lognorms, self._tier_coefs, self._tier_powers)
+    #    # r2_got: float = 0.0
+    #    # for itrp in range(params_in.shape[0]):
+    #    #    r2_got += params_in[itrp] ** 2
 
-        # res: float = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
-        # for itrm in range(1, len(self.amps)):
-        #    res = np.logaddexp(
-        #        res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
-        #    )
-        return res
+    #    # res: float = self._tier_lognorms[0] + self._tier_coefs[0] * r2_got ** self._tier_powers[0]
+    #    # for itrm in range(1, len(self.amps)):
+    #    #    res = np.logaddexp(
+    #    #        res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
+    #    #    )
+    #    return res
 
     @property
     @override
@@ -178,6 +179,6 @@ class CakeLikelihood(RectangularLikelihood):
         """Return the rectangular fields plus the tier constants."""
         return self._inputs
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[CakeInputs]:
-        """Return the per-class native log likelihood."""
-        return _loglike_native
+    # def bind_native_loglike(self) -> NativeLoglikeCall[CakeInputs]:
+    #    """Return the per-class native log likelihood."""
+    #    return _loglike_native

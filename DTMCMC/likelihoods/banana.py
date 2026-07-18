@@ -5,7 +5,6 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
-from DTMCMC.numba_backend import NativeLoglikeCall
 
 # constants
 # limits for first two parameters
@@ -30,13 +29,15 @@ def get_loglike(v: NDArray[np.floating], n_par: int) -> float:
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], state: RectangularInputs) -> float:
-    """Per-class native log likelihood reading n_par from the state bundle."""
-    return get_loglike(params_in, state.n_par)
+def _loglike_native(params_in: NDArray[np.floating], inputs: RectangularInputs) -> float:
+    """Per-class native log likelihood."""
+    return get_loglike(params_in, inputs.n_par)
 
 
-class BananaLikelihood(RectangularLikelihood):
+class BananaLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
+
+    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 20) -> None:
         """Create the class and store any object specific variables"""
@@ -50,10 +51,10 @@ class BananaLikelihood(RectangularLikelihood):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-        """Get the log likelihood given a set of parameters v"""
-        return get_loglike(params_in, self.n_par)
+    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+    #    """Get the log likelihood given a set of parameters v"""
+    #    return get_loglike(params_in, self.n_par)
 
-    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-        """Return the per-class native log likelihood."""
-        return _loglike_native
+    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
+    #    """Return the per-class native log likelihood."""
+    #    return _loglike_native
