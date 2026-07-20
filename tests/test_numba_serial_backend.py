@@ -17,7 +17,7 @@ from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.exchange_manager import (
     NULL_TARGETS,
     ExchangeManager,
-    ExchangeNativeState,
+    ExchangeNativeInputs,
     do_ptmcmc_exchange,
 )
 from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
@@ -427,7 +427,7 @@ def _every_third_exchange_schedule(itrb: int) -> bool:
 
 
 @njit(inline='always')
-def _every_third_schedule_native(itrb: int, _state: ExchangeNativeState) -> bool:
+def _every_third_schedule_native(itrb: int, _state: ExchangeNativeInputs) -> bool:
     return _every_third_exchange_schedule(itrb)
 
 
@@ -441,7 +441,7 @@ def _every_third_exchange_native(
     exchange_tracker: NDArray[np.int64],
     esd_exchange: NDArray[np.floating],
     chain_track: NDArray[np.int64],
-    state: ExchangeNativeState,
+    state: ExchangeNativeInputs,
 ) -> None:
     do_ptmcmc_exchange(
         itrb - 1,
@@ -483,11 +483,11 @@ class _EveryThirdExchange(ExchangeManager):
             esd_exchange,
             chain_track,
             NULL_TARGETS,
-            self.track_full_exchanges,
+            self.inputs.track_full_exchanges,
         )
 
     @override
-    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeState]:
+    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
         return NativeExchangeFunctions(
             is_exchange_step=_every_third_schedule_native, exchange=_every_third_exchange_native
         )
@@ -888,7 +888,7 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
         DEJumpManager.bind_native_post_step,
         DEJumpManager.native_state,
         ExchangeManager.bind_native,
-        ExchangeManager.native_state,
+        ExchangeManager.inputs.fget,
     ],
 )
 def test_native_binding_type_hints_resolve_at_runtime(hook: Any) -> None:

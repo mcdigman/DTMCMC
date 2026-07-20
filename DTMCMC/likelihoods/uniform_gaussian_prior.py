@@ -76,7 +76,7 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
             msg = 'prior_std must be positive'
             raise ValueError(msg)
         super().__init__(n_par, np.full(n_par, -np.inf), np.full(n_par, np.inf))
-        
+
         prior_mean_arr = np.full(n_par, prior_mean)
         prior_std_arr = np.full(n_par, prior_std)
         prior_mean_arr.setflags(write=False)
