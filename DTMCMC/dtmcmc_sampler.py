@@ -68,7 +68,7 @@ def store_sample_helper(
 # TODO add any necessary handlers for block length
 
 
-class DTMCMCSampler[LikelihoodType: AbstractLikelihood]:
+class DTMCMCSampler[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """object to manage the overall chain evolution"""
 
     def __init__(
@@ -140,7 +140,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood]:
         self.zero_loglike: bool = zero_loglike
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
-        self._native_serial_backend = NativeSerialBackend(kernel_backend)
+        self._native_serial_backend: NativeSerialBackend[LikelihoodType] = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: str = 'python'
         self.tracker_manager: TrackerManager[LikelihoodType]
         self.proposal_manager: AbstractProposalManager[LikelihoodType]

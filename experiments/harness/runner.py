@@ -229,7 +229,7 @@ def build_ladder[LikelihoodType: AbstractLikelihood](spec: RunSpec[LikelihoodTyp
     return builder(spec)
 
 
-class HarnessSampler[LikelihoodType: AbstractLikelihood](DTMCMCSampler[LikelihoodType]):
+class HarnessSampler[LikelihoodType: AbstractLikelihood = AbstractLikelihood](DTMCMCSampler[LikelihoodType]):
     """DTMCMCSampler wired to the harness through the extension API.
 
     The subclass carries the run-level context its hooks need (spec,

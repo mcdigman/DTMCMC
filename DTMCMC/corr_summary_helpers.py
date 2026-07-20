@@ -247,7 +247,7 @@ def summarize_vars[LikelihoodType: AbstractLikelihood](
     return obs_means, obs_vars
 
 
-class CorrelationSummary[LikelihoodType: AbstractLikelihood]:
+class CorrelationSummary[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """class to store various attributes memorializing the correlations of a chain across multiple runs"""
 
     def __init__(self, do_corr_summary: bool = True, do_autocorr: bool = True, do_cross: bool = True) -> None:

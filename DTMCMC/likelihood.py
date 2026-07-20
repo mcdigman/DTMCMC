@@ -27,7 +27,9 @@ type CorrectBoundsFn = Callable[[NDArray[np.floating]], NDArray[np.floating]]
 # they mirror the hot-path call (a 1D C-contiguous float64 parameter
 # vector) but do not restrict the handle: the compiled dispatcher still
 # lazily specializes for any other argument types it is later called with
-_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (nb_types.Array(nb_types.float64, 1, 'C'),)
+_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (
+    nb_types.Array(nb_types.float64, 1, 'C'),  # type: ignore[no-untyped-call]
+)
 _NO_PROBE_ARGS: tuple[nb_types.Type, ...] = ()
 
 
@@ -129,7 +131,9 @@ def compile_handle[F: Callable[..., object]](fn: F, probe_args: tuple[nb_types.T
     got = _COMPILED_MEMO.get(fn)
     if got is not None:
         return cast('F', got)
+    # is_jitted narrows fn below, so keep the unnarrowed F-typed alias;
     # numba's Dispatcher is untyped generically, so the boundary is Any-typed
+    plain = fn
     dispatcher: Any = fn if is_jitted(fn) else njit(inline='always')(fn)
     try:
         dispatcher.compile(probe_args)
@@ -139,8 +143,8 @@ def compile_handle[F: Callable[..., object]](fn: F, probe_args: tuple[nb_types.T
             RuntimeWarning,
             stacklevel=2,
         )
-        return fn
-    _COMPILED_MEMO[fn] = dispatcher
+        return plain
+    _COMPILED_MEMO[plain] = dispatcher
     return cast('F', dispatcher)
 
 

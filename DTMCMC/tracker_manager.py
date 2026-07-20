@@ -86,7 +86,7 @@ def process_chain_cycles(
 # TODO clean up tracker reporting
 
 
-class TrackerManager[LikelihoodType: AbstractLikelihood]:
+class TrackerManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """track various things about chains like acceptance rates and cycle times."""
 
     def __init__(

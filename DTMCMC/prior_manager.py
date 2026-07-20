@@ -45,7 +45,7 @@ def _make_prior_native(prior_draw: PriorDrawFn, prior_factor: PriorFactorFn) -> 
     return prior_native
 
 
-class PriorFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class PriorFullJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     declared_internal_evals = 0
 
     def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
@@ -89,7 +89,7 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class PriorManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
@@ -98,7 +98,7 @@ class PriorManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodTyp
 
         jumps: list[AbstractJump[LikelihoodType]] = [PriorFullJump(self)]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
     @override
     def set_jump_weights(self) -> None:

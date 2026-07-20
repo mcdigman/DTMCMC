@@ -26,7 +26,7 @@ def _blank_jump_native(
     return sample_point.copy(), 0.0, True
 
 
-class BlankJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class BlankJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Template jump for future extensions"""
 
     declared_internal_evals = 0
@@ -64,7 +64,7 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """template manager for an extra jump type,
     subclass of DTMCMC.jump_manager.JumpManager
     """
@@ -75,7 +75,7 @@ class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[Like
 
         jumps: list[AbstractJump[LikelihoodType]] = [BlankJump(self)]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
     @override
     def set_jump_weights(self) -> None:

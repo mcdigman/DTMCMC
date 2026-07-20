@@ -324,7 +324,7 @@ def _custom_jump_helper(sample_point: NDArray[np.floating], scale: float) -> tup
     return sample_point + scale * np.random.normal(0.0, 1.0, sample_point.size), 0.0, True
 
 
-class _CustomJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class _CustomJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """External-style jump whose type is unknown to numba_backend.py.
 
     Binds a per-instance closure rather than a per-class function: allowed
@@ -353,7 +353,7 @@ class _CustomJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodTyp
         return _custom_jump_helper(sample_point, self.manager.scale)
 
 
-class _CustomManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class _CustomManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """External-style manager bound without backend source changes.
 
     Its post_step_update is the inherited base no-op, so no explicit native
@@ -373,7 +373,7 @@ class _CustomManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodT
         del config_in
 
 
-class _PythonOnlyJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class _PythonOnlyJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     print_name = 'Python only'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
@@ -381,7 +381,7 @@ class _PythonOnlyJump[LikelihoodType: AbstractLikelihood](AbstractJump[Likelihoo
         return sample_point.copy(), 0.0, True
 
 
-class _PythonOnlyManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class _PythonOnlyManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
         super().__init__(T_ladder, like_obj, [_PythonOnlyJump()])
 
@@ -502,7 +502,7 @@ def _broken_native_jump_impl(sample_point: NDArray[np.floating]) -> float:
     return sample_point.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
 
 
-class _BrokenNativeJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class _BrokenNativeJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Jitted native binding that only fails once the kernel compiles it."""
 
     print_name = 'Broken native'
@@ -522,7 +522,7 @@ class _BrokenNativeJump[LikelihoodType: AbstractLikelihood](AbstractJump[Likelih
         return sample_point.copy(), 0.0, True
 
 
-class _BrokenNativeJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class _BrokenNativeJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
         super().__init__(T_ladder, like_obj, [_BrokenNativeJump()])
 

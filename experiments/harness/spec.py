@@ -20,6 +20,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Self
 
 import DTMCMC.exchange_manager as em
 from DTMCMC.likelihood import AbstractLikelihood
@@ -271,7 +272,7 @@ def dumps_toml(data: dict[str, object]) -> str:
 
 
 @dataclass(frozen=True)
-class RunSpec[LikelihoodType: AbstractLikelihood]:
+class RunSpec[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """Full description of a single sampler run.
 
     Parameters
@@ -466,7 +467,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood]:
         return -(-self.n_steps // self.store_thin)
 
     @classmethod
-    def from_dict(cls, data: dict[str, object]) -> RunSpec[LikelihoodType]:
+    def from_dict(cls, data: dict[str, object]) -> Self:
         """Build and validate a RunSpec from parsed TOML data."""
         likelihood = _require_table(data, 'likelihood')
         likelihood_name = _require_str(likelihood, 'name', 'likelihood')
@@ -538,7 +539,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood]:
         )
 
     @classmethod
-    def from_toml(cls, path: str | Path) -> RunSpec[LikelihoodType]:
+    def from_toml(cls, path: str | Path) -> Self:
         """Read and validate a RunSpec from a TOML file."""
         with Path(path).open('rb') as spec_file:
             data = tomllib.load(spec_file)
@@ -578,9 +579,9 @@ class RunSpec[LikelihoodType: AbstractLikelihood]:
         """Get a copy of this spec with a different run seed."""
         data = self.to_dict()
         data['seed'] = seed
-        return RunSpec.from_dict(data)
+        return type(self).from_dict(data)
 
-    def with_zero_loglike(self, enabled: bool) -> RunSpec[LikelihoodType]:
+    def with_zero_loglike(self, enabled: bool) -> Self:
         """Get a copy of this spec with zero-log-likelihood mode set explicitly."""
         return replace(self, zero_loglike=enabled)
 

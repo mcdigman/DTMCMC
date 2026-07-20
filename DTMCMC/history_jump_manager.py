@@ -41,7 +41,7 @@ class HistoryStrategyParameters:
         config_h['history_jump_weight'] = str(self.history_jump_weight)
 
 
-class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """manager for a jump that proposes jumps to historical states
     at different temperatures
     """
@@ -64,7 +64,7 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[L
 
         jumps: list[AbstractJump[LikelihoodType]] = [LadderHistoryJump(self)]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
     @override
     def set_jump_weights(self) -> None:
@@ -83,7 +83,7 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[L
         self.strategy_params.record_config(config_in)
 
 
-class LadderHistoryJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class LadderHistoryJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Get a proposal from a random draw from the recorded historical points"""
 
     # each dispatch evaluates the likelihood once at the current point

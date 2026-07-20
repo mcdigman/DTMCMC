@@ -137,7 +137,7 @@ def _de_post_step_native(state: DENativeState, samples: NDArray[np.floating]) ->
     state.counters[1] = itrde_count
 
 
-class DEStandardFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class DEStandardFullJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """apply a jump with standard random size in all dimensions
     null proposals are marked as failures
     """
@@ -156,7 +156,9 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[Likeli
         return _de_standard_full_native(sample_point, itrt, self.manager.native_state())
 
 
-class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](
+    AbstractJump[LikelihoodType]
+):
     """apply a jump with standard random size in a random subspace
     null proposals are marked as failures
     """
@@ -175,7 +177,7 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJ
         return _de_standard_subspace_native(sample_point, itrt, self.manager.native_state())
 
 
-class DEBigFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class DEBigFullJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """apply the full length differential evolution jump in all dimensions
     null proposals are marked as failures
     """
@@ -194,7 +196,7 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodT
         return _de_big_full_native(sample_point, itrt, self.manager.native_state())
 
 
-class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """apply the full length differential evolution jump in a random subspace
     null proposals are marked as failures
     """
@@ -268,7 +270,7 @@ class DEStrategyParameters:
         config_de['de_thin'] = str(self.de_thin)
 
 
-class DEJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class DEJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The ring buffer and the write/thinning counter array are allocated once
@@ -291,7 +293,7 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodTy
             DEBigRandomSubspaceJump(self),
         ]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
         self.de_buffer = np.zeros((self.de_size, self.n_chain, self.n_par))
         initialize_de_helper(self.de_buffer, self.de_size, self.n_chain, self.like_obj)

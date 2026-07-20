@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractJump[LikelihoodType: AbstractLikelihood](Protocol):
+class AbstractJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](Protocol):
     """An object that performs a single proposal from its __call__ method.
 
     A jump may additionally define ``bind_native()`` returning a
@@ -49,7 +49,7 @@ class AbstractJump[LikelihoodType: AbstractLikelihood](Protocol):
 
 
 @runtime_checkable
-class AbstractJumpManager[LikelihoodType: AbstractLikelihood](Protocol):
+class AbstractJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](Protocol):
     """Structural component-manager interface used by aggregate dispatchers.
 
     A manager whose ``post_step_update`` does real work may opt into native
@@ -149,7 +149,7 @@ def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     return choose
 
 
-class JumpManager[LikelihoodType: AbstractLikelihood](AbstractJumpManager[LikelihoodType]):
+class JumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJumpManager[LikelihoodType]):
     """Extensions of this class dispatch MCMC proposals."""
 
     # deterministic likelihood-evaluation cost of constructing the manager;

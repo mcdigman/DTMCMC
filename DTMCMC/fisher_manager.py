@@ -108,7 +108,7 @@ def _fisher_full_native(
     return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
 
 
-class SigmaFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class SigmaFullJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Standard Deviation Jump in Full Dimensions"""
 
     declared_internal_evals = 0
@@ -131,7 +131,7 @@ class SigmaFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodT
         return _sigma_full_native(sample_point, itrt, self.manager.native_state())
 
 
-class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Standard deviation jump in random subspaces"""
 
     declared_internal_evals = 0
@@ -351,7 +351,7 @@ def set_scales(
     return sigma_scales, gamma_mults
 
 
-class FisherJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+class FisherJumpManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](JumpManager[LikelihoodType]):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The fisher arrays are allocated once and refreshed in place; the native
@@ -381,7 +381,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[Likeliho
             SigmaRandomSubspaceJump(self),
         ]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
         self.sample_set = sample_set
         self.sigma_diags: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
@@ -511,7 +511,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[Likeliho
         self.strategy_params.record_config(config_in)
 
 
-class FisherFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+class FisherFullJump[LikelihoodType: AbstractLikelihood = AbstractLikelihood](AbstractJump[LikelihoodType]):
     declared_internal_evals = 0
 
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:

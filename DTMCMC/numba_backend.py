@@ -126,6 +126,38 @@ class NativeExchangeFunctions:
     exchange: NativeExchangeCall
 
 
+class _BindsNativeJump(Protocol):
+    """Optional-hook view of a jump verified to define ``bind_native``."""
+
+    def bind_native(self) -> NativeJumpCall[Any]:
+        """Return the jump's bound native function."""
+        ...
+
+
+class _BindsNativePostStep(Protocol):
+    """Optional-hook view of a manager verified to define ``bind_native_post_step``."""
+
+    def bind_native_post_step(self) -> NativePostStepCall[Any]:
+        """Return the manager's bound per-step update."""
+        ...
+
+
+class _HasNativeState(Protocol):
+    """Optional-hook view of a manager verified to define ``native_state``."""
+
+    def native_state(self) -> object:
+        """Return the manager's runtime state bundle."""
+        ...
+
+
+class _BindsNativeExchange(Protocol):
+    """Optional-hook view of an exchange manager verified to define ``bind_native``."""
+
+    def bind_native(self) -> NativeExchangeFunctions:
+        """Return the exchange manager's bound schedule and executor."""
+        ...
+
+
 def _defining_class(cls: type, name: str) -> type | None:
     """Return the most-derived class in the MRO that defines ``name``."""
     for klass in cls.__mro__:
@@ -616,7 +648,7 @@ def _structural_key(
     )
 
 
-class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
+class NativeSerialBackend[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """Bind, cache, and execute the native serial block kernel for one sampler."""
 
     def __init__(self, mode: str) -> None:
@@ -645,12 +677,14 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
         post_steps: list[NativePostStepCall[Any] | None] = []
         manager_has_state: list[bool] = []
         for manager in proposal_manager.managers:
-            per_manager_calls.append(tuple(jump.bind_native() for jump in manager.jumps))
+            # the binding inventory has already verified the optional hooks
+            # exist wherever they are used, so the casts only restate that
+            per_manager_calls.append(tuple(cast('_BindsNativeJump', jump).bind_native() for jump in manager.jumps))
             manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
             has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
-            post_steps.append(manager.bind_native_post_step() if has_post else None)
+            post_steps.append(cast('_BindsNativePostStep', manager).bind_native_post_step() if has_post else None)
         assert sum(len(calls) for calls in per_manager_calls) == proposal_manager.jump_probs.shape[1]
-        exchange_natives = proposal_manager.exchange_manager.bind_native()
+        exchange_natives = cast('_BindsNativeExchange', proposal_manager.exchange_manager).bind_native()
 
         declared: list[int | None] = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
         self._jump_internal_known = all(value is not None for value in declared)
@@ -773,7 +807,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
             # runtime state bundles are re-read at every block entry, so
             # configuration changes between blocks reach the kernel
             manager_states = tuple(
-                manager.native_state() if has_state else None
+                cast('_HasNativeState', manager).native_state() if has_state else None
                 for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
             )
             try:

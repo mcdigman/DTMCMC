@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractProposalManager[LikelihoodType: AbstractLikelihood](AbstractJumpManager[LikelihoodType], Protocol):
+class AbstractProposalManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](
+    AbstractJumpManager[LikelihoodType], Protocol
+):
     """Structural aggregate proposal interface required by sampler kernels."""
 
     @property
@@ -36,7 +38,7 @@ class AbstractProposalManager[LikelihoodType: AbstractLikelihood](AbstractJumpMa
         ...
 
 
-class ProposalManager[LikelihoodType: AbstractLikelihood](
+class ProposalManager[LikelihoodType: AbstractLikelihood = AbstractLikelihood](
     JumpManager[LikelihoodType], AbstractProposalManager[LikelihoodType]
 ):
     """Manage generation of proposals, handles all dispatching of jumps."""
@@ -91,9 +93,6 @@ class ProposalManager[LikelihoodType: AbstractLikelihood](
             # If there is more than one manager we will need to adjust the jump indexes when dispatching
             for itrm in range(1, self._n_managers):
                 self._choose_idx_modifiers[itrm:] += self._n_jumps_managers[itrm - 1]
-
-        print(self._jumps)
-        print(self._choose_idx_modifiers)
 
         super().__init__(T_ladder, like_obj, self._jumps)
 

@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class EvalAccounting[LikelihoodType: AbstractLikelihood]:
+class EvalAccounting[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """Likelihood-evaluation totals by source phase.
 
     ``complete`` is False when any component could not declare its cost
@@ -49,7 +49,7 @@ class EvalAccounting[LikelihoodType: AbstractLikelihood]:
         return self.initialization + self.proposal_targets + self.proposal_internal + self.post_block
 
 
-class LoglikeCallSpy[LikelihoodType: AbstractLikelihood]:
+class LoglikeCallSpy[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """Independently count actual ``get_loglike`` calls on one likelihood.
 
     Context manager that wraps the instance's ``get_loglike`` with a

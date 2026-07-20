@@ -116,7 +116,7 @@ class LadderUpdateRecord:
 
 
 @dataclass
-class AdaptiveLadderController[LikelihoodType: AbstractLikelihood]:
+class AdaptiveLadderController[LikelihoodType: AbstractLikelihood = AbstractLikelihood]:
     """Annealing-style adaptive ladder controller around DTMCMCSampler.
 
     Parameters (interface fixed by the plan)
