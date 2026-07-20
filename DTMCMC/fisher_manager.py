@@ -128,14 +128,7 @@ class SigmaFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodT
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump"""
-        return sigma_subspace_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.n_par,
-            self.manager.strategy_params.fisher_subspace_frac,
-            self.manager.sigma_scales,
-            True,
-        )
+        return _sigma_full_native(sample_point, itrt, self.manager.native_state())
 
 
 class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
@@ -153,14 +146,7 @@ class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[L
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a standard deviation jump in random subspaces"""
-        return sigma_subspace_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.n_par,
-            self.manager.strategy_params.fisher_subspace_frac,
-            self.manager.sigma_scales,
-            False,
-        )
+        return _sigma_subspace_native(sample_point, itrt, self.manager.native_state())
 
 
 @dataclass(init=False)
@@ -538,9 +524,4 @@ class FisherFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[Likelihood
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Apply a fisher matrix jump"""
-        return fisher_full_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.chol_fishers,
-            self.manager.gamma_mults,
-        )
+        return _fisher_full_native(sample_point, itrt, self.manager.native_state())

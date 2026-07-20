@@ -41,8 +41,7 @@ class BlankJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Call the jump"""
-        del itrt
-        return sample_point.copy(), 0.0, True
+        return _blank_jump_native(sample_point, itrt, None)
 
 
 @dataclass(init=False)

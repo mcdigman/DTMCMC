@@ -153,7 +153,7 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[Likeli
         return _de_standard_full_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
+        return _de_standard_full_native(sample_point, itrt, self.manager.native_state())
 
 
 class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
@@ -172,7 +172,7 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJ
         return _de_standard_subspace_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
+        return _de_standard_subspace_native(sample_point, itrt, self.manager.native_state())
 
 
 class DEBigFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
@@ -191,7 +191,7 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodT
         return _de_big_full_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
+        return _de_big_full_native(sample_point, itrt, self.manager.native_state())
 
 
 class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
@@ -210,7 +210,7 @@ class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood](AbstractJump[L
         return _de_big_subspace_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
+        return _de_big_subspace_native(sample_point, itrt, self.manager.native_state())
 
 
 def initialize_de_helper(
