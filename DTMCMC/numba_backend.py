@@ -24,7 +24,7 @@ owning manager's runtime state; likelihood handles have the
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 from warnings import warn
 
 import numpy as np
@@ -33,7 +33,7 @@ from numba.core.errors import NumbaError
 from numba.extending import is_jitted
 from numpy.typing import NDArray
 
-from DTMCMC.jump_manager import JumpManager, choose_prob_helper
+from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager, JumpManager, choose_prob_helper
 from DTMCMC.likelihood import (
     LIKELIHOOD_HANDLE_ROLES,
     AbstractLikelihood,
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from DTMCMC.eval_accounting import EvalAccounting
+    from DTMCMC.exchange_manager import AbstractExchangeManager
     from DTMCMC.proposal_manager import AbstractProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
     from DTMCMC.tracker_manager import TrackerManager
@@ -244,6 +245,58 @@ def _binding_inventory[LikelihoodType: AbstractLikelihood](
     return problems, explicit
 
 
+def _declared_jump_internal_evals[LikelihoodType: AbstractLikelihood](
+    proposal_manager: AbstractProposalManager[LikelihoodType],
+) -> tuple[NDArray[np.int64], bool]:
+    """Collect the per-jump declared internal evaluation costs in flattened order.
+
+    Returns the cost array and whether every jump declared one; a missing
+    declaration contributes 0 to the array but marks the accounting
+    incomplete — an unknown cost is never silently treated as zero.
+    """
+    declared = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
+    known = all(value is not None for value in declared)
+    return np.array([0 if value is None else value for value in declared], dtype=np.int64), known
+
+
+def _python_jump_call(jump: AbstractJump[Any]) -> NativeJumpCall[Any]:
+    """Adapt a jump's Python ``__call__`` to the bound-jump calling convention."""
+
+    def jump_call(
+        sample_point: NDArray[np.floating], itrt: int, _state: object
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        return jump(sample_point, itrt)
+
+    return jump_call
+
+
+def _python_post_step(manager: AbstractJumpManager[Any]) -> NativePostStepCall[Any]:
+    """Adapt a manager's ``post_step_update`` to the bound-post-step convention."""
+
+    def post_step(_state: object, samples_row: NDArray[np.floating]) -> None:
+        manager.post_step_update(samples_row)
+
+    return post_step
+
+
+def _python_exchange(exchange_manager: AbstractExchangeManager, T_ladder: TemperatureLadder) -> NativeExchangeFunctions:
+    """Adapt an exchange manager's Python methods to the bound convention."""
+
+    def exchange(
+        itrb: int,
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        _n_chain: int,
+        _betas: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
+    ) -> None:
+        exchange_manager.do_ptmcmc_exchange(itrb, samples, logLs, T_ladder, exchange_tracker, esd_exchange, chain_track)
+
+    return NativeExchangeFunctions(is_exchange_step=exchange_manager.is_exchange_step, exchange=exchange)
+
+
 def _check_flattening[LikelihoodType: AbstractLikelihood](
     proposal_manager: AbstractProposalManager[LikelihoodType],
 ) -> None:
@@ -281,7 +334,20 @@ class _ManagerDispatchCall(Protocol):
         ...
 
 
-def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any], ...]) -> _LocalDispatchCall:
+class _WrapCall(Protocol):
+    """Decorator applied to every assembled chain link (njit or identity)."""
+
+    def __call__[F: Callable[..., object]](self, fn: F, /) -> F:
+        """Return the (possibly compiled) link."""
+        ...
+
+
+def _no_wrap[F: Callable[..., object]](fn: F) -> F:
+    """Identity link decorator for the interpreted assembly."""
+    return fn
+
+
+def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any], ...], wrap: _WrapCall) -> _LocalDispatchCall:
     """Dispatch a manager-local jump index over one manager's bound jumps.
 
     The recursion happens in Python at assembly time; with
@@ -293,16 +359,16 @@ def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any], ...]) -> _Local
     head = jump_calls[0]
     if len(jump_calls) == 1:
 
-        @njit(inline='always')
+        @wrap
         def dispatch_leaf(
             _idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object
         ) -> tuple[NDArray[np.floating], float, bool]:
             return head(sample_point, itrt, state)
 
         return dispatch_leaf
-    rest = _build_local_dispatch(jump_calls[1:])
+    rest = _build_local_dispatch(jump_calls[1:], wrap)
 
-    @njit(inline='always')
+    @wrap
     def dispatch(
         idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object
     ) -> tuple[NDArray[np.floating], float, bool]:
@@ -315,6 +381,7 @@ def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any], ...]) -> _Local
 
 def _build_manager_dispatch(
     per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...],
+    wrap: _WrapCall,
 ) -> _ManagerDispatchCall:
     """Dispatch a flattened jump index over the managers' bound jumps.
 
@@ -322,11 +389,11 @@ def _build_manager_dispatch(
     indexing (``states[0]`` / ``states[1:]``) so each manager's jumps see
     exactly their own manager's runtime native state.
     """
-    head = _build_local_dispatch(per_manager_calls[0])
+    head = _build_local_dispatch(per_manager_calls[0], wrap)
     n_head = len(per_manager_calls[0])
     if len(per_manager_calls) == 1:
 
-        @njit(inline='always')
+        @wrap
         def dispatch_last(
             idx_jump: int,
             sample_point: NDArray[np.floating],
@@ -336,9 +403,9 @@ def _build_manager_dispatch(
             return head(idx_jump, sample_point, itrt, states[0])
 
         return dispatch_last
-    rest = _build_manager_dispatch(per_manager_calls[1:])
+    rest = _build_manager_dispatch(per_manager_calls[1:], wrap)
 
-    @njit(inline='always')
+    @wrap
     def dispatch(
         idx_jump: int,
         sample_point: NDArray[np.floating],
@@ -358,7 +425,9 @@ def _post_step_noop(_states: tuple[object, ...], _samples: NDArray[np.floating])
     return
 
 
-def _build_post_chain(post_steps: tuple[NativePostStepCall[Any] | None, ...]) -> NativePostStepCall[Any]:
+def _build_post_chain(
+    post_steps: tuple[NativePostStepCall[Any] | None, ...], wrap: _WrapCall
+) -> NativePostStepCall[Any]:
     """Chain the managers' bound per-step updates in manager order.
 
     ``post_steps`` has one entry per manager (None when idle) so the chain
@@ -367,27 +436,27 @@ def _build_post_chain(post_steps: tuple[NativePostStepCall[Any] | None, ...]) ->
     if not post_steps:
         return _post_step_noop
     head = post_steps[0]
-    rest = _build_post_chain(post_steps[1:]) if len(post_steps) > 1 else None
+    rest = _build_post_chain(post_steps[1:], wrap) if len(post_steps) > 1 else None
     if head is None:
         if rest is None:
             return _post_step_noop
         rest_after_skip = rest
 
-        @njit(inline='always')
+        @wrap
         def post_skip(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
             rest_after_skip(states[1:], samples_row)
 
         return post_skip
     if rest is None:
 
-        @njit(inline='always')
+        @wrap
         def post_leaf(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
             head(states[0], samples_row)
 
         return post_leaf
     rest_fn = rest
 
-    @njit(inline='always')
+    @wrap
     def post_all(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
         head(states[0], samples_row)
         rest_fn(states[1:], samples_row)
@@ -402,23 +471,30 @@ def make_serial_kernel(
     prior_factor: PriorFactorFn,
     validate_bounds: ValidateBoundsFn,
     exchange_natives: NativeExchangeFunctions,
+    *,
+    jit: bool,
 ) -> Callable[..., tuple[int, int]]:
-    """Assemble the jitted serial block kernel for one bound graph structure.
+    """Assemble the serial block kernel for one bound graph structure.
 
-    The closed-over handles carry only construction-frozen constants;
-    every mutable value arrives through the runtime state bundles, so the
-    kernel is reusable across all samplers whose components resolve to
-    the same handle objects. Returns the counts of target likelihood
-    evaluations performed and of declared jump-internal evaluations
-    incurred in the block.
+    The single control flow serves both backends: with ``jit`` the chain
+    links and the block loop compile to nopython; without it the same
+    closures run interpreted over the same bound functions (so the two
+    paths call the same jitted primitives in the same order and stay
+    bit-exact). The closed-over handles carry only construction-frozen
+    constants; every mutable value arrives through the runtime state
+    bundles. Returns the counts of target likelihood evaluations
+    performed and of declared jump-internal evaluations incurred in the
+    block.
     """
-    dispatch = _build_manager_dispatch(per_manager_calls)
-    post_all = _build_post_chain(post_steps)
+    wrap: _WrapCall = cast('_WrapCall', njit(inline='always')) if jit else _no_wrap
+    dispatch = _build_manager_dispatch(per_manager_calls, wrap)
+    post_all = _build_post_chain(post_steps, wrap)
     is_exchange_step = exchange_natives.is_exchange_step
     do_exchange = exchange_natives.exchange
+    kernel_wrap: _WrapCall = cast('_WrapCall', njit()) if jit else _no_wrap
 
-    @njit()
-    def advance_block_numba_serial(
+    @kernel_wrap
+    def advance_block_serial(
         samples: NDArray[np.floating],
         logLs: NDArray[np.floating],
         chain_track: NDArray[np.int64],
@@ -474,7 +550,7 @@ def make_serial_kernel(
             post_all(manager_states, samples[itrb])
         return n_target_evals, n_internal_evals
 
-    return advance_block_numba_serial
+    return advance_block_serial
 
 
 @dataclass(frozen=True)
@@ -585,7 +661,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
         cached = _PROGRAM_CACHE.get(key)
         if cached is not None:
             return cached
-        kernel = make_serial_kernel(tuple(per_manager_calls), tuple(post_steps), *likelihood_handles, exchange_natives)
+        kernel = make_serial_kernel(
+            tuple(per_manager_calls), tuple(post_steps), *likelihood_handles, exchange_natives, jit=True
+        )
         program = NativeSerialProgram(
             kernel=kernel,
             likelihood_handles=likelihood_handles,
@@ -628,7 +706,51 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
             )
             self.warned_identities.add(identity)
 
-    def try_advance_block(
+    def _python_block_kernel(
+        self,
+        proposal_manager: AbstractProposalManager[LikelihoodType],
+        like_obj: LikelihoodType,
+        T_ladder: TemperatureLadder,
+    ) -> Callable[..., tuple[int, int]]:
+        """Assemble the interpreted block kernel over the Python-facing bindings.
+
+        Rebuilt at every block: the closures are cheap and re-capture the
+        current ladder and graph objects, so between-block reconfiguration
+        needs no invalidation. The interpreted assembly binds the
+        Python-facing surface — jump ``__call__`` in one aggregate group,
+        manager ``post_step_update``, the exchange methods, and the
+        likelihood methods — so wrappers, spies, and Python-only overrides
+        all behave exactly as when called directly; the methods delegate to
+        the same compiled primitives the native kernel binds.
+        """
+        jump_calls = tuple(_python_jump_call(jump) for jump in proposal_manager.jumps)
+        assert len(jump_calls) == proposal_manager.jump_probs.shape[1]
+        post_steps = tuple(_python_post_step(manager) for manager in proposal_manager.managers)
+        exchange_natives = _python_exchange(proposal_manager.exchange_manager, T_ladder)
+        return make_serial_kernel(
+            (jump_calls,),
+            post_steps,
+            like_obj.get_loglike,
+            like_obj.prior_factor,
+            like_obj.validate_bounds,
+            exchange_natives,
+            jit=False,
+        )
+
+    @staticmethod
+    def _account(
+        eval_accounting: EvalAccounting[LikelihoodType],
+        n_target_evals: int,
+        n_internal_evals: int,
+        internal_known: bool,
+    ) -> None:
+        """Fold one block's evaluation counts into the sampler accounting."""
+        eval_accounting.proposal_targets += n_target_evals
+        eval_accounting.proposal_internal += n_internal_evals
+        if not internal_known:
+            eval_accounting.complete = False
+
+    def advance_block(
         self,
         T_ladder: TemperatureLadder,
         logLs: NDArray[np.floating],
@@ -639,52 +761,69 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
         tracker_manager: TrackerManager[LikelihoodType],
         eval_accounting: EvalAccounting[LikelihoodType],
         zero_loglike: bool,
-    ) -> bool:
-        """Run a native block when the graph is bindable, otherwise return False."""
-        if self.mode == 'python':
-            return False
-        self._resolve(proposal_manager, like_obj)
-        if self.program is None:
-            return False
+    ) -> str:
+        """Advance one block, compiled when the graph binds, interpreted otherwise.
 
-        program = self.program
-        # runtime state bundles are re-read at every block entry, so
-        # configuration changes between blocks behave like the Python path
-        manager_states = tuple(
-            manager.native_state() if has_state else None
-            for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
+        Returns the name of the path used ('numba' or 'python').
+        """
+        if self.mode != 'python':
+            self._resolve(proposal_manager, like_obj)
+        if self.program is not None and self.mode != 'python':
+            program = self.program
+            # runtime state bundles are re-read at every block entry, so
+            # configuration changes between blocks reach the kernel
+            manager_states = tuple(
+                manager.native_state() if has_state else None
+                for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
+            )
+            try:
+                n_target_evals, n_internal_evals = program.kernel(
+                    samples,
+                    logLs,
+                    chain_track,
+                    T_ladder.betas,
+                    proposal_manager.jump_probs,
+                    tracker_manager.exchange_tracker,
+                    tracker_manager.esd_exchange,
+                    tracker_manager.accept_record,
+                    tracker_manager.esd_record,
+                    manager_states,
+                    self._jump_internal_evals,
+                    zero_loglike,
+                )
+            except NumbaError as exc:
+                # NumbaError here means the kernel failed to compile, which
+                # happens before any execution, so the block arrays are
+                # untouched and the interpreted path below can run the block
+                # from samples[0]
+                if self.mode == 'numba':
+                    msg = 'fully native-bindable graph failed Numba compilation or execution'
+                    raise NativeBackendCompilationError(msg) from exc
+                self.program = None
+                warn(
+                    f"kernel_backend='auto' native kernel failed to compile and will use Python: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                self._account(eval_accounting, n_target_evals, n_internal_evals, self._jump_internal_known)
+                return 'numba'
+
+        jump_internal_evals, internal_known = _declared_jump_internal_evals(proposal_manager)
+        kernel = self._python_block_kernel(proposal_manager, like_obj, T_ladder)
+        n_target_evals, n_internal_evals = kernel(
+            samples,
+            logLs,
+            chain_track,
+            T_ladder.betas,
+            proposal_manager.jump_probs,
+            tracker_manager.exchange_tracker,
+            tracker_manager.esd_exchange,
+            tracker_manager.accept_record,
+            tracker_manager.esd_record,
+            tuple(None for _ in proposal_manager.managers),
+            jump_internal_evals,
+            zero_loglike,
         )
-        try:
-            n_target_evals, n_internal_evals = program.kernel(
-                samples,
-                logLs,
-                chain_track,
-                T_ladder.betas,
-                proposal_manager.jump_probs,
-                tracker_manager.exchange_tracker,
-                tracker_manager.esd_exchange,
-                tracker_manager.accept_record,
-                tracker_manager.esd_record,
-                manager_states,
-                self._jump_internal_evals,
-                zero_loglike,
-            )
-        except NumbaError as exc:
-            # NumbaError here means the kernel failed to compile, which
-            # happens before any execution, so the block arrays are untouched
-            # and the Python path can rerun the block from samples[0]
-            if self.mode == 'numba':
-                msg = 'fully native-bindable graph failed Numba compilation or execution'
-                raise NativeBackendCompilationError(msg) from exc
-            self.program = None
-            warn(
-                f"kernel_backend='auto' native kernel failed to compile and will use Python: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            return False
-        eval_accounting.proposal_targets += n_target_evals
-        eval_accounting.proposal_internal += n_internal_evals
-        if not self._jump_internal_known:
-            eval_accounting.complete = False
-        return True
+        self._account(eval_accounting, n_target_evals, n_internal_evals, internal_known)
+        return 'python'
