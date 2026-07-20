@@ -237,8 +237,8 @@ def _exchange_problem(exchange_manager: object) -> str | None:
     cls = type(exchange_manager)
     if _defining_class(cls, 'bind_native') is None:
         return f'{cls.__qualname__} does not define bind_native'
-    if _defining_class(cls, 'native_state') is None:
-        return f'{cls.__qualname__} does not define native_state'
+    if _defining_class(cls, 'inputs') is None:
+        return f'{cls.__qualname__} does not define inputs'
     for method_name in ('is_exchange_step', 'do_ptmcmc_exchange'):
         problem = _stale_native_override(cls, method_name, ('bind_native',))
         if problem is not None:
@@ -493,7 +493,7 @@ def make_serial_kernel(
         esd_record: NDArray[np.floating],
         like_state: object,
         manager_states: tuple[object, ...],
-        exchange_state: object,
+        exchange_inputs: NamedTuple,
         jump_internal_evals: NDArray[np.int64],
         zero_loglike: bool,
     ) -> tuple[int, int]:
@@ -502,9 +502,9 @@ def make_serial_kernel(
         n_target_evals = 0
         n_internal_evals = 0
         for itrb in range(1, block_size + 1):
-            if is_exchange_step(itrb, exchange_state):
+            if is_exchange_step(itrb, exchange_inputs):
                 do_exchange(
-                    itrb, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track, exchange_state
+                    itrb, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track, exchange_inputs
                 )
             else:
                 for itrt in range(n_chain):
@@ -722,7 +722,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             manager.native_state() if has_state else None
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
         )
-        exchange_state = proposal_manager.exchange_manager.native_state()
+        exchange_inputs = proposal_manager.exchange_manager.inputs
         try:
             n_target_evals, n_internal_evals = program.kernel(
                 samples,
@@ -736,7 +736,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
                 tracker_manager.esd_record,
                 like_state,
                 manager_states,
-                exchange_state,
+                exchange_inputs,
                 self._jump_internal_evals,
                 zero_loglike,
             )
