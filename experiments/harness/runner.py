@@ -16,7 +16,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 from warnings import warn
 
 import numpy as np
@@ -78,7 +78,7 @@ DE_MEMORY_MIN_BLOCKS_FIXED = 4
 # one constructor per spec likelihood name; a test asserts the keys stay in
 # sync with spec.LIKELIHOOD_NAMES (spec.py cannot import these back without a
 # circular import, so drift is caught by CI instead)
-LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood[NamedTuple]]] = {
+LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
     'constant_rectangular': ConstantRectangularLikelihood,
@@ -96,7 +96,7 @@ LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood[NamedTuple]]] = 
 }
 
 
-def build_likelihood(spec: RunSpec[AbstractLikelihood[NamedTuple]]) -> AbstractLikelihood[NamedTuple]:
+def build_likelihood(spec: RunSpec[AbstractLikelihood]) -> AbstractLikelihood:
     """Construct the likelihood object named by the spec."""
     params: dict[str, Any] = dict(spec.likelihood_params)
     builder = LIKELIHOOD_BUILDERS.get(spec.likelihood_name)
@@ -114,7 +114,7 @@ def _scalar(value: object) -> float:
     return float(value)
 
 
-def _build_geometric_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _build_geometric_ladder[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
 ) -> TemperatureLadder:
     """Construct a geometric ladder from the spec's ladder table."""
@@ -129,7 +129,7 @@ def _build_geometric_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
     )
 
 
-def _build_entropy_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _build_entropy_file_ladder[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
 ) -> TemperatureLadder:
     """Construct an entropy ladder from reference data files named by the spec."""
@@ -145,7 +145,7 @@ def _build_entropy_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
     )
 
 
-def _load_ladder_inputs[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _load_ladder_inputs[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType], *stat_file_keys: str
 ) -> tuple[np.ndarray, ...]:
     """Load Ts plus stat arrays named by the spec, with the from-file filter.
@@ -160,7 +160,7 @@ def _load_ladder_inputs[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return filter_ladder_inputs(Ts_in, *stats)
 
 
-def _build_length_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _build_length_file_ladder[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
 ) -> TemperatureLadder:
     """Construct a thermodynamic-length ladder from reference data files."""
@@ -177,7 +177,7 @@ def _build_length_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
     )
 
 
-def _build_acceptance_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _build_acceptance_file_ladder[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
 ) -> TemperatureLadder:
     """Construct a predicted-acceptance ladder from reference data files."""
@@ -194,7 +194,7 @@ def _build_acceptance_file_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]
     )
 
 
-def _build_explicit_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _build_explicit_ladder[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
 ) -> TemperatureLadder:
     """Construct a ladder directly from the spec's Ts list.
@@ -210,7 +210,7 @@ def _build_explicit_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
 # one builder per spec ladder kind; a test asserts the keys stay in sync with
 # spec.LADDER_KINDS (see LIKELIHOOD_BUILDERS note)
-LADDER_BUILDERS: dict[str, Callable[[RunSpec[AbstractLikelihood[NamedTuple]]], TemperatureLadder]] = {
+LADDER_BUILDERS: dict[str, Callable[[RunSpec[AbstractLikelihood]], TemperatureLadder]] = {
     'geometric': _build_geometric_ladder,
     'entropy_file': _build_entropy_file_ladder,
     'length_file': _build_length_file_ladder,
@@ -219,7 +219,7 @@ LADDER_BUILDERS: dict[str, Callable[[RunSpec[AbstractLikelihood[NamedTuple]]], T
 }
 
 
-def build_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](spec: RunSpec[LikelihoodType]) -> TemperatureLadder:
+def build_ladder[LikelihoodType: AbstractLikelihood](spec: RunSpec[LikelihoodType]) -> TemperatureLadder:
     """Construct the temperature ladder described by the spec."""
     kind = spec.ladder['kind']
     builder = LADDER_BUILDERS.get(str(kind))
@@ -229,7 +229,7 @@ def build_ladder[LikelihoodType: AbstractLikelihood[NamedTuple]](spec: RunSpec[L
     return builder(spec)
 
 
-class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampler[LikelihoodType]):
+class HarnessSampler[LikelihoodType: AbstractLikelihood](DTMCMCSampler[LikelihoodType]):
     """DTMCMCSampler wired to the harness through the extension API.
 
     The subclass carries the run-level context its hooks need (spec,
@@ -439,7 +439,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
                 corr_sum.final_prints(self, n_burnin)
 
 
-def build_sampler[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def build_sampler[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType],
     config: configparser.ConfigParser | None = None,
     like_obj: LikelihoodType | None = None,
@@ -488,7 +488,7 @@ def build_sampler[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
 def build_adaptive_controller(
     adaptive_table: dict[str, Any],
-) -> AdaptiveLadderController[AbstractLikelihood[NamedTuple]]:
+) -> AdaptiveLadderController[AbstractLikelihood]:
     """Construct the adaptive controller from a spec [adaptive] table.
 
     Keys (validated against ADAPTIVE_KEYS at spec load; see
@@ -545,7 +545,7 @@ def build_adaptive_controller(
     )
 
 
-def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def run_from_spec[LikelihoodType: AbstractLikelihood](
     spec: RunSpec[LikelihoodType], out_dir: str | Path, artifact_name: str | None = None, sampler_verbosity: int = 0
 ) -> Path:
     """Execute one run end to end and return the artifact path.

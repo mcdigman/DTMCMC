@@ -3,14 +3,15 @@ manager to manage prior-draw based jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions, NativePriorDrawCall, NativePriorFactorCall
+from DTMCMC.likelihood import PriorDrawFn, PriorFactorFn, prior_draw_handle, prior_factor_handle
+from DTMCMC.numba_backend import NativeJumpCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -18,16 +19,15 @@ if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
-# composition memo keyed on the likelihood's per-class functions: repeated
-# binds return the same jitted function, so structurally identical samplers
-# share one compiled program (holding the keys alive keeps ids stable)
-_PRIOR_NATIVE_MEMO: dict[tuple[object, object], NativeJumpCall[None, object]] = {}
+# composition memo keyed on the likelihood's handles: repeated binds return
+# the same jitted function, so samplers whose likelihoods resolve to the
+# same handles share one compiled program (holding the keys alive keeps
+# ids stable)
+_PRIOR_NATIVE_MEMO: dict[tuple[object, object], NativeJumpCall[None]] = {}
 
 
-def _make_prior_native(
-    prior_draw: NativePriorDrawCall[object], prior_factor: NativePriorFactorCall[object]
-) -> NativeJumpCall[None, object]:
-    """Compose the likelihood's native prior draw and density into a jump."""
+def _make_prior_native(prior_draw: PriorDrawFn, prior_factor: PriorFactorFn) -> NativeJumpCall[None]:
+    """Compose the likelihood's prior draw and density handles into a jump."""
     key = (prior_draw, prior_factor)
     cached = _PRIOR_NATIVE_MEMO.get(key)
     if cached is not None:
@@ -35,26 +35,27 @@ def _make_prior_native(
 
     @njit(inline='always')
     def prior_native(
-        sample_point: NDArray[np.floating], _itrt: int, _manager_state: None, like_state: object
+        sample_point: NDArray[np.floating], _itrt: int, _manager_state: None
     ) -> tuple[NDArray[np.floating], float, bool]:
-        new_point = prior_draw(like_state)
-        density_fac = prior_factor(sample_point, like_state) - prior_factor(new_point, like_state)
+        new_point = prior_draw()
+        density_fac = prior_factor(sample_point) - prior_factor(new_point)
         return new_point, density_fac, True
 
     _PRIOR_NATIVE_MEMO[key] = prior_native
     return prior_native
 
 
-class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class PriorFullJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
     declared_internal_evals = 0
 
     def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
         self.manager: JumpManager[LikelihoodType] = manager
         self.print_name = 'Prior All-D'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
-        """Compose the likelihood's own native prior draw and density functions."""
-        return _make_prior_native(likelihood_natives.prior_draw, likelihood_natives.prior_factor)
+    def bind_native(self) -> NativeJumpCall[None]:
+        """Compose the likelihood's own prior draw and density handles."""
+        like_obj = self.manager.like_obj
+        return _make_prior_native(prior_draw_handle(like_obj), prior_factor_handle(like_obj))
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         del itrt
@@ -88,7 +89,7 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class PriorManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:

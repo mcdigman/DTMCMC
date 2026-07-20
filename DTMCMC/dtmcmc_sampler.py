@@ -2,7 +2,7 @@
 Module with the overall PTMCMC Chain object
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
@@ -65,7 +65,7 @@ def store_sample_helper(
     return store_idx, store_counter
 
 
-def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood](
     itrb: int,
     samples: NDArray[np.floating],
     logLs: NDArray[np.floating],
@@ -121,7 +121,7 @@ def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return n_target_evals, n_internal_evals
 
 
-def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood](
     proposal_manager: AbstractProposalManager[LikelihoodType],
 ) -> tuple[NDArray[np.int64], bool]:
     """Collect the per-jump declared internal evaluation costs in flattened order.
@@ -135,7 +135,7 @@ def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[NamedTuple]]
     return np.array([0 if value is None else value for value in declared], dtype=np.int64), known
 
 
-def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood](
     T_ladder: TemperatureLadder,
     logLs: NDArray[np.floating],
     samples: NDArray[np.floating],
@@ -196,7 +196,7 @@ def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
 # TODO add any necessary handlers for block length
 
 
-class DTMCMCSampler[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class DTMCMCSampler[LikelihoodType: AbstractLikelihood]:
     """object to manage the overall chain evolution"""
 
     def __init__(

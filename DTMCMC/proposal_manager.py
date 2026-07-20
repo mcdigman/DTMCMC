@@ -4,7 +4,7 @@ Manager object to handle all dispatching of proposals.
 C 2023 Matthew C. Digman
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, override, runtime_checkable
 
 import numpy as np
 
@@ -22,9 +22,7 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractJumpManager[LikelihoodType], Protocol
-):
+class AbstractProposalManager[LikelihoodType: AbstractLikelihood](AbstractJumpManager[LikelihoodType], Protocol):
     """Structural aggregate proposal interface required by sampler kernels."""
 
     @property
@@ -38,7 +36,7 @@ class AbstractProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
         ...
 
 
-class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
+class ProposalManager[LikelihoodType: AbstractLikelihood](
     JumpManager[LikelihoodType], AbstractProposalManager[LikelihoodType]
 ):
     """Manage generation of proposals, handles all dispatching of jumps."""

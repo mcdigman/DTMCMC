@@ -3,7 +3,7 @@ Abstract class for the interface a proposal manager must export
 in order to be properly recognized by the framework
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, override, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -17,12 +17,12 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
+class AbstractJump[LikelihoodType: AbstractLikelihood](Protocol):
     """An object that performs a single proposal from its __call__ method.
 
-    A jump may additionally define ``bind_native(likelihood_natives)``
-    returning a per-class jitted function with this ``__call__``
-    signature plus the manager and likelihood runtime states (see DTMCMC.numba_backend).
+    A jump may additionally define ``bind_native()`` returning a
+    per-class jitted function with this ``__call__`` signature plus the
+    owning manager's runtime state (see DTMCMC.numba_backend).
 
     A jump should also declare ``declared_internal_evals``: the fixed
     number of target-likelihood evaluations one dispatch performs
@@ -49,7 +49,7 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
 
 
 @runtime_checkable
-class AbstractJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
+class AbstractJumpManager[LikelihoodType: AbstractLikelihood](Protocol):
     """Structural component-manager interface used by aggregate dispatchers.
 
     A manager whose ``post_step_update`` does real work may opt into native
@@ -149,7 +149,7 @@ def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     return choose
 
 
-class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpManager[LikelihoodType]):
+class JumpManager[LikelihoodType: AbstractLikelihood](AbstractJumpManager[LikelihoodType]):
     """Extensions of this class dispatch MCMC proposals."""
 
     # deterministic likelihood-evaluation cost of constructing the manager;

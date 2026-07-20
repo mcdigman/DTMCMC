@@ -1,10 +1,12 @@
 """the 2D hyper-pyramid lkelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/"""
 
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
+from DTMCMC.likelihood import LoglikeFn, RectangularLikelihood
 
 # constants
 low_lim: float = -15.0
@@ -21,16 +23,8 @@ def get_loglike(x: NDArray[np.floating]) -> float:
     return res
 
 
-@njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
-    """Per-class native log likelihood."""
-    return get_loglike(params_in)
-
-
-class HyperpyramidLikelihood(RectangularLikelihood[RectangularInputs]):
+class HyperpyramidLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 2) -> None:
         """Create the class and store any object specific variables"""
@@ -42,10 +36,6 @@ class HyperpyramidLikelihood(RectangularLikelihood[RectangularInputs]):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    """Get the log likelihood given a set of parameters v"""
-    #    return get_loglike(params_in)
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native
+    @override
+    def _make_loglike(self) -> LoglikeFn:
+        return get_loglike

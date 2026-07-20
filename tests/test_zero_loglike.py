@@ -198,7 +198,7 @@ def test_constant_rectangular_defaults() -> None:
     np.testing.assert_array_equal(like.high_lims, np.full(3, high_lim))
     assert like.get_loglike(np.zeros(3)) == 0.0
     assert like.prior_factor(np.zeros(3)) == 0.0
-    assert like.bind_native().loglike(np.zeros(3), like.inputs) == 0.0
+    assert like.loglike_fn(np.zeros(3)) == 0.0
 
 
 def test_zero_mode_preserves_original_fisher_likelihood() -> None:

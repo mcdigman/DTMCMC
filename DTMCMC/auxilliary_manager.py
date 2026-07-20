@@ -3,14 +3,14 @@ blank manager to serve as template for adding more draw types
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions
+from DTMCMC.numba_backend import NativeJumpCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -21,12 +21,12 @@ if TYPE_CHECKING:
 
 @njit(inline='always')
 def _blank_jump_native(
-    sample_point: NDArray[np.floating], _itrt: int, _state: None, _like_state: object
+    sample_point: NDArray[np.floating], _itrt: int, _state: None
 ) -> tuple[NDArray[np.floating], float, bool]:
     return sample_point.copy(), 0.0, True
 
 
-class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class BlankJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Template jump for future extensions"""
 
     declared_internal_evals = 0
@@ -35,9 +35,8 @@ class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[Lik
         self.manager: JumpManager[LikelihoodType] = manager
         self.print_name = 'Blank Jump'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
+    def bind_native(self) -> NativeJumpCall[None]:
         """The blank jump is stateless, so the per-class module function suffices."""
-        del likelihood_natives
         return _blank_jump_native
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
@@ -66,7 +65,7 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
     """template manager for an extra jump type,
     subclass of DTMCMC.jump_manager.JumpManager
     """

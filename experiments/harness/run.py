@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 from .artifact import validate
 from .paths import resolve
@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    spec: RunSpec[AbstractLikelihood[NamedTuple]] = RunSpec.from_toml(resolve(args.spec))
+    spec: RunSpec[AbstractLikelihood] = RunSpec.from_toml(resolve(args.spec))
     if args.seed is not None:
         spec = spec.with_seed(args.seed)
     if args.zero_loglike is not None:

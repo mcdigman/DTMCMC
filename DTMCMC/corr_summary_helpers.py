@@ -2,7 +2,7 @@
 helpers to summarize the auto and cross-correlations and sampling efficiency for an mcmc run
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 import scipy.signal
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from DTMCMC.tracker_manager import TrackerManager
 
 
-def restrict_n_burnin[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def restrict_n_burnin[LikelihoodType: AbstractLikelihood](
     mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin: int
 ) -> int:
     """Helper to restrict n_burnin to last block"""
@@ -33,7 +33,7 @@ def restrict_n_burnin[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return n_burnin
 
 
-def autocorr_helper[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def autocorr_helper[LikelihoodType: AbstractLikelihood](
     mcc: DTMCMCSampler[LikelihoodType] | StoreView, itrp: int, n_burnin_thin: int
 ) -> tuple[NDArray[np.floating], int, float]:
     """Helper to get the autocorrleation functions for a particular parameter"""
@@ -51,7 +51,7 @@ def autocorr_helper[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return autocorr_lim, autocorr_cut, est_var_auto
 
 
-def get_crosscorr_sum[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def get_crosscorr_sum[LikelihoodType: AbstractLikelihood](
     mcc: DTMCMCSampler[LikelihoodType] | StoreView,
     n_burnin_thin: int,
     itrp: int,
@@ -209,7 +209,7 @@ def autocorr_summary_print(n_par: int, autocorr_lims: list[NDArray[np.floating]]
     print('best estimate of autocorrelation lengths:', autocorr_len_str)
 
 
-def summarize_logLs[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def summarize_logLs[LikelihoodType: AbstractLikelihood](
     mcc: DTMCMCSampler[LikelihoodType] | StoreView, N_blocks: int
 ) -> tuple[NDArray[np.floating], int, int]:
     """Get useful summary statistics about the likelihoods"""
@@ -234,7 +234,7 @@ def summarize_logLs[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return logL_block_mean, arg_logL_burn, arg_logL_deviant
 
 
-def summarize_vars[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def summarize_vars[LikelihoodType: AbstractLikelihood](
     mcc: DTMCMCSampler[LikelihoodType] | StoreView, n_burnin_thin: int
 ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     """Get the means and variances for the samples"""
@@ -247,7 +247,7 @@ def summarize_vars[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return obs_means, obs_vars
 
 
-class CorrelationSummary[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class CorrelationSummary[LikelihoodType: AbstractLikelihood]:
     """class to store various attributes memorializing the correlations of a chain across multiple runs"""
 
     def __init__(self, do_corr_summary: bool = True, do_autocorr: bool = True, do_cross: bool = True) -> None:

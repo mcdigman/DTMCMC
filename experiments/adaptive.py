@@ -22,7 +22,7 @@ called again, matching the fixed-ladder path.
 """
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -116,7 +116,7 @@ class LadderUpdateRecord:
 
 
 @dataclass
-class AdaptiveLadderController[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class AdaptiveLadderController[LikelihoodType: AbstractLikelihood]:
     """Annealing-style adaptive ladder controller around DTMCMCSampler.
 
     Parameters (interface fixed by the plan)

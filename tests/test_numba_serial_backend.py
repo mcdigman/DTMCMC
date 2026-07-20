@@ -4,7 +4,7 @@ import configparser
 import typing
 import warnings
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, NamedTuple, override
+from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
 import pytest
@@ -22,7 +22,13 @@ from DTMCMC.exchange_manager import (
 )
 from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import AbstractLikelihood, RectangularBoundsProtocol, RectangularLikelihood
+from DTMCMC.likelihood import (
+    AbstractLikelihood,
+    LoglikeFn,
+    PriorDrawFn,
+    PriorFactorFn,
+    RectangularLikelihood,
+)
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
 from DTMCMC.numba_backend import (
@@ -30,7 +36,6 @@ from DTMCMC.numba_backend import (
     NativeBackendUnsupportedError,
     NativeExchangeFunctions,
     NativeJumpCall,
-    NativeLikelihoodFunctions,
 )
 from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
@@ -275,58 +280,44 @@ def _extension_prior_factor(params: NDArray[np.floating], rate: float) -> float:
     return -rate * float(np.sum(params))
 
 
-class _ExtensionNativeInput(NamedTuple):
-    """External-style inputs."""
+class _ExtensionLikelihood(RectangularLikelihood):
+    """Small external-style likelihood with a non-uniform prior.
 
-    n_par: int
-    low_lims: NDArray[np.floating]
-    high_lims: NDArray[np.floating]
-    center: float
-    prior_rate: float
-
-
-@njit(inline='always')
-def _extension_loglike_native(params: NDArray[np.floating], inputs: _ExtensionNativeInput) -> float:
-    return _extension_loglike(params, inputs.center, inputs.prior_rate)
-
-
-@njit(inline='always')
-def _extension_prior_draw_native(inputs: _ExtensionNativeInput) -> NDArray[np.floating]:
-    return _extension_prior_draw(inputs.n_par, inputs.low_lims, inputs.high_lims, inputs.prior_rate)
-
-
-@njit(inline='always')
-def _extension_prior_factor_native(params: NDArray[np.floating], inputs: _ExtensionNativeInput) -> float:
-    return _extension_prior_factor(params, inputs.prior_rate)
-
-
-class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
-    """Small external-style likelihood with a non-uniform prior."""
-
-    prior_draw_fn = staticmethod(_extension_prior_draw_native)
-    prior_factor_fn = staticmethod(_extension_prior_factor_native)
-    loglike_fn = staticmethod(_extension_loglike_native)
+    Bakes its per-instance constants through unmemoized closures, the
+    simplest external extension pattern.
+    """
 
     def __init__(self, n_par: int = 4, center: float = 0.75, prior_rate: float = 0.5) -> None:
-        super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
         self.center = center
         self.prior_rate = prior_rate
-
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    return _extension_loglike(params_in, self.center, self.prior_rate)
+        super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
 
     @override
-    def prior_draw(self) -> NDArray[np.floating]:
-        return _extension_prior_draw(self.n_par, self.low_lims, self.high_lims, self.prior_rate)
+    def _make_loglike(self) -> LoglikeFn:
+        center, prior_rate = self.center, self.prior_rate
+
+        def loglike(params: NDArray[np.floating]) -> float:
+            return _extension_loglike(params, center, prior_rate)
+
+        return loglike
 
     @override
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        return _extension_prior_factor(params_in, self.prior_rate)
+    def _make_prior_draw(self) -> PriorDrawFn:
+        n_par, low_lims, high_lims, rate = self.n_par, self.low_lims, self.high_lims, self.prior_rate
 
-    @property
+        def prior_draw() -> NDArray[np.floating]:
+            return _extension_prior_draw(n_par, low_lims, high_lims, rate)
+
+        return prior_draw
+
     @override
-    def inputs(self) -> _ExtensionNativeInput:
-        return _ExtensionNativeInput(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
+    def _make_prior_factor(self) -> PriorFactorFn:
+        rate = self.prior_rate
+
+        def prior_factor(params: NDArray[np.floating]) -> float:
+            return _extension_prior_factor(params, rate)
+
+        return prior_factor
 
 
 @njit(inline='always')
@@ -334,7 +325,7 @@ def _custom_jump_helper(sample_point: NDArray[np.floating], scale: float) -> tup
     return sample_point + scale * np.random.normal(0.0, 1.0, sample_point.size), 0.0, True
 
 
-class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class _CustomJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
     """External-style jump whose type is unknown to numba_backend.py.
 
     Binds a per-instance closure rather than a per-class function: allowed
@@ -347,13 +338,12 @@ class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[L
         self.manager = manager
         self.print_name = 'Custom Gaussian'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[None, Any]:
-        del likelihood_natives
+    def bind_native(self) -> NativeJumpCall[None]:
         scale = self.manager.scale
 
         @njit(inline='always')
         def native_call(
-            sample_point: NDArray[np.floating], _itrt: int, _inputs: None, _like_input: Any
+            sample_point: NDArray[np.floating], _itrt: int, _inputs: None
         ) -> tuple[NDArray[np.floating], float, bool]:
             return _custom_jump_helper(sample_point, scale)
 
@@ -364,7 +354,7 @@ class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[L
         return _custom_jump_helper(sample_point, self.manager.scale)
 
 
-class _CustomManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class _CustomManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
     """External-style manager bound without backend source changes.
 
     Its post_step_update is the inherited base no-op, so no explicit native
@@ -384,7 +374,7 @@ class _CustomManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager
         del config_in
 
 
-class _PythonOnlyJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class _PythonOnlyJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
     print_name = 'Python only'
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
@@ -392,7 +382,7 @@ class _PythonOnlyJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJu
         return sample_point.copy(), 0.0, True
 
 
-class _PythonOnlyManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class _PythonOnlyManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
         super().__init__(T_ladder, like_obj, [_PythonOnlyJump()])
 
@@ -493,7 +483,7 @@ class _EveryThirdExchange(ExchangeManager):
         )
 
 
-def _standalone_snapshot[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _standalone_snapshot[LikelihoodType: AbstractLikelihood](
     sampler: DTMCMCSampler[LikelihoodType],
 ) -> dict[str, object]:
     tracker = sampler.tracker_manager
@@ -515,8 +505,46 @@ class _UndecoratedGaussian(GaussianLikelihood):
         return float(-np.sum(np.abs(params_in)))
 
 
+@njit()
+def _broken_native_jump_impl(sample_point: NDArray[np.floating]) -> float:
+    return sample_point.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
+
+
+class _BrokenNativeJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
+    """Jitted native binding that only fails once the kernel compiles it."""
+
+    print_name = 'Broken native'
+    declared_internal_evals = 0
+
+    def bind_native(self) -> NativeJumpCall[None]:
+        @njit(inline='always')
+        def native_call(
+            sample_point: NDArray[np.floating], _itrt: int, _state: None
+        ) -> tuple[NDArray[np.floating], float, bool]:
+            return sample_point + _broken_native_jump_impl(sample_point), 0.0, True
+
+        return native_call
+
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
+        del itrt
+        return sample_point.copy(), 0.0, True
+
+
+class _BrokenNativeJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
+        super().__init__(T_ladder, like_obj, [_BrokenNativeJump()])
+
+    @override
+    def set_jump_weights(self) -> None:
+        self.jump_weights = np.ones((self.n_chain, self.n_jump_types))
+
+    @override
+    def record_config(self, config_in: configparser.ConfigParser) -> None:
+        del config_in
+
+
 def _run_standalone_graph(
-    backend: str, *, bindable: bool, custom_exchange: bool = False
+    backend: str, *, bindable: bool, custom_exchange: bool = False, broken_jump: bool = False
 ) -> tuple[dict[str, object], str]:
     reset_seed_guard_for_tests()
     try:
@@ -526,7 +554,13 @@ def _run_standalone_graph(
         config = configparser.ConfigParser()
         config.read('default_config.ini')
         config['ProposalManager']['only_prior_hot'] = 'False'
-        manager = _CustomManager(ladder, like_obj) if bindable else _PythonOnlyManager(ladder, like_obj)
+        manager: JumpManager[Any]
+        if broken_jump:
+            manager = _BrokenNativeJumpManager(ladder, like_obj)
+        elif bindable:
+            manager = _CustomManager(ladder, like_obj)
+        else:
+            manager = _PythonOnlyManager(ladder, like_obj)
         exchange: ExchangeManager
         if custom_exchange:
             exchange = _EveryThirdExchange(NULL_TARGETS, False)
@@ -550,17 +584,27 @@ def _run_standalone_graph(
         reset_seed_guard_for_tests()
 
 
-def _bad_native_loglike(params: NDArray[np.floating], _inputs: Any) -> float:
-    return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
+def _plain_python_norm(params: NDArray[np.floating]) -> float:
+    return float(np.sum(np.abs(params)))
 
 
-class _BadNativeLikelihood[InputType: RectangularBoundsProtocol](RectangularLikelihood[RectangularBoundsProtocol]):
-    """Valid Python likelihood with an intentionally invalid native function."""
+class _UncompilableLikelihood(RectangularLikelihood):
+    """Provides a loglike factory whose function cannot compile to nopython.
 
-    loglike_fn = staticmethod(njit(inline='always')(_bad_native_loglike))
+    The function calls an untyped plain-Python global, so the eager
+    construction-time compile fails; the plain closure still runs
+    correctly on the Python path.
+    """
 
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
+
+    @override
+    def _make_loglike(self) -> LoglikeFn:
+        def loglike(params: NDArray[np.floating]) -> float:
+            return -_plain_python_norm(params)
+
+        return loglike
 
 
 @njit(inline='always')
@@ -568,35 +612,21 @@ def _many_input_loglike(params: NDArray[np.floating], a: float, b: float, c: flo
     return -float(np.sum(params * params)) + a + b + c + d + e
 
 
-class _ManyInputNativeInput(NamedTuple):
-    n_par: int
-    low_lims: NDArray[np.floating]
-    high_lims: NDArray[np.floating]
-    a: float
-    b: float
-    c: float
-    d: float
-    e: float
-
-
-@njit(inline='always')
-def _many_input_loglike_native(params: NDArray[np.floating], inputs: _ManyInputNativeInput) -> float:
-    return _many_input_loglike(params, inputs.a, inputs.b, inputs.c, inputs.d, inputs.e)
-
-
-class _ManyInputLikelihood(RectangularLikelihood[_ManyInputNativeInput]):
-    """Regression likelihood whose input carries many extension fields."""
-
-    loglike_fn = staticmethod(_many_input_loglike_native)
+class _ManyInputLikelihood(RectangularLikelihood):
+    """Regression likelihood whose handles bake many extension constants."""
 
     def __init__(self) -> None:
-        super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
         self.a, self.b, self.c, self.d, self.e = 1.0, 2.0, 3.0, 4.0, 5.0
+        super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
 
-    @property
     @override
-    def inputs(self) -> _ManyInputNativeInput:
-        return _ManyInputNativeInput(self.n_par, self.low_lims, self.high_lims, self.a, self.b, self.c, self.d, self.e)
+    def _make_loglike(self) -> LoglikeFn:
+        a, b, c, d, e = self.a, self.b, self.c, self.d, self.e
+
+        def loglike(params: NDArray[np.floating]) -> float:
+            return _many_input_loglike(params, a, b, c, d, e)
+
+        return loglike
 
 
 def test_external_nonuniform_prior_contract_is_bit_exact() -> None:
@@ -637,19 +667,44 @@ def test_fully_unbindable_auto_graph_falls_back_without_warning() -> None:
 
 
 def test_native_compile_failure_raises_in_numba_mode() -> None:
-    """A broken native binding is loud when the native backend is required."""
+    """A jitted binding that fails kernel compilation is loud when required."""
     with pytest.raises(NativeBackendCompilationError, match='failed Numba compilation'):
-        _run(_make_spec(n_steps=4), 'numba', like_factory=_BadNativeLikelihood)
+        _run_standalone_graph('numba', bindable=True, broken_jump=True)
 
 
 def test_native_compile_failure_warns_once_and_falls_back_in_auto_mode() -> None:
     """Auto degrades to Python with a single warning when compilation fails."""
     with pytest.warns(RuntimeWarning, match='failed to compile') as warning_records:
-        state, selected = _run(_make_spec(n_steps=4), 'auto', like_factory=_BadNativeLikelihood)
+        _state, selected = _run_standalone_graph('auto', bindable=True, broken_jump=True)
     assert selected == 'python'
     compile_warnings = [record for record in warning_records if 'failed to compile' in str(record.message)]
     assert len(compile_warnings) == 1
+
+
+def test_uncompilable_likelihood_warns_at_construction_and_runs_python() -> None:
+    """An intended-native function that cannot compile falls back at construction.
+
+    The construction-time eager compile warns and keeps the plain
+    function; the auto sampler then runs the graph on the Python path
+    (with the usual one-time mixed-graph warning), and the strict numba
+    backend rejects it naming the role.
+    """
+    with pytest.warns(RuntimeWarning, match='failed nopython compilation'):
+        like = _UncompilableLikelihood()
+    assert like.get_loglike(np.ones(4)) == -4.0
+
+    with pytest.warns(RuntimeWarning) as warning_records:
+        state, selected = _run(_make_spec(n_steps=4), 'auto', like_factory=_UncompilableLikelihood)
+    assert selected == 'python'
+    mixed_warnings = [record for record in warning_records if 'mixed native/Python' in str(record.message)]
+    assert len(mixed_warnings) == 1
     assert state['itrn'] == 4
+
+    with (
+        pytest.warns(RuntimeWarning, match='failed nopython compilation'),
+        pytest.raises(NativeBackendUnsupportedError, match='no nopython-compiled implementation of get_loglike'),
+    ):
+        _run(_make_spec(n_steps=4), 'numba', like_factory=_UncompilableLikelihood)
 
 
 def test_native_binding_supports_many_input_fields() -> None:
@@ -774,17 +829,14 @@ def test_rectangular_bounds_are_immutable() -> None:
         like.high_lims = np.full(2, 1.0)  # type: ignore[misc]
     with pytest.raises(ValueError, match='read-only'):
         like.low_lims[0] = 0.0
-    inputs = like.inputs
-    assert inputs.low_lims is like.low_lims
-    assert inputs.high_lims is like.high_lims
 
 
 def test_structurally_identical_samplers_share_one_program() -> None:
     """PR #40 review F002: same-structure samplers reuse one compiled kernel.
 
-    The program cache keys on the bound per-class functions rather than
-    object identities, so a second sampler resolves to the same program and
-    Numba compiles no additional kernel signature.
+    Equal-config likelihoods resolve to value-memoized handles, so the
+    program cache key matches, a second sampler resolves to the same
+    program, and Numba compiles no additional kernel signature.
     """
     spec = _make_spec(n_steps=4)
     reset_seed_guard_for_tests()
@@ -807,18 +859,18 @@ def test_structurally_identical_samplers_share_one_program() -> None:
         reset_seed_guard_for_tests()
 
 
-class _IncompleteLikelihood(AbstractLikelihood[NamedTuple]):
-    """Deliberately missing prior_draw/prior_factor/validate_bounds."""
+class _IncompleteLikelihood:
+    """Deliberately missing prior_draw/prior_factor/validate_bounds.
 
-    def __init__(self) -> None:
-        pass
+    Does not inherit any base: structural conformance is what the sampler
+    checks, and nominal Protocol inheritance would satisfy isinstance
+    vacuously while providing stub methods that return None.
+    """
 
     @property
-    @override
     def n_par(self) -> int:
         return 2
 
-    @override
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         del params_in
         return 0.0
@@ -832,35 +884,28 @@ def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
     missing method.
     """
     ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
+    nonconforming = typing.cast('AbstractLikelihood', _IncompleteLikelihood())
     with pytest.raises(TypeError, match='n_par, get_loglike, prior_draw, prior_factor, validate_bounds'):
-        DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')
+        DTMCMCSampler(ladder, nonconforming, 8, 8, kernel_backend='python')
 
 
-class _FisherDeficientLikelihood(AbstractLikelihood[NamedTuple]):
+class _FisherDeficientLikelihood:
     """Implements a Likelihood Without Required Fisher support methods."""
 
-    def __init__(self) -> None:
-        pass
-
     @property
-    @override
     def n_par(self) -> int:
         return 2
 
-    @override
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         return -float(np.sum(params_in * params_in))
 
-    @override
     def prior_draw(self) -> NDArray[np.floating]:
         return np.zeros(self.n_par)
 
-    @override
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         del params_in
         return 0.0
 
-    @override
     def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
         return params_in, True
 
@@ -870,17 +915,17 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
     config = configparser.ConfigParser()
     config.read('default_config.ini')
+    deficient = typing.cast('AbstractLikelihood', _FisherDeficientLikelihood())
     with pytest.raises(TypeError, match='correct_bounds and get_epsilons'):
-        FisherJumpManager(ladder, _FisherDeficientLikelihood(), np.zeros((4, 2)), config)
+        FisherJumpManager(ladder, deficient, np.zeros((4, 2)), config)
 
 
 @pytest.mark.parametrize(
     'hook',
     [
-        RectangularLikelihood.bind_native,
-        RectangularLikelihood.loglike_fn,
-        RectangularLikelihood.inputs.fget,
-        GaussianLikelihood.loglike_fn,
+        RectangularLikelihood._make_prior_draw,
+        RectangularLikelihood._make_validate_bounds,
+        GaussianLikelihood._make_loglike,
         SigmaFullJump.bind_native,
         DEStandardFullJump.bind_native,
         PriorFullJump.bind_native,

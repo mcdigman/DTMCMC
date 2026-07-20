@@ -23,7 +23,7 @@ from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from importlib.metadata import version as package_version
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, SupportsInt, cast
+from typing import TYPE_CHECKING, SupportsInt, cast
 
 import h5py
 import numpy as np
@@ -198,7 +198,7 @@ class CheckpointLog:
     de_spectrum_eigvals: list[np.ndarray] = dataclass_field(default_factory=list)
 
 
-def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def write_artifact[LikelihoodType: AbstractLikelihood](
     path: Path,
     spec: RunSpec[LikelihoodType],
     sampler: DTMCMCSampler[LikelihoodType],

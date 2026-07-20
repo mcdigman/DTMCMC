@@ -1,6 +1,6 @@
 """an n dimensional normal distribution"""
 
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, override
 
 import h5py
 import numpy as np
@@ -12,30 +12,13 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 
-class HawaiiInputs(NamedTuple):
-    """Static inputs for the stateless Hawaii likelihood class.
+class HawaiiLikelihood(RectangularLikelihood):
+    """class to manage the likelihood-specific essential functions for the sampler
 
-    Subclasses whose functions need extra instance values define
-    their own NamedTuple that also exposes ``n_par``/``low_lims``/
-    ``high_lims`` fields.
+    The scipy interpolator cannot compile to nopython, so this class
+    overrides ``get_loglike`` directly and the sampler routes it through
+    the Python kernel path.
     """
-
-    n_par: int
-    low_lims: NDArray[np.floating]
-    high_lims: NDArray[np.floating]
-    hawaii_interp: RegularGridInterpolator
-
-
-def _loglike_native(params_in: NDArray[np.floating], inputs: HawaiiInputs) -> float:
-    """Get the log likelihood given a set of parameters v"""
-    res: float = inputs.hawaii_interp(params_in)[0]
-    return res
-
-
-class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
-    """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, rescale_like: float = 1.0, default_like: float = 5.0e-1, normalize_like: bool = True) -> None:
         """Create the class and store any object specific variables"""
@@ -73,16 +56,17 @@ class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
             np.linspace(-1.0, 1.0, self.hawaii_grid.shape[1]) * self.hawaii_grid.shape[1] / self.hawaii_grid.shape[0]
         )
 
-        hawaii_interp = RegularGridInterpolator((self.xs_grid, self.ys_grid), self.log_hawaii_grid, method='linear')
+        self.hawaii_interp = RegularGridInterpolator(
+            (self.xs_grid, self.ys_grid), self.log_hawaii_grid, method='linear'
+        )
 
         low_lims = np.array([self.xs_grid.min(), self.ys_grid.min()])
         high_lims = np.array([self.xs_grid.max(), self.ys_grid.max()])
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
-        self._inputs = HawaiiInputs(n_par, self.low_lims, self.high_lims, hawaii_interp)
 
-    @property
     @override
-    def inputs(self) -> HawaiiInputs:
-        """Return the rectangular fields plus the tier constants."""
-        return self._inputs
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
+        """Get the log likelihood given a set of parameters v"""
+        res: float = self.hawaii_interp(params_in)[0]
+        return res

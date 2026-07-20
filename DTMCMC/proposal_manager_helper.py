@@ -3,7 +3,7 @@ get a default proposal manager object
 """
 
 import configparser
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
-def get_default_proposal_manager[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def get_default_proposal_manager[LikelihoodType: AbstractLikelihood](
     T_ladder: TemperatureLadder,
     like_obj: LikelihoodType,
     starting_samples: NDArray[np.floating] | None = None,

@@ -1,10 +1,12 @@
 """the spoke wheel likelihood"""
 
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.likelihood import LoglikeFn, RectangularLikelihood, check_bounds_arrays
 
 # constants
 low_lim = -40.0
@@ -44,16 +46,8 @@ def get_loglike(v: NDArray[np.floating]) -> float:
     return res
 
 
-@njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
-    """Per-class native log likelihood."""
-    return get_loglike(params_in)
-
-
-class SpokeWheelLikelihood(RectangularLikelihood[RectangularInputs]):
+class SpokeWheelLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 2) -> None:
         """Create the class and store any object specific variables"""
@@ -65,13 +59,9 @@ class SpokeWheelLikelihood(RectangularLikelihood[RectangularInputs]):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    """Get the log likelihood given a set of parameters v"""
-    #    return get_loglike(params_in)
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native
+    @override
+    def _make_loglike(self) -> LoglikeFn:
+        return get_loglike
 
 
 @njit()
@@ -79,14 +69,13 @@ def gen_draws(n_draws: int, n_par: int, attempt_lim: int = 10000) -> NDArray[np.
     """Get posterior draws"""
     low_lims = np.full(n_par, low_lim)
     high_lims = np.full(n_par, high_lim)
-    inputs = RectangularInputs(n_par, low_lims, high_lims)
     draws = np.zeros((n_draws, n_par))
     for itrk in range(n_draws):
         itra = 0
         while True:
             mode_choose = np.random.randint(0, cs.shape[0])
             draw_loc = cs[mode_choose] + np.random.normal(0.0, w, cs.shape[1])
-            if check_bounds_rectangular(draw_loc, inputs):
+            if check_bounds_arrays(draw_loc, low_lims, high_lims):
                 break
             itra += 1
             if itra == attempt_lim:

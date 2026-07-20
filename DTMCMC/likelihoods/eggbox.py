@@ -8,7 +8,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
+from DTMCMC.likelihood import LoglikeFn, RectangularLikelihood, memoized_handle
 
 tmax: float = 5.0 * np.pi
 
@@ -30,12 +30,6 @@ def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
     # note prod can never be <-1.0, so res will be a float
     res: float = (prod + 1.0) ** betap
     return res
-
-
-@njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], inputs: RectangularInputs) -> float:
-    """Per-class native log likelihood."""
-    return get_loglike(params_in, inputs.n_par)
 
 
 @njit()
@@ -79,24 +73,25 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
     return new_point, success
 
 
-# @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
-class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
+class EggboxLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
-        super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
         self.epsilons = np.zeros(n_par) + eps_default
+        super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
 
-    # def get_loglike(self, v: NDArray[np.floating]) -> float:
-    #    """Get the log likelihood given a set of parameters v"""
-    #    return get_loglike(v, self.n_par)
+    @override
+    def _make_loglike(self) -> LoglikeFn:
+        n_par = self.n_par
 
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native
+        def build() -> LoglikeFn:
+            def loglike(params_in: NDArray[np.floating]) -> float:
+                return get_loglike(params_in, n_par)
+
+            return loglike
+
+        return memoized_handle(('eggbox_loglike', n_par), build)
 
     @override
     def get_epsilons(self) -> NDArray[np.floating]:

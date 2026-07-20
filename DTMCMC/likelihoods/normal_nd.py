@@ -1,10 +1,12 @@
 """an n dimensional normal distribution"""
 
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.likelihood import LoglikeFn, RectangularLikelihood, check_bounds_arrays
 
 
 @njit()
@@ -17,21 +19,12 @@ def get_loglike(v: NDArray[np.floating]) -> float:
     return res
 
 
-@njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _inputs: RectangularInputs) -> float:
-    """Per-class native log likelihood."""
-    return get_loglike(params_in)
-
-
 # n dimensional unit normal motivated by the 100d considerations in
 # https://statmodeling.stat.columbia.edu/2017/03/15/ensemble-methods-doomed-fail-high-dimensions/
 
 
-# @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
-class GaussianLikelihood(RectangularLikelihood[RectangularInputs]):
+class GaussianLikelihood(RectangularLikelihood):
     """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, n_par: int = 100, cutoff: int = 5) -> None:
         """Create the class and store any object specific variables"""
@@ -40,14 +33,9 @@ class GaussianLikelihood(RectangularLikelihood[RectangularInputs]):
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
-
-#    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-#        """Get the log likelihood given a set of parameters v"""
-#        return get_loglike(params_in)
-#
-#    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-#        """Return the per-class native log likelihood."""
-#        return _loglike_native
+    @override
+    def _make_loglike(self) -> LoglikeFn:
+        return get_loglike
 
 
 @njit()
@@ -56,11 +44,10 @@ def gen_draws(
 ) -> NDArray[np.floating]:
     """Get posterior draws"""
     draws = np.zeros((n_draws, n_par))
-    inputs = RectangularInputs(n_par, low_lims, high_lims)
     for itrk in range(n_draws):
         itra = 0
         draw_loc = np.random.normal(0.0, 1, n_par)
-        while not check_bounds_rectangular(draw_loc, inputs):
+        while not check_bounds_arrays(draw_loc, low_lims, high_lims):
             if itra == attempt_lim:
                 msg = 'failed to find valid posterior point'
                 raise RuntimeError(msg)
@@ -75,14 +62,13 @@ def drawposterior(
     n: int, Ts: NDArray[np.floating], n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """For truncated normal we can draw from the posterior for testing purposes"""
-    inputs = RectangularInputs(n_par, low_lims, high_lims)
     samples = np.zeros((n, Ts.size, n_par))
     for itrt in range(Ts.size):
         for itrn in range(n):
             if np.isfinite(Ts[itrt]):
                 sample_loc = np.random.normal(0.0, np.sqrt(Ts[itrt]), n_par)
                 itrlim = 0
-                while not check_bounds_rectangular(sample_loc, inputs):
+                while not check_bounds_arrays(sample_loc, low_lims, high_lims):
                     if itrlim == 100000:
                         print(itrt, itrn, itrlim)
                         msg = 'failed to find valid posterior point'

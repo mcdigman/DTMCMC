@@ -3,7 +3,7 @@ blank manager to serve as template for adding more draw types
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, override
 
 import numpy as np
 
@@ -41,7 +41,7 @@ class HistoryStrategyParameters:
         config_h['history_jump_weight'] = str(self.history_jump_weight)
 
 
-class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood](JumpManager[LikelihoodType]):
     """manager for a jump that proposes jumps to historical states
     at different temperatures
     """
@@ -83,7 +83,7 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](J
         self.strategy_params.record_config(config_in)
 
 
-class LadderHistoryJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class LadderHistoryJump[LikelihoodType: AbstractLikelihood](AbstractJump[LikelihoodType]):
     """Get a proposal from a random draw from the recorded historical points"""
 
     # each dispatch evaluates the likelihood once at the current point

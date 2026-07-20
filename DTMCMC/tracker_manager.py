@@ -2,7 +2,7 @@
 module to store various trackers about the state of chains
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numba import njit
@@ -86,7 +86,7 @@ def process_chain_cycles(
 # TODO clean up tracker reporting
 
 
-class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class TrackerManager[LikelihoodType: AbstractLikelihood]:
     """track various things about chains like acceptance rates and cycle times."""
 
     def __init__(

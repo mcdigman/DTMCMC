@@ -20,7 +20,6 @@ import re
 import tomllib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import NamedTuple
 
 import DTMCMC.exchange_manager as em
 from DTMCMC.likelihood import AbstractLikelihood
@@ -272,7 +271,7 @@ def dumps_toml(data: dict[str, object]) -> str:
 
 
 @dataclass(frozen=True)
-class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class RunSpec[LikelihoodType: AbstractLikelihood]:
     """Full description of a single sampler run.
 
     Parameters
