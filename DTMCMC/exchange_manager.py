@@ -2,7 +2,7 @@
 helpers to perform the parallel tempering exchanges
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -25,13 +25,17 @@ ALTERNATE_SEQUENTIAL_TARGETS = 5  # target sequentially from front to back and b
 
 @runtime_checkable
 class AbstractExchangeManager(Protocol):
-    """Structural exchange-manager interface used by sampler kernels."""
+    """Structural exchange-manager interface used by sampler kernels.
+
+    Purely structural: concrete exchange managers must not inherit it
+    (nominal Protocol inheritance makes isinstance vacuous and turns the
+    stub bodies into methods returning None).
+    """
 
     @property
-    def track_full_exchanges(self) -> int: ...
-
-    @property
-    def inputs(self) -> NamedTuple: ...
+    def track_full_exchanges(self) -> bool:
+        """Whether the full exchange matrix is tracked."""
+        ...
 
     def do_ptmcmc_exchange(
         self,
@@ -251,64 +255,62 @@ def exchange_is_step_native(itrb: int) -> bool:
     return itrb % 2 == 0
 
 
-class ExchangeNativeInputs(NamedTuple):
-    """Compile-time inputs for the built-in native exchange functions."""
-
-    strategy: int
-    track_full_exchanges: bool
-
-
-@njit(inline='always')
-def _exchange_is_step_inputs_native(itrb: int, _input: ExchangeNativeInputs) -> bool:
-    """Per-class native exchange cadence."""
-    return exchange_is_step_native(itrb)
+# value-keyed store of the built-in native exchange bundles: managers
+# constructed with an equal strategy/tracking configuration reuse one
+# compiled executor, so equal-config samplers can share a kernel program
+_EXCHANGE_NATIVE_MEMO: dict[tuple[int, bool], NativeExchangeFunctions] = {}
 
 
-@njit(inline='always')
-def _exchange_native(
-    itrb: int,
-    samples: NDArray[np.floating],
-    logLs: NDArray[np.floating],
-    n_chain: int,
-    betas: NDArray[np.floating],
-    exchange_tracker: NDArray[np.int64],
-    esd_exchange: NDArray[np.floating],
-    chain_track: NDArray[np.int64],
-    inputs: ExchangeNativeInputs,
-) -> None:
-    """Per-class native exchange executor reading the strategy from the inputs bundle."""
-    do_ptmcmc_exchange(
-        itrb - 1,
-        samples,
-        logLs,
-        n_chain,
-        betas,
-        exchange_tracker,
-        esd_exchange,
-        chain_track,
-        inputs.strategy,
-        inputs.track_full_exchanges,
-    )
+def _make_exchange_natives(strategy: int, track_full_exchanges: bool) -> NativeExchangeFunctions:
+    """Bake the targeting strategy and tracking mode into the native executor."""
+    key = (strategy, track_full_exchanges)
+    cached = _EXCHANGE_NATIVE_MEMO.get(key)
+    if cached is not None:
+        return cached
+
+    @njit(inline='always')
+    def exchange_baked(
+        itrb: int,
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        n_chain: int,
+        betas: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
+    ) -> None:
+        do_ptmcmc_exchange(
+            itrb - 1,
+            samples,
+            logLs,
+            n_chain,
+            betas,
+            exchange_tracker,
+            esd_exchange,
+            chain_track,
+            strategy,
+            track_full_exchanges,
+        )
+
+    natives = NativeExchangeFunctions(is_exchange_step=exchange_is_step_native, exchange=exchange_baked)
+    _EXCHANGE_NATIVE_MEMO[key] = natives
+    return natives
 
 
-class ExchangeManager(AbstractExchangeManager):
+class ExchangeManager:
     """class to take a temperature ladder and state of a chain
     and define the strategy by which to propose exchanges
+
+    The strategy and tracking mode are baked into the native executor at
+    construction and must not be rebound afterwards; the Python methods
+    delegate to the same compiled functions the kernel binds.
     """
 
     def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
         """Select the exchange targeting strategy"""
-        self._inputs = ExchangeNativeInputs(strategy, track_full_exchanges)
-
-    @property
-    @override
-    def inputs(self) -> ExchangeNativeInputs:
-        return self._inputs
-
-    @property
-    @override
-    def track_full_exchanges(self) -> bool:
-        return self.inputs.track_full_exchanges
+        self.strategy: int = strategy
+        self.track_full_exchanges: bool = track_full_exchanges
+        self._natives: NativeExchangeFunctions = _make_exchange_natives(strategy, track_full_exchanges)
 
     def do_ptmcmc_exchange(
         self,
@@ -322,8 +324,8 @@ class ExchangeManager(AbstractExchangeManager):
     ) -> None:
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)
-        do_ptmcmc_exchange(
-            itrb - 1,
+        self._natives.exchange(
+            itrb,
             samples,
             logLs,
             T_ladder.n_chain,
@@ -331,16 +333,14 @@ class ExchangeManager(AbstractExchangeManager):
             exchange_tracker,
             esd_exchange,
             chain_track,
-            self.inputs.strategy,
-            self.inputs.track_full_exchanges,
         )
 
     def is_exchange_step(self, itrb: int) -> bool:
         """Check whether the step with the given index should be an exchange,
         currently based on alternating even and odd
         """
-        return exchange_is_step_native(itrb)
+        return self._natives.is_exchange_step(itrb)
 
-    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
-        """Return the per-class native exchange schedule and executor."""
-        return NativeExchangeFunctions(is_exchange_step=_exchange_is_step_inputs_native, exchange=_exchange_native)
+    def bind_native(self) -> NativeExchangeFunctions:
+        """Return the baked native exchange schedule and executor."""
+        return self._natives

@@ -24,7 +24,7 @@ owning manager's runtime state; likelihood handles have the
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, NamedTuple, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 from warnings import warn
 
 import numpy as np
@@ -58,8 +58,6 @@ if TYPE_CHECKING:
 _VALID_MODES = ('auto', 'numba', 'python')
 
 ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
-ExchangeStateT = TypeVar('ExchangeStateT')
-ExchangeStateT_contra = TypeVar('ExchangeStateT_contra', contravariant=True)
 
 
 class NativeBackendUnsupportedError(RuntimeError):
@@ -92,16 +90,16 @@ class NativePostStepCall(Protocol[ManagerStateT_contra]):
         ...
 
 
-class NativeExchangeStepCall(Protocol[ExchangeStateT_contra]):
-    """Jitted exchange cadence over the exchange manager's runtime state."""
+class NativeExchangeStepCall(Protocol):
+    """Jitted exchange cadence with the schedule constants baked in."""
 
-    def __call__(self, itrb: int, state: ExchangeStateT_contra, /) -> bool:
+    def __call__(self, itrb: int, /) -> bool:
         """Return whether step ``itrb`` is an exchange step."""
         ...
 
 
-class NativeExchangeCall(Protocol[ExchangeStateT_contra]):
-    """Jitted exchange executor over the exchange manager's runtime state."""
+class NativeExchangeCall(Protocol):
+    """Jitted exchange executor with the strategy constants baked in."""
 
     def __call__(
         self,
@@ -113,7 +111,6 @@ class NativeExchangeCall(Protocol[ExchangeStateT_contra]):
         exchange_tracker: NDArray[np.int64],
         esd_exchange: NDArray[np.floating],
         chain_track: NDArray[np.int64],
-        state: ExchangeStateT_contra,
         /,
     ) -> None:
         """Execute one exchange step."""
@@ -121,11 +118,11 @@ class NativeExchangeCall(Protocol[ExchangeStateT_contra]):
 
 
 @dataclass(frozen=True)
-class NativeExchangeFunctions(Generic[ExchangeStateT]):
-    """Per-class jitted exchange schedule and executor over a runtime state bundle."""
+class NativeExchangeFunctions:
+    """Jitted exchange schedule and executor with baked constants."""
 
-    is_exchange_step: NativeExchangeStepCall[Any]
-    exchange: NativeExchangeCall[Any]
+    is_exchange_step: NativeExchangeStepCall
+    exchange: NativeExchangeCall
 
 
 def _defining_class(cls: type, name: str) -> type | None:
@@ -182,8 +179,6 @@ def _exchange_problem(exchange_manager: object) -> str | None:
     cls = type(exchange_manager)
     if _defining_class(cls, 'bind_native') is None:
         return f'{cls.__qualname__} does not define bind_native'
-    if _defining_class(cls, 'inputs') is None:
-        return f'{cls.__qualname__} does not define inputs'
     for method_name in ('is_exchange_step', 'do_ptmcmc_exchange'):
         problem = _stale_native_override(cls, method_name, ('bind_native',))
         if problem is not None:
@@ -406,7 +401,7 @@ def make_serial_kernel(
     loglike: LoglikeFn,
     prior_factor: PriorFactorFn,
     validate_bounds: ValidateBoundsFn,
-    exchange_natives: NativeExchangeFunctions[Any],
+    exchange_natives: NativeExchangeFunctions,
 ) -> Callable[..., tuple[int, int]]:
     """Assemble the jitted serial block kernel for one bound graph structure.
 
@@ -434,7 +429,6 @@ def make_serial_kernel(
         accept_record: NDArray[np.int64],
         esd_record: NDArray[np.floating],
         manager_states: tuple[object, ...],
-        exchange_inputs: NamedTuple,
         jump_internal_evals: NDArray[np.int64],
         zero_loglike: bool,
     ) -> tuple[int, int]:
@@ -443,10 +437,8 @@ def make_serial_kernel(
         n_target_evals = 0
         n_internal_evals = 0
         for itrb in range(1, block_size + 1):
-            if is_exchange_step(itrb, exchange_inputs):
-                do_exchange(
-                    itrb, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track, exchange_inputs
-                )
+            if is_exchange_step(itrb):
+                do_exchange(itrb, samples, logLs, n_chain, betas, exchange_tracker, esd_exchange, chain_track)
             else:
                 for itrt in range(n_chain):
                     idx_jump = choose_prob_helper(jump_probs[itrt])
@@ -499,7 +491,7 @@ class NativeSerialProgram:
     likelihood_handles: tuple[LoglikeFn, PriorFactorFn, ValidateBoundsFn]
     per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...]
     post_steps: tuple[NativePostStepCall[Any] | None, ...]
-    exchange_natives: NativeExchangeFunctions[Any]
+    exchange_natives: NativeExchangeFunctions
 
 
 _PROGRAM_CACHE: dict[tuple[object, ...], NativeSerialProgram] = {}
@@ -529,7 +521,7 @@ def _structural_key(
     likelihood_handles: tuple[LoglikeFn, PriorFactorFn, ValidateBoundsFn],
     per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...],
     post_steps: tuple[NativePostStepCall[Any] | None, ...],
-    exchange_natives: NativeExchangeFunctions[Any],
+    exchange_natives: NativeExchangeFunctions,
 ) -> tuple[object, ...]:
     """Program cache key: the identities of the bound functions.
 
@@ -662,7 +654,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
             manager.native_state() if has_state else None
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
         )
-        exchange_inputs = proposal_manager.exchange_manager.inputs
         try:
             n_target_evals, n_internal_evals = program.kernel(
                 samples,
@@ -675,7 +666,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood]:
                 tracker_manager.accept_record,
                 tracker_manager.esd_record,
                 manager_states,
-                exchange_inputs,
                 self._jump_internal_evals,
                 zero_loglike,
             )
