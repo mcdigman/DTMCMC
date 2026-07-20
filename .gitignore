@@ -1,6 +1,6 @@
 .DS_store
 **/__pycache__/
-profiles/
+.profiles/
 .idea/
 .claude/
 .skylos/
