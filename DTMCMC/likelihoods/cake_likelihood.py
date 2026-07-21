@@ -151,12 +151,14 @@ class CakeLikelihood(RectangularLikelihood[CakeInputs]):
         self._tier_powers: tuple[float, ...] = tuple(exponent / 2 for exponent in self.exponents)
 
         low_lims = np.full(n_par, -cutoff)
+        low_lims.setflags(write=False)
         high_lims = np.full(n_par, cutoff)
+        high_lims.setflags(write=False)
 
-        RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
         self._inputs = CakeInputs(
-            self.n_par, self.low_lims, self.high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
+            n_par, low_lims, high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
         )
+        RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
     #    """Get the log likelihood given a set of parameters v"""

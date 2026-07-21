@@ -76,10 +76,12 @@ class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
         hawaii_interp = RegularGridInterpolator((self.xs_grid, self.ys_grid), self.log_hawaii_grid, method='linear')
 
         low_lims = np.array([self.xs_grid.min(), self.ys_grid.min()])
+        low_lims.setflags(write=False)
         high_lims = np.array([self.xs_grid.max(), self.ys_grid.max()])
+        high_lims.setflags(write=False)
 
-        RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
-        self._inputs = HawaiiInputs(n_par, self.low_lims, self.high_lims, hawaii_interp)
+        self._inputs = HawaiiInputs(n_par, low_lims, high_lims, hawaii_interp)
+        super().__init__(n_par, low_lims, high_lims)
 
     @property
     @override

@@ -745,7 +745,8 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             # happens before any execution, so the block arrays are untouched
             # and the Python path can rerun the block from samples[0]
             if self.mode == 'numba':
-                msg = 'fully native-bindable graph failed Numba compilation or execution'
+                cls = type(like_obj)
+                msg = f'fully native-bindable graph failed Numba compilation or execution for {cls.__qualname__} '
                 raise NativeBackendCompilationError(msg) from exc
             self.program = None
             warn(
