@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from numba import njit
 from numpy.typing import NDArray
+import scipy.interpolate
 
 from DTMCMC.auxilliary_manager import BlankJump
 from DTMCMC.de_manager import DEJumpManager, DEStandardFullJump
@@ -308,9 +309,9 @@ class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
     loglike_fn = staticmethod(_extension_loglike_native)
 
     def __init__(self, n_par: int = 4, center: float = 0.75, prior_rate: float = 0.5) -> None:
-        super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
         self.center = center
         self.prior_rate = prior_rate
+        super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
     #    return _extension_loglike(params_in, self.center, self.prior_rate)
@@ -551,13 +552,14 @@ def _run_standalone_graph(
 
 
 def _bad_native_loglike(params: NDArray[np.floating], _inputs: Any) -> float:
-    return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
+    return np.linalg.norm(scipy.interpolate.InterpolatedUnivariateSpline(np.arange(-5, 5), np.arange(-5, 5)**2, k=3)(params))
+    #return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
 
 
 class _BadNativeLikelihood[InputType: RectangularBoundsProtocol](RectangularLikelihood[RectangularBoundsProtocol]):
     """Valid Python likelihood with an intentionally invalid native function."""
 
-    loglike_fn = staticmethod(njit(inline='always')(_bad_native_loglike))
+    loglike_fn = staticmethod(_bad_native_loglike)
 
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
@@ -590,13 +592,19 @@ class _ManyInputLikelihood(RectangularLikelihood[_ManyInputNativeInput]):
     loglike_fn = staticmethod(_many_input_loglike_native)
 
     def __init__(self) -> None:
-        super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
         self.a, self.b, self.c, self.d, self.e = 1.0, 2.0, 3.0, 4.0, 5.0
+        n_par = 4
+        low_lims = np.full(n_par, -5.0)
+        low_lims.setflags(write=False)
+        high_lims = np.full(n_par, 5.0)
+        high_lims.setflags(write=False)
+        self._inputs = _ManyInputNativeInput(n_par, low_lims, high_lims, self.a, self.b, self.c, self.d, self.e)
+        super().__init__(n_par, low_lims, high_lims)
 
     @property
     @override
     def inputs(self) -> _ManyInputNativeInput:
-        return _ManyInputNativeInput(self.n_par, self.low_lims, self.high_lims, self.a, self.b, self.c, self.d, self.e)
+        return self._inputs
 
 
 def test_external_nonuniform_prior_contract_is_bit_exact() -> None:
@@ -719,7 +727,7 @@ def test_hawaii_likelihood_warns_in_auto_and_is_rejected_by_numba() -> None:
     with pytest.warns(RuntimeWarning, match='HawaiiLikelihood'):
         _state, selected = _run(_make_spec('hawaii', n_steps=4), 'auto')
     assert selected == 'python'
-    with pytest.raises(NativeBackendUnsupportedError, match='HawaiiLikelihood'):
+    with pytest.raises(NativeBackendCompilationError, match='HawaiiLikelihood'):
         _run(_make_spec('hawaii', n_steps=4), 'numba')
 
 
@@ -807,7 +815,7 @@ def test_structurally_identical_samplers_share_one_program() -> None:
         reset_seed_guard_for_tests()
 
 
-class _IncompleteLikelihood(AbstractLikelihood[NamedTuple]):
+class _IncompleteLikelihood():
     """Deliberately missing prior_draw/prior_factor/validate_bounds."""
 
     def __init__(self) -> None:
@@ -836,7 +844,7 @@ def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
         DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')
 
 
-class _FisherDeficientLikelihood(AbstractLikelihood[NamedTuple]):
+class _FisherDeficientLikelihood():
     """Implements a Likelihood Without Required Fisher support methods."""
 
     def __init__(self) -> None:

@@ -75,15 +75,22 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
         if prior_std <= 0.0:
             msg = 'prior_std must be positive'
             raise ValueError(msg)
-        super().__init__(n_par, np.full(n_par, -np.inf), np.full(n_par, np.inf))
 
         prior_mean_arr = np.full(n_par, prior_mean)
         prior_std_arr = np.full(n_par, prior_std)
         prior_mean_arr.setflags(write=False)
         prior_std_arr.setflags(write=False)
+
+        low_lims = np.full(n_par, -np.inf)
+        low_lims.setflags(write=False)
+
+        high_lims = np.full(n_par, np.inf)
+        high_lims.setflags(write=False)
+
         self._inputs_gauss: UniformRectangularGaussianInputs = UniformRectangularGaussianInputs(
-            self.n_par, self.low_lims, self.high_lims, prior_mean_arr, prior_std_arr
+            n_par, low_lims, high_lims, prior_mean_arr, prior_std_arr
         )
+        super().__init__(n_par, low_lims, high_lims)
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
     #    """Evaluate the constant likelihood."""
