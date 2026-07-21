@@ -155,9 +155,7 @@ class CakeLikelihood(RectangularLikelihood[CakeInputs]):
         high_lims = np.full(n_par, cutoff)
         high_lims.setflags(write=False)
 
-        self._inputs = CakeInputs(
-            n_par, low_lims, high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers
-        )
+        self._inputs = CakeInputs(n_par, low_lims, high_lims, self._tier_lognorms, self._tier_coefs, self._tier_powers)
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:

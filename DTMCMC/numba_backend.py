@@ -97,6 +97,22 @@ class NativeValidateBoundsCall(Protocol[LikeStateT_contra]):
         ...
 
 
+class NativeCorrectBoundsCall(Protocol[LikeStateT_contra]):
+    """Jitted bounds validation: ``AbstractLikelihood.check_bounds`` plus the state bundle."""
+
+    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> NDArray[np.floating]:
+        """Return the (possibly corrected) point and whether it is in bounds."""
+        ...
+
+
+class NativeCheckBoundsCall(Protocol[LikeStateT_contra]):
+    """Jitted bounds validation: ``AbstractLikelihood.check_bounds`` plus the state bundle."""
+
+    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> bool:
+        """Return the (possibly corrected) point and whether it is in bounds."""
+        ...
+
+
 class NativeJumpCall(Protocol[ManagerStateT_contra, LikeStateT_contra]):
     """Jitted jump: ``AbstractJump.__call__`` plus the manager and likelihood states."""
 

@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 import pytest
+import scipy.interpolate
 from numba import njit
 from numpy.typing import NDArray
-import scipy.interpolate
 
 from DTMCMC.auxilliary_manager import BlankJump
 from DTMCMC.de_manager import DEJumpManager, DEStandardFullJump
@@ -552,8 +552,10 @@ def _run_standalone_graph(
 
 
 def _bad_native_loglike(params: NDArray[np.floating], _inputs: Any) -> float:
-    return np.linalg.norm(scipy.interpolate.InterpolatedUnivariateSpline(np.arange(-5, 5), np.arange(-5, 5)**2, k=3)(params))
-    #return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
+    return np.linalg.norm(
+        scipy.interpolate.InterpolatedUnivariateSpline(np.arange(-5, 5), np.arange(-5, 5) ** 2, k=3)(params)
+    )
+    # return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
 
 
 class _BadNativeLikelihood[InputType: RectangularBoundsProtocol](RectangularLikelihood[RectangularBoundsProtocol]):
@@ -815,7 +817,7 @@ def test_structurally_identical_samplers_share_one_program() -> None:
         reset_seed_guard_for_tests()
 
 
-class _IncompleteLikelihood():
+class _IncompleteLikelihood:
     """Deliberately missing prior_draw/prior_factor/validate_bounds."""
 
     def __init__(self) -> None:
@@ -844,7 +846,7 @@ def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
         DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')
 
 
-class _FisherDeficientLikelihood():
+class _FisherDeficientLikelihood:
     """Implements a Likelihood Without Required Fisher support methods."""
 
     def __init__(self) -> None:

@@ -3,9 +3,9 @@ abstract class to hold a likelihood object
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, NamedTuple, Protocol, cast, override, runtime_checkable, overload
+from collections.abc import Callable
+from typing import Any, NamedTuple, Protocol, cast, override, runtime_checkable
 from warnings import warn
-import inspect
 
 import numpy as np
 from numba import njit
@@ -17,6 +17,8 @@ from numpy.typing import NDArray
 from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.numba_backend import (
     NativeBackendUnsupportedError,
+    NativeCheckBoundsCall,
+    NativeCorrectBoundsCall,
     NativeLikelihoodFunctions,
     NativeLoglikeCall,
     NativePriorDrawCall,
@@ -128,12 +130,14 @@ _COMPILED_MEMO: dict[Callable[..., object], Callable[..., object]] = {}
 # they mirror the hot-path call (a 1D C-contiguous float64 parameter
 # vector) but do not restrict the handle: the compiled dispatcher still
 # lazily specializes for any other argument types it is later called with
-_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (nb_types.Array(nb_types.float64, 1, 'C'),) # type: ignore[no-untyped-call]
+_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (nb_types.Array(nb_types.float64, 1, 'C'),)  # type: ignore[no-untyped-call]
 _NO_PROBE_ARGS: tuple[nb_types.Type, ...] = ()
 
 
 # TODO narrow types
-def compile_handle[F: PriorDrawFn | LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn](fn: F, probe_args: tuple[nb_types.Type, ...], owner: str, role: str) -> F:
+def compile_handle[F: PriorDrawFn | LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn](
+    fn: F, probe_args: tuple[nb_types.Type, ...], owner: str, role: str
+) -> F:
     """Eagerly nopython-compile a behavior handle, falling back to plain Python.
 
     Compilation is forced without executing ``fn``, so no RNG stream is
@@ -169,20 +173,71 @@ LIKELIHOOD_HANDLE_ROLES: tuple[tuple[str, str], ...] = (
     ('correct_bounds_fn', 'correct_bounds'),
 )
 
-def build_from_handle_no_params(fn: Callable[[NamedTuple], NDArray[np.floating]], inputs: NamedTuple, owner: str, role: str) -> PriorDrawFn:
+# value-keyed store of shared handles: two objects constructed with equal
+# baked constants reuse one compiled handle (and can therefore share one
+# compiled kernel program downstream). Entries live for the process, which
+# also keeps the baked arrays alive.
+_HANDLE_MEMO_NO_PARAMS: dict[tuple[object, ...], PriorDrawFn] = {}
+_HANDLE_MEMO_PARAMS: dict[tuple[object, ...], LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn] = {}
+
+
+def _freeze(value: object) -> object:
+    """Return a hashable, value-equal stand-in for a baked constant.
+
+    NamedTuple ``inputs`` may hold numpy arrays, which are unhashable, so key
+    the memo on a frozen surrogate that compares equal iff the array contents
+    (and dtype/shape) match.
+    """
+    if isinstance(value, np.ndarray):
+        return (
+            value.shape,
+            value.dtype.str,
+            value.dtype.byteorder,
+            value.flags['C_CONTIGUOUS'],
+            value.flags['F_CONTIGUOUS'],
+            value.tobytes(),
+        )
+    if isinstance(value, tuple):
+        return tuple(_freeze(item) for item in value)
+    try:
+        hash(value)
+    except TypeError as exc:
+        msg = f'Everything in the inputs NamedTuple must be hashable or a rule to hash it provided. Failed for {type(value).__qualname__}'
+        raise TypeError(msg) from exc
+
+    return value
+
+
+def build_from_handle_no_params[S](
+    fn: Callable[[S], NDArray[np.floating]], inputs: S, owner: str, role: str
+) -> PriorDrawFn:
+    key = (owner, role, _freeze(inputs))
+    got = _HANDLE_MEMO_NO_PARAMS.get(key)
+    if got is not None:
+        return got
     if role == 'prior_draw':
+
         def build_prior_draw() -> PriorDrawFn:
             def baked() -> NDArray[np.floating]:
                 return fn(inputs)
 
             return baked
 
-        return compile_handle(build_prior_draw(), _NO_PROBE_ARGS, owner, role)
-    else:
-        msg = f'Unrecognized role {role}'
-        raise NotImplementedError(msg)
+        got = compile_handle(build_prior_draw(), _NO_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_NO_PARAMS[key] = got
+        return got
+    msg = f'Unrecognized role {role}'
+    raise NotImplementedError(msg)
 
-def build_from_handle_params[T: bool | float | NDArray[np.floating] | tuple[NDArray[np.floating], bool]](fn: Callable[[NDArray[np.floating], NamedTuple], T], inputs: NamedTuple, owner: str, role: str) -> LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn:
+
+def build_from_handle_params[S, T: bool | float | NDArray[np.floating] | tuple[NDArray[np.floating], bool]](
+    fn: Callable[[NDArray[np.floating], S], T], inputs: S, owner: str, role: str
+) -> LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn:
+    key = (owner, role, _freeze(inputs))
+    got = _HANDLE_MEMO_PARAMS.get(key)
+    if got is not None:
+        return got
+
     if role == 'get_loglike':
 
         def build_loglike() -> LoglikeFn:
@@ -191,8 +246,10 @@ def build_from_handle_params[T: bool | float | NDArray[np.floating] | tuple[NDAr
 
             return cast('LoglikeFn', baked)
 
-        return compile_handle(build_loglike(), _PARAMS_PROBE_ARGS, owner, role)
-    elif role == 'prior_factor':
+        got = compile_handle(build_loglike(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    if role == 'prior_factor':
 
         def build_prior_factor() -> PriorFactorFn:
             def baked(params_in: NDArray[np.floating]) -> T:
@@ -200,8 +257,10 @@ def build_from_handle_params[T: bool | float | NDArray[np.floating] | tuple[NDAr
 
             return cast('PriorFactorFn', baked)
 
-        return compile_handle(build_prior_factor(), _PARAMS_PROBE_ARGS, owner, role)
-    elif role == 'validate_bounds':
+        got = compile_handle(build_prior_factor(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    if role == 'validate_bounds':
 
         def build_validate_bounds() -> ValidateBoundsFn:
             def baked(params_in: NDArray[np.floating]) -> T:
@@ -209,8 +268,10 @@ def build_from_handle_params[T: bool | float | NDArray[np.floating] | tuple[NDAr
 
             return cast('ValidateBoundsFn', baked)
 
-        return compile_handle(build_validate_bounds(), _PARAMS_PROBE_ARGS, owner, role)
-    elif role == 'check_bounds':
+        got = compile_handle(build_validate_bounds(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    if role == 'check_bounds':
 
         def build_check_bounds() -> CheckBoundsFn:
             def baked(params_in: NDArray[np.floating]) -> T:
@@ -218,19 +279,22 @@ def build_from_handle_params[T: bool | float | NDArray[np.floating] | tuple[NDAr
 
             return cast('CheckBoundsFn', baked)
 
-        return compile_handle(build_check_bounds(), _PARAMS_PROBE_ARGS, owner, role)
-    elif role == 'correct_bounds':
+        got = compile_handle(build_check_bounds(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    if role == 'correct_bounds':
 
         def build_correct_bounds() -> CorrectBoundsFn:
             def baked(params_in: NDArray[np.floating]) -> T:
                 return fn(params_in, inputs)
 
-            return cast('CorrectBoundsFn',baked)
+            return cast('CorrectBoundsFn', baked)
 
-        return compile_handle(build_correct_bounds(), _PARAMS_PROBE_ARGS, owner, role)
-    else:
-        msg = f'Unrecognized role {role}'
-        raise NotImplementedError(msg)
+        got = compile_handle(build_correct_bounds(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    msg = f'Unrecognized role {role}'
+    raise NotImplementedError(msg)
 
 
 class RectangularBoundsProtocol(Protocol):
@@ -257,8 +321,8 @@ class RectangularInputs(NamedTuple):
     high_lims: NDArray[np.floating]
 
 
-#@njit()
-@register_jitable(inline='always')
+# @njit()
+@register_jitable
 def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsProtocol) -> NDArray[np.floating]:
     """Wrap parameters into range"""
     for itrp in range(v.size):
@@ -266,8 +330,8 @@ def correct_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBound
     return v
 
 
-#@njit()
-@register_jitable(inline='always')
+# @njit()
+@register_jitable
 def prior_draw_rectangular(inputs: RectangularBoundsProtocol) -> NDArray[np.floating]:
     """Get a uniform prior draw with rectangular walls"""
     draw = np.zeros(inputs.n_par)
@@ -277,8 +341,8 @@ def prior_draw_rectangular(inputs: RectangularBoundsProtocol) -> NDArray[np.floa
     return draw
 
 
-#@njit()
-@register_jitable(inline='always')
+# @njit()
+@register_jitable
 def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsProtocol) -> bool:
     """Check if a sample is within the prior range"""
     for itrp in range(v.size):
@@ -287,8 +351,8 @@ def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsP
     return True
 
 
-#@njit()
-@register_jitable(inline='always')
+# @njit()
+@register_jitable
 def validate_bounds_rectangular(
     params_in: NDArray[np.floating], inputs: RectangularBoundsProtocol
 ) -> tuple[NDArray[np.floating], bool]:
@@ -302,15 +366,15 @@ def validate_bounds_rectangular(
     return new_point, success
 
 
-#@njit(inline='always')
-@register_jitable(inline='always')
+# @njit(inline='always')
+@register_jitable
 def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
     """Log density of a uniform prior, up to an additive constant."""
     return 0.0
 
 
-#@njit(inline='always')
-@register_jitable(inline='always')
+# @njit(inline='always')
+@register_jitable
 def _unavailable_loglike_fn(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
     """Return the per-class jitted ``(params, state) -> float`` log likelihood."""
     msg = 'No wired native log-likelihood binding for this path.'
@@ -322,15 +386,35 @@ class AbstractNativeLikelihood[InputType](ABC):
     prior_draw_fn: NativePriorDrawCall[InputType]
     prior_factor_fn: NativePriorFactorCall[InputType]
     validate_bounds_fn: NativeValidateBoundsCall[InputType]
+    check_bounds_fn: NativeCheckBoundsCall[InputType]
+    correct_bounds_fn: NativeCorrectBoundsCall[InputType]
 
     def __init__(self) -> None:
         owner = type(self).__qualname__
-        self._loglike_fn_baked: LoglikeFn = staticmethod(cast('LoglikeFn', build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike'))) 
-        self._prior_draw_fn_baked: PriorDrawFn = staticmethod(cast('PriorDrawFn', build_from_handle_no_params(self.prior_draw_fn, self.inputs, owner, 'prior_draw'))) 
-        self._prior_factor_fn_baked: PriorFactorFn = staticmethod(cast('PriorFactorFn', build_from_handle_params(self.prior_factor_fn, self.inputs, owner, 'prior_factor'))) 
-        self._validate_bounds_fn_baked: ValidateBoundsFN = staticmethod(cast('ValidateBoundsFn', build_from_handle_params(self.validate_bounds_fn, self.inputs, owner, 'validate_bounds')))
-        self._check_bounds_fn_baked: CheckBoundsFN = staticmethod(cast('CheckBoundsFn', build_from_handle_params(self.check_bounds_fn, self.inputs, owner, 'check_bounds')))
-        self._correct_bounds_fn_baked: CorrectBoundsFN = staticmethod(cast('CorrectBoundsFn', build_from_handle_params(self.correct_bounds_fn, self.inputs, owner, 'correct_bounds')))
+        self._loglike_fn_baked: LoglikeFn = staticmethod(
+            cast('LoglikeFn', build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike'))
+        )
+        self._prior_draw_fn_baked: PriorDrawFn = staticmethod(
+            build_from_handle_no_params(self.prior_draw_fn, self.inputs, owner, 'prior_draw')
+        )
+        self._prior_factor_fn_baked: PriorFactorFn = staticmethod(
+            cast('PriorFactorFn', build_from_handle_params(self.prior_factor_fn, self.inputs, owner, 'prior_factor'))
+        )
+        self._validate_bounds_fn_baked: ValidateBoundsFn = staticmethod(
+            cast(
+                'ValidateBoundsFn',
+                build_from_handle_params(self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'),
+            )
+        )
+        self._check_bounds_fn_baked: CheckBoundsFn = staticmethod(
+            cast('CheckBoundsFn', build_from_handle_params(self.check_bounds_fn, self.inputs, owner, 'check_bounds'))
+        )
+        self._correct_bounds_fn_baked: CorrectBoundsFn = staticmethod(
+            cast(
+                'CorrectBoundsFn',
+                build_from_handle_params(self.correct_bounds_fn, self.inputs, owner, 'correct_bounds'),
+            )
+        )
         return
 
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
