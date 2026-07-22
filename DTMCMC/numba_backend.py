@@ -35,85 +35,32 @@ from numba.core.errors import NumbaError
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import JumpManager, choose_prob_helper
+from DTMCMC.likelihood import (
+    NativeBackendCompilationError,
+    NativeBackendUnsupportedError,
+    NativeLikelihoodFunctions,
+)
 from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from DTMCMC.eval_accounting import EvalAccounting
-    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.likelihood import (
+        AbstractLikelihood,
+    )
     from DTMCMC.proposal_manager import AbstractProposalManager
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
     from DTMCMC.tracker_manager import TrackerManager
 
 _VALID_MODES = ('auto', 'numba', 'python')
 
-LikeStateT = TypeVar('LikeStateT')
-LikeStateT_contra = TypeVar('LikeStateT_contra', contravariant=True)
 ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
 ExchangeStateT = TypeVar('ExchangeStateT')
 ExchangeStateT_contra = TypeVar('ExchangeStateT_contra', contravariant=True)
 
 
-class NativeBackendUnsupportedError(RuntimeError):
-    """The requested object graph has no complete native binding."""
-
-
-class NativeBackendCompilationError(RuntimeError):
-    """A fully bindable native graph failed to compile or execute in Numba."""
-
-
-class NativeLoglikeCall(Protocol[LikeStateT_contra]):
-    """Jitted log-likelihood: ``AbstractLikelihood.get_loglike`` plus the state bundle."""
-
-    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> float:
-        """Return the log likelihood at ``params_in``."""
-        ...
-
-
-class NativePriorDrawCall(Protocol[LikeStateT_contra]):
-    """Jitted prior draw: ``AbstractLikelihood.prior_draw`` plus the state bundle."""
-
-    def __call__(self, state: LikeStateT_contra, /) -> NDArray[np.floating]:
-        """Return one draw from the prior."""
-        ...
-
-
-class NativePriorFactorCall(Protocol[LikeStateT_contra]):
-    """Jitted prior log density: ``AbstractLikelihood.prior_factor`` plus the state bundle."""
-
-    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> float:
-        """Return the untempered log prior density up to an additive constant."""
-        ...
-
-
-class NativeValidateBoundsCall(Protocol[LikeStateT_contra]):
-    """Jitted bounds validation: ``AbstractLikelihood.validate_bounds`` plus the state bundle."""
-
-    def __call__(
-        self, params_in: NDArray[np.floating], state: LikeStateT_contra, /
-    ) -> tuple[NDArray[np.floating], bool]:
-        """Return the (possibly corrected) point and whether it is in bounds."""
-        ...
-
-
-class NativeCorrectBoundsCall(Protocol[LikeStateT_contra]):
-    """Jitted bounds validation: ``AbstractLikelihood.check_bounds`` plus the state bundle."""
-
-    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> NDArray[np.floating]:
-        """Return the (possibly corrected) point and whether it is in bounds."""
-        ...
-
-
-class NativeCheckBoundsCall(Protocol[LikeStateT_contra]):
-    """Jitted bounds validation: ``AbstractLikelihood.check_bounds`` plus the state bundle."""
-
-    def __call__(self, params_in: NDArray[np.floating], state: LikeStateT_contra, /) -> bool:
-        """Return the (possibly corrected) point and whether it is in bounds."""
-        ...
-
-
-class NativeJumpCall(Protocol[ManagerStateT_contra, LikeStateT_contra]):
+class NativeJumpCall(Protocol[ManagerStateT_contra]):
     """Jitted jump: ``AbstractJump.__call__`` plus the manager and likelihood states."""
 
     def __call__(
@@ -121,7 +68,6 @@ class NativeJumpCall(Protocol[ManagerStateT_contra, LikeStateT_contra]):
         sample_point: NDArray[np.floating],
         itrt: int,
         manager_state: ManagerStateT_contra,
-        like_state: LikeStateT_contra,
         /,
     ) -> tuple[NDArray[np.floating], float, bool]:
         """Return the proposed point, its density factor, and success."""
@@ -162,23 +108,6 @@ class NativeExchangeCall(Protocol[ExchangeStateT_contra]):
     ) -> None:
         """Execute one exchange step."""
         ...
-
-
-@dataclass(frozen=True)
-class NativeLikelihoodFunctions(Generic[LikeStateT]):
-    """Per-class jitted likelihood functions consuming a runtime state bundle.
-
-    Signatures match the ``AbstractLikelihood`` methods minus ``self`` plus
-    the state; the kernel treats the state as opaque, so it never sees
-    bounds, priors, or any other likelihood internals. Hooks must return the
-    same function objects on every call so structurally identical samplers
-    share one compiled program.
-    """
-
-    loglike: NativeLoglikeCall[Any]
-    prior_draw: NativePriorDrawCall[Any]
-    prior_factor: NativePriorFactorCall[Any]
-    validate_bounds: NativeValidateBoundsCall[Any]
 
 
 @dataclass(frozen=True)
@@ -336,7 +265,7 @@ class _LocalDispatchCall(Protocol):
     """Internal chain link: one manager's jumps behind a local index."""
 
     def __call__(
-        self, idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: Any, like_state: Any, /
+        self, idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: Any, /
     ) -> tuple[NDArray[np.floating], float, bool]:
         """Dispatch the manager-local jump index."""
         ...
@@ -351,14 +280,13 @@ class _ManagerDispatchCall(Protocol):
         sample_point: NDArray[np.floating],
         itrt: int,
         states: tuple[Any, ...],
-        like_state: Any,
         /,
     ) -> tuple[NDArray[np.floating], float, bool]:
         """Dispatch the flattened jump index."""
         ...
 
 
-def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any, Any], ...]) -> _LocalDispatchCall:
+def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any], ...]) -> _LocalDispatchCall:
     """Dispatch a manager-local jump index over one manager's bound jumps.
 
     The recursion happens in Python at assembly time; with
@@ -372,26 +300,32 @@ def _build_local_dispatch(jump_calls: tuple[NativeJumpCall[Any, Any], ...]) -> _
 
         @njit(inline='always')
         def dispatch_leaf(
-            _idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object, like_state: object
+            _idx_jump: int,
+            sample_point: NDArray[np.floating],
+            itrt: int,
+            state: object,
         ) -> tuple[NDArray[np.floating], float, bool]:
-            return head(sample_point, itrt, state, like_state)
+            return head(sample_point, itrt, state)
 
         return dispatch_leaf
     rest = _build_local_dispatch(jump_calls[1:])
 
     @njit(inline='always')
     def dispatch(
-        idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object, like_state: object
+        idx_jump: int,
+        sample_point: NDArray[np.floating],
+        itrt: int,
+        state: object,
     ) -> tuple[NDArray[np.floating], float, bool]:
         if idx_jump == 0:
-            return head(sample_point, itrt, state, like_state)
-        return rest(idx_jump - 1, sample_point, itrt, state, like_state)
+            return head(sample_point, itrt, state)
+        return rest(idx_jump - 1, sample_point, itrt, state)
 
     return dispatch
 
 
 def _build_manager_dispatch(
-    per_manager_calls: tuple[tuple[NativeJumpCall[Any, Any], ...], ...],
+    per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...],
 ) -> _ManagerDispatchCall:
     """Dispatch a flattened jump index over the managers' bound jumps.
 
@@ -409,9 +343,8 @@ def _build_manager_dispatch(
             sample_point: NDArray[np.floating],
             itrt: int,
             states: tuple[object, ...],
-            like_state: object,
         ) -> tuple[NDArray[np.floating], float, bool]:
-            return head(idx_jump, sample_point, itrt, states[0], like_state)
+            return head(idx_jump, sample_point, itrt, states[0])
 
         return dispatch_last
     rest = _build_manager_dispatch(per_manager_calls[1:])
@@ -422,11 +355,10 @@ def _build_manager_dispatch(
         sample_point: NDArray[np.floating],
         itrt: int,
         states: tuple[object, ...],
-        like_state: object,
     ) -> tuple[NDArray[np.floating], float, bool]:
         if idx_jump < n_head:
-            return head(idx_jump, sample_point, itrt, states[0], like_state)
-        return rest(idx_jump - n_head, sample_point, itrt, states[1:], like_state)
+            return head(idx_jump, sample_point, itrt, states[0])
+        return rest(idx_jump - n_head, sample_point, itrt, states[1:])
 
     return dispatch
 
@@ -475,7 +407,7 @@ def _build_post_chain(post_steps: tuple[NativePostStepCall[Any] | None, ...]) ->
 
 
 def make_serial_kernel(
-    per_manager_calls: tuple[tuple[NativeJumpCall[Any, Any], ...], ...],
+    per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...],
     post_steps: tuple[NativePostStepCall[Any] | None, ...],
     likelihood_natives: NativeLikelihoodFunctions[Any],
     exchange_natives: NativeExchangeFunctions[Any],
@@ -496,7 +428,7 @@ def make_serial_kernel(
     is_exchange_step = exchange_natives.is_exchange_step
     do_exchange = exchange_natives.exchange
 
-    @njit()
+    # @njit()
     def advance_block_numba_serial(
         samples: NDArray[np.floating],
         logLs: NDArray[np.floating],
@@ -507,7 +439,6 @@ def make_serial_kernel(
         esd_exchange: NDArray[np.floating],
         accept_record: NDArray[np.int64],
         esd_record: NDArray[np.floating],
-        like_state: object,
         manager_states: tuple[object, ...],
         exchange_inputs: NamedTuple,
         jump_internal_evals: NDArray[np.int64],
@@ -526,17 +457,17 @@ def make_serial_kernel(
                 for itrt in range(n_chain):
                     idx_jump = choose_prob_helper(jump_probs[itrt])
                     sample_point = samples[itrb - 1, itrt]
-                    new_point, density_fac, success = dispatch(idx_jump, sample_point, itrt, manager_states, like_state)
+                    new_point, density_fac, success = dispatch(idx_jump, sample_point, itrt, manager_states)
                     n_internal_evals += jump_internal_evals[idx_jump]
                     if success:
-                        new_point, success = validate_bounds(new_point, like_state)
+                        new_point, success = validate_bounds(new_point)
                     if success:
-                        density_fac += prior_factor(new_point, like_state) - prior_factor(sample_point, like_state)
+                        density_fac += prior_factor(new_point) - prior_factor(sample_point)
                     if success:
                         if zero_loglike:
                             logL_new = 0.0
                         else:
-                            logL_new = loglike(new_point, like_state)
+                            logL_new = loglike(new_point)
                         n_target_evals += 1
                     else:
                         logL_new = -np.inf
@@ -572,7 +503,7 @@ class NativeSerialProgram:
 
     kernel: Callable[..., tuple[int, int]]
     likelihood_natives: NativeLikelihoodFunctions[Any]
-    per_manager_calls: tuple[tuple[NativeJumpCall[Any, Any], ...], ...]
+    per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...]
     post_steps: tuple[NativePostStepCall[Any] | None, ...]
     exchange_natives: NativeExchangeFunctions[Any]
 
@@ -602,7 +533,7 @@ def _graph_identity[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
 def _structural_key(
     likelihood_natives: NativeLikelihoodFunctions[Any],
-    per_manager_calls: tuple[tuple[NativeJumpCall[Any, Any], ...], ...],
+    per_manager_calls: tuple[tuple[NativeJumpCall[Any], ...], ...],
     post_steps: tuple[NativePostStepCall[Any] | None, ...],
     exchange_natives: NativeExchangeFunctions[Any],
 ) -> tuple[object, ...]:
@@ -648,7 +579,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         """Bind every component and fetch or assemble the structural program."""
         _check_flattening(proposal_manager)
         likelihood_natives = like_obj.bind_native()
-        per_manager_calls: list[tuple[NativeJumpCall[Any, Any], ...]] = []
+        per_manager_calls: list[tuple[NativeJumpCall[Any], ...]] = []
         post_steps: list[NativePostStepCall[Any] | None] = []
         manager_has_state: list[bool] = []
         for manager in proposal_manager.managers:
@@ -733,7 +664,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         program = self.program
         # runtime state bundles are re-read at every block entry, so
         # configuration changes between blocks behave like the Python path
-        like_state = like_obj.inputs
         manager_states = tuple(
             manager.native_state() if has_state else None
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
@@ -750,7 +680,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
                 tracker_manager.esd_exchange,
                 tracker_manager.accept_record,
                 tracker_manager.esd_record,
-                like_state,
                 manager_states,
                 exchange_inputs,
                 self._jump_internal_evals,
