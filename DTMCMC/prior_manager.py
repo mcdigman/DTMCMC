@@ -10,36 +10,36 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions, NativePriorDrawCall, NativePriorFactorCall
+from DTMCMC.numba_backend import NativeJumpCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
-    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.likelihood import AbstractLikelihood, NativeLikelihoodFunctions, PriorProposalFn
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 # composition memo keyed on the likelihood's per-class functions: repeated
 # binds return the same jitted function, so structurally identical samplers
 # share one compiled program (holding the keys alive keeps ids stable)
-_PRIOR_NATIVE_MEMO: dict[tuple[object, object], NativeJumpCall[None, object]] = {}
+_PRIOR_NATIVE_MEMO: dict[PriorProposalFn, NativeJumpCall[None]] = {}
 
 
 def _make_prior_native(
-    prior_draw: NativePriorDrawCall[object], prior_factor: NativePriorFactorCall[object]
-) -> NativeJumpCall[None, object]:
+    prior_proposal: PriorProposalFn,
+) -> NativeJumpCall[None]:
     """Compose the likelihood's native prior draw and density into a jump."""
-    key = (prior_draw, prior_factor)
+    key = prior_proposal
     cached = _PRIOR_NATIVE_MEMO.get(key)
     if cached is not None:
         return cached
 
     @njit(inline='always')
     def prior_native(
-        sample_point: NDArray[np.floating], _itrt: int, _manager_state: None, like_state: object
+        sample_point: NDArray[np.floating],
+        _itrt: int,
+        _manager_state: None,
     ) -> tuple[NDArray[np.floating], float, bool]:
-        new_point = prior_draw(like_state)
-        density_fac = prior_factor(sample_point, like_state) - prior_factor(new_point, like_state)
-        return new_point, density_fac, True
+        return prior_proposal(sample_point)
 
     _PRIOR_NATIVE_MEMO[key] = prior_native
     return prior_native
@@ -52,15 +52,12 @@ class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump
         self.manager: JumpManager[LikelihoodType] = manager
         self.print_name = 'Prior All-D'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None, object]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None]:
         """Compose the likelihood's own native prior draw and density functions."""
-        return _make_prior_native(likelihood_natives.prior_draw, likelihood_natives.prior_factor)
+        return _make_prior_native(likelihood_natives.prior_proposal)
 
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        del itrt
-        new_point = self.manager.like_obj.prior_draw()
-        density_fac = self.manager.like_obj.prior_factor(sample_point) - self.manager.like_obj.prior_factor(new_point)
-        return new_point, density_fac, True
+    def __call__(self, sample_point: NDArray[np.floating], _itrt: int) -> tuple[NDArray[np.floating], float, bool]:
+        return self.manager.like_obj.prior_proposal(sample_point)
 
 
 @dataclass(init=False)
