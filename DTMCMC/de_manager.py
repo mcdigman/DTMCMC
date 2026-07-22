@@ -10,7 +10,8 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeJumpCall, NativeLikelihoodFunctions, NativePostStepCall
+from DTMCMC.likelihood import NativeLikelihoodFunctions  # noqa: TC001
+from DTMCMC.numba_backend import NativeJumpCall, NativePostStepCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -77,7 +78,9 @@ class DENativeState(NamedTuple):
 
 @njit(inline='always')
 def _de_standard_full_native(
-    sample_point: NDArray[np.floating], itrt: int, state: DENativeState, _like_state: object
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
 ) -> tuple[NDArray[np.floating], float, bool]:
     """Per-class native standard-size DE jump in all dimensions."""
     return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, False)
@@ -85,7 +88,9 @@ def _de_standard_full_native(
 
 @njit(inline='always')
 def _de_standard_subspace_native(
-    sample_point: NDArray[np.floating], itrt: int, state: DENativeState, _like_state: object
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
 ) -> tuple[NDArray[np.floating], float, bool]:
     """Per-class native standard-size DE jump in a random subspace."""
     return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, False)
@@ -93,7 +98,9 @@ def _de_standard_subspace_native(
 
 @njit(inline='always')
 def _de_big_full_native(
-    sample_point: NDArray[np.floating], itrt: int, state: DENativeState, _like_state: object
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
 ) -> tuple[NDArray[np.floating], float, bool]:
     """Per-class native full-length DE jump in all dimensions."""
     return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, False, True)
@@ -101,7 +108,9 @@ def _de_big_full_native(
 
 @njit(inline='always')
 def _de_big_subspace_native(
-    sample_point: NDArray[np.floating], itrt: int, state: DENativeState, _like_state: object
+    sample_point: NDArray[np.floating],
+    itrt: int,
+    state: DENativeState,
 ) -> tuple[NDArray[np.floating], float, bool]:
     """Per-class native full-length DE jump in a random subspace."""
     return apply_de_helper(state.de_buffer, state.de_subspace_frac, itrt, sample_point, True, True)
@@ -148,9 +157,7 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Abstrac
         self.manager: DEJumpManager[LikelihoodType] = manager
         self.print_name = 'DE Std All-D'
 
-    def bind_native(
-        self, likelihood_natives: NativeLikelihoodFunctions[object]
-    ) -> NativeJumpCall[DENativeState, object]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
         """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
         return _de_standard_full_native
@@ -170,9 +177,7 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple
         self.manager: DEJumpManager[LikelihoodType] = manager
         self.print_name = 'DE Std Random-D'
 
-    def bind_native(
-        self, likelihood_natives: NativeLikelihoodFunctions[object]
-    ) -> NativeJumpCall[DENativeState, object]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
         """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
         return _de_standard_subspace_native
@@ -192,9 +197,7 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump
         self.manager: DEJumpManager[LikelihoodType] = manager
         self.print_name = 'DE Big All-D'
 
-    def bind_native(
-        self, likelihood_natives: NativeLikelihoodFunctions[object]
-    ) -> NativeJumpCall[DENativeState, object]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
         """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
         return _de_big_full_native
@@ -214,9 +217,7 @@ class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Ab
         self.manager: DEJumpManager[LikelihoodType] = manager
         self.print_name = 'DE Big Random-D'
 
-    def bind_native(
-        self, likelihood_natives: NativeLikelihoodFunctions[object]
-    ) -> NativeJumpCall[DENativeState, object]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
         """Return the per-class native jump reading the manager runtime state."""
         del likelihood_natives
         return _de_big_subspace_native

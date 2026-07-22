@@ -4,7 +4,8 @@ abstract class to hold a likelihood object
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, NamedTuple, Protocol, cast, override, runtime_checkable
+from dataclasses import dataclass
+from typing import Any, NamedTuple, Protocol, cast, final, override, runtime_checkable
 from warnings import warn
 
 import numpy as np
@@ -15,16 +16,27 @@ from numba.extending import is_jitted, register_jitable
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
-from DTMCMC.numba_backend import (
-    NativeBackendUnsupportedError,
-    NativeCheckBoundsCall,
-    NativeCorrectBoundsCall,
-    NativeLikelihoodFunctions,
-    NativeLoglikeCall,
-    NativePriorDrawCall,
-    NativePriorFactorCall,
-    NativeValidateBoundsCall,
-)
+
+type LoglikeFn = Callable[[NDArray[np.floating]], float]
+type PriorDrawFn = Callable[[], NDArray[np.floating]]
+type PriorFactorFn = Callable[[NDArray[np.floating]], float]
+type PriorProposalFn = Callable[[NDArray[np.floating]], tuple[NDArray[np.floating], float, bool]]
+type ValidateBoundsFn = Callable[[NDArray[np.floating]], tuple[NDArray[np.floating], bool]]
+type CheckBoundsFn = Callable[[NDArray[np.floating]], bool]
+type CorrectBoundsFn = Callable[[NDArray[np.floating]], NDArray[np.floating]]
+
+
+@dataclass(frozen=True)
+class NativeLikelihoodFunctions[InputType]:
+    """Per-class function handles for the key functionality that needs them."""
+
+    loglike: LoglikeFn
+    prior_draw: PriorDrawFn
+    prior_factor: PriorFactorFn
+    prior_proposal: PriorProposalFn
+    validate_bounds: ValidateBoundsFn
+    check_bounds: CheckBoundsFn
+    correct_bounds: CorrectBoundsFn
 
 
 @runtime_checkable
@@ -71,6 +83,10 @@ class AbstractLikelihood[InputType](Protocol):
         """
         ...
 
+    def prior_proposal(self, params_in: NDArray[np.floating], /) -> tuple[NDArray[np.floating], float, bool]:
+        """Get a prior proposal."""
+        ...
+
     def correct_bounds(self, params_in: NDArray[np.floating], /) -> NDArray[np.floating]:
         """Correct the bounds for the input parameters to be within the prior range.
         input:
@@ -101,6 +117,10 @@ class AbstractLikelihood[InputType](Protocol):
         """Get formatted axis labels for corner plots"""
         ...
 
+    def bind_native(self, /) -> NativeLikelihoodFunctions[InputType]:
+        """Get the bundle of functions as baked callables."""
+        ...
+
     def format_samples_output(
         self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
     ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
@@ -112,12 +132,30 @@ class AbstractLikelihood[InputType](Protocol):
         ...
 
 
-type LoglikeFn = Callable[[NDArray[np.floating]], float]
-type PriorDrawFn = Callable[[], NDArray[np.floating]]
-type PriorFactorFn = Callable[[NDArray[np.floating]], float]
-type ValidateBoundsFn = Callable[[NDArray[np.floating]], tuple[NDArray[np.floating], bool]]
-type CheckBoundsFn = Callable[[NDArray[np.floating]], bool]
-type CorrectBoundsFn = Callable[[NDArray[np.floating]], NDArray[np.floating]]
+type NativeLoglikeCall[InputType] = Callable[[NDArray[np.floating], InputType], float]
+type NativePriorDrawCall[InputType] = Callable[[InputType], NDArray[np.floating]]
+type NativePriorFactorCall[InputType] = Callable[[NDArray[np.floating], InputType], float]
+type NativePriorProposalCall[InputType] = Callable[
+    [NDArray[np.floating], InputType], tuple[NDArray[np.floating], float, bool]
+]
+type NativeValidateBoundsCall[InputType] = Callable[
+    [NDArray[np.floating], InputType], tuple[NDArray[np.floating], bool]
+]
+type NativeCorrectBoundsCall[InputType] = Callable[[NDArray[np.floating], InputType], NDArray[np.floating]]
+
+type NativeCheckBoundsCall[InputType] = Callable[[NDArray[np.floating], InputType], bool]
+
+
+class CompilationFallbackWarning(RuntimeWarning):
+    """A native behavior handle failed nopython compilation and fell back to plain Python."""
+
+
+class NativeBackendUnsupportedError(RuntimeError):
+    """The requested object graph has no complete native binding."""
+
+
+class NativeBackendCompilationError(RuntimeError):
+    """The requested object graph has no complete native binding."""
 
 
 # compiled-dispatcher store keyed by the underlying function object: a
@@ -135,9 +173,9 @@ _NO_PROBE_ARGS: tuple[nb_types.Type, ...] = ()
 
 
 # TODO narrow types
-def compile_handle[F: PriorDrawFn | LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn](
-    fn: F, probe_args: tuple[nb_types.Type, ...], owner: str, role: str
-) -> F:
+def compile_handle[
+    F: PriorDrawFn | LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn | PriorFactorFn | PriorProposalFn
+](fn: F, probe_args: tuple[nb_types.Type, ...], owner: str, role: str) -> F:
     """Eagerly nopython-compile a behavior handle, falling back to plain Python.
 
     Compilation is forced without executing ``fn``, so no RNG stream is
@@ -156,7 +194,7 @@ def compile_handle[F: PriorDrawFn | LoglikeFn | ValidateBoundsFn | CheckBoundsFn
     except NumbaError as exc:
         warn(
             f'{owner} {role} failed nopython compilation and will run as plain Python: {exc}',
-            RuntimeWarning,
+            CompilationFallbackWarning,
             stacklevel=2,
         )
         return fn
@@ -168,6 +206,7 @@ LIKELIHOOD_HANDLE_ROLES: tuple[tuple[str, str], ...] = (
     ('loglike_fn', 'get_loglike'),
     ('prior_draw_fn', 'prior_draw'),
     ('prior_factor_fn', 'prior_factor'),
+    ('prior_proposal_fn', 'prior_proposal'),
     ('validate_bounds_fn', 'validate_bounds'),
     ('check_bounds_fn', 'check_bounds'),
     ('correct_bounds_fn', 'correct_bounds'),
@@ -178,7 +217,9 @@ LIKELIHOOD_HANDLE_ROLES: tuple[tuple[str, str], ...] = (
 # compiled kernel program downstream). Entries live for the process, which
 # also keeps the baked arrays alive.
 _HANDLE_MEMO_NO_PARAMS: dict[tuple[object, ...], PriorDrawFn] = {}
-_HANDLE_MEMO_PARAMS: dict[tuple[object, ...], LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn] = {}
+_HANDLE_MEMO_PARAMS: dict[
+    tuple[object, ...], LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn | PriorFactorFn | PriorProposalFn
+] = {}
 
 
 def _freeze(value: object) -> object:
@@ -230,9 +271,16 @@ def build_from_handle_no_params[S](
     raise NotImplementedError(msg)
 
 
-def build_from_handle_params[S, T: bool | float | NDArray[np.floating] | tuple[NDArray[np.floating], bool]](
+def build_from_handle_params[
+    S,
+    T: bool
+    | float
+    | NDArray[np.floating]
+    | tuple[NDArray[np.floating], bool]
+    | tuple[NDArray[np.floating], float, bool],
+](
     fn: Callable[[NDArray[np.floating], S], T], inputs: S, owner: str, role: str
-) -> LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn:
+) -> LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn | PriorProposalFn | PriorFactorFn:
     key = (owner, role, _freeze(inputs))
     got = _HANDLE_MEMO_PARAMS.get(key)
     if got is not None:
@@ -258,6 +306,17 @@ def build_from_handle_params[S, T: bool | float | NDArray[np.floating] | tuple[N
             return cast('PriorFactorFn', baked)
 
         got = compile_handle(build_prior_factor(), _PARAMS_PROBE_ARGS, owner, role)
+        _HANDLE_MEMO_PARAMS[key] = got
+        return got
+    if role == 'prior_proposal':
+
+        def build_prior_proposal() -> PriorProposalFn:
+            def baked(params_in: NDArray[np.floating]) -> T:
+                return fn(params_in, inputs)
+
+            return cast('PriorProposalFn', baked)
+
+        got = compile_handle(build_prior_proposal(), _PARAMS_PROBE_ARGS, owner, role)
         _HANDLE_MEMO_PARAMS[key] = got
         return got
     if role == 'validate_bounds':
@@ -381,62 +440,102 @@ def _unavailable_loglike_fn(_params_in: NDArray[np.floating], _inputs: Rectangul
     raise NativeBackendUnsupportedError(msg)
 
 
+def _prior_proposal_function[InputType](
+    prior_draw_fn: NativePriorDrawCall[InputType], prior_factor_fn: NativePriorFactorCall[InputType]
+) -> NativePriorProposalCall[InputType]:
+    @register_jitable
+    def proposal_function(
+        params_in: NDArray[np.floating], inputs: InputType
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        params_new = prior_draw_fn(inputs)
+        prior_factor = prior_factor_fn(params_in, inputs) - prior_factor_fn(params_new, inputs)
+        return params_new, prior_factor, True
+
+    return cast('NativePriorProposalCall[InputType]', proposal_function)
+
+
 class AbstractNativeLikelihood[InputType](ABC):
     loglike_fn: NativeLoglikeCall[InputType]
     prior_draw_fn: NativePriorDrawCall[InputType]
     prior_factor_fn: NativePriorFactorCall[InputType]
+    prior_proposal_fn: NativePriorProposalCall[InputType]
     validate_bounds_fn: NativeValidateBoundsCall[InputType]
     check_bounds_fn: NativeCheckBoundsCall[InputType]
     correct_bounds_fn: NativeCorrectBoundsCall[InputType]
+    _prior_draw_fn_baked: PriorDrawFn
+    _prior_factor_fn_baked: PriorFactorFn
+    _validate_bounds_fn_baked: ValidateBoundsFn
+    _check_bounds_fn_baked: CheckBoundsFn
+    _correct_bounds_fn_baked: CorrectBoundsFn
+    _prior_proposal_fn_baked: PriorProposalFn
 
     def __init__(self) -> None:
         owner = type(self).__qualname__
-        self._loglike_fn_baked: LoglikeFn = staticmethod(
-            cast('LoglikeFn', build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike'))
+        self._loglike_fn_baked: LoglikeFn = cast(
+            'LoglikeFn', build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike')
         )
-        self._prior_draw_fn_baked: PriorDrawFn = staticmethod(
-            build_from_handle_no_params(self.prior_draw_fn, self.inputs, owner, 'prior_draw')
+
+        self._prior_draw_fn_baked: PriorDrawFn = build_from_handle_no_params(
+            self.prior_draw_fn, self.inputs, owner, 'prior_draw'
         )
-        self._prior_factor_fn_baked: PriorFactorFn = staticmethod(
-            cast('PriorFactorFn', build_from_handle_params(self.prior_factor_fn, self.inputs, owner, 'prior_factor'))
+
+        self._prior_factor_fn_baked: PriorFactorFn = cast(
+            'PriorFactorFn', build_from_handle_params(self.prior_factor_fn, self.inputs, owner, 'prior_factor')
         )
-        self._validate_bounds_fn_baked: ValidateBoundsFn = staticmethod(
-            cast(
-                'ValidateBoundsFn',
-                build_from_handle_params(self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'),
-            )
+
+        self._validate_bounds_fn_baked: ValidateBoundsFn = cast(
+            'ValidateBoundsFn',
+            build_from_handle_params(self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'),
         )
-        self._check_bounds_fn_baked: CheckBoundsFn = staticmethod(
-            cast('CheckBoundsFn', build_from_handle_params(self.check_bounds_fn, self.inputs, owner, 'check_bounds'))
+
+        self._check_bounds_fn_baked: CheckBoundsFn = cast(
+            'CheckBoundsFn', build_from_handle_params(self.check_bounds_fn, self.inputs, owner, 'check_bounds')
         )
-        self._correct_bounds_fn_baked: CorrectBoundsFn = staticmethod(
-            cast(
-                'CorrectBoundsFn',
-                build_from_handle_params(self.correct_bounds_fn, self.inputs, owner, 'correct_bounds'),
-            )
+
+        self._correct_bounds_fn_baked: CorrectBoundsFn = cast(
+            'CorrectBoundsFn',
+            build_from_handle_params(self.correct_bounds_fn, self.inputs, owner, 'correct_bounds'),
         )
+
+        self.prior_proposal_fn = _prior_proposal_function(self.prior_draw_fn, self.prior_factor_fn)
+        self._prior_proposal_fn_baked = cast(
+            'PriorProposalFn',
+            build_from_handle_params(self.prior_proposal_fn, self.inputs, owner, 'prior_proposal'),
+        )
+
         return
 
+    @final
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         """Get the density factor for prior draws assuming a uniform prior"""
         return self._prior_factor_fn_baked(params_in)
 
+    @final
     def prior_draw(self) -> NDArray[np.floating]:
         """Get a draw from the prior"""
         return self._prior_draw_fn_baked()
 
+    @final
+    def prior_proposal(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], float, bool]:
+        """Get a prior proposal."""
+        return self._prior_proposal_fn_baked(params_in)
+
+    @final
     def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
         """Check the parameters and correct if required."""
         return self._validate_bounds_fn_baked(params_in)
 
+    @final
     def check_bounds(self, params_in: NDArray[np.floating]) -> bool:
         """Check the parameters."""
         return self._check_bounds_fn_baked(params_in)
 
+    @final
     def correct_bounds(self, params_in: NDArray[np.floating]) -> NDArray[np.floating]:
         """Correct bounds without checking if required first."""
         return self._correct_bounds_fn_baked(params_in)
 
+    @final
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         """Get the log likelihood at the specified parameters.
         input:
@@ -445,6 +544,19 @@ class AbstractNativeLikelihood[InputType](ABC):
             logL: a scalar float likelihood
         """
         return self._loglike_fn_baked(params_in)
+
+    @final
+    def bind_native(self) -> NativeLikelihoodFunctions[Any]:
+        """Assemble the per-class native likelihood functions for the block kernel."""
+        return NativeLikelihoodFunctions(
+            loglike=self._loglike_fn_baked,
+            prior_draw=self._prior_draw_fn_baked,
+            prior_factor=self._prior_factor_fn_baked,
+            validate_bounds=self._validate_bounds_fn_baked,
+            prior_proposal=self._prior_proposal_fn_baked,
+            check_bounds=self._check_bounds_fn_baked,
+            correct_bounds=self._correct_bounds_fn_baked,
+        )
 
     @property
     @abstractmethod
@@ -469,8 +581,8 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
     prior_factor_fn: NativePriorFactorCall[InputType] = staticmethod(prior_factor_rectangular)
     validate_bounds_fn: NativeValidateBoundsCall[InputType] = staticmethod(validate_bounds_rectangular)
     loglike_fn: NativeLoglikeCall[InputType] = staticmethod(_unavailable_loglike_fn)
-    correct_bounds_fn = staticmethod(correct_bounds_rectangular)
-    check_bounds_fn = staticmethod(check_bounds_rectangular)
+    correct_bounds_fn: NativeCorrectBoundsCall[InputType] = staticmethod(correct_bounds_rectangular)
+    check_bounds_fn: NativeCheckBoundsCall[InputType] = staticmethod(check_bounds_rectangular)
 
     def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
         if low_lims.size != n_par or high_lims.size != n_par:
@@ -528,24 +640,3 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
         to Delta that parameter, or changing the units, we can do that here
         """
         return samples_store.copy(), params_fid.copy()
-
-    # def bind_native_prior_draw(self) -> NativePriorDrawCall[Any]:
-    #    """Return the per-class jitted ``(state) -> params`` rectangular uniform draw."""
-    #    return prior_draw_rectangular
-
-    # def bind_native_prior_factor(self) -> NativePriorFactorCall[Any]:
-    #    """Return the per-class jitted ``(params, state) -> float`` uniform log density."""
-    #    return prior_factor_rectangular
-
-    # def bind_native_validate_bounds(self) -> NativeValidateBoundsCall[Any]:
-    #     """Return the per-class jitted ``(params, state) -> (params, ok)`` validator."""
-    #     return validate_bounds_rectangular
-
-    def bind_native(self) -> NativeLikelihoodFunctions[Any]:
-        """Assemble the per-class native likelihood functions for the block kernel."""
-        return NativeLikelihoodFunctions(
-            loglike=self.loglike_fn,
-            prior_draw=self.prior_draw_fn,
-            prior_factor=self.prior_factor_fn,
-            validate_bounds=self.validate_bounds_fn,
-        )

@@ -23,15 +23,19 @@ from DTMCMC.exchange_manager import (
 )
 from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
 from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import AbstractLikelihood, RectangularBoundsProtocol, RectangularLikelihood
+from DTMCMC.likelihood import (
+    AbstractLikelihood,
+    NativeBackendCompilationError,
+    NativeBackendUnsupportedError,
+    NativeLikelihoodFunctions,
+    RectangularBoundsProtocol,
+    RectangularLikelihood,
+)
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
 from DTMCMC.numba_backend import (
-    NativeBackendCompilationError,
-    NativeBackendUnsupportedError,
     NativeExchangeFunctions,
     NativeJumpCall,
-    NativeLikelihoodFunctions,
 )
 from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
@@ -313,17 +317,6 @@ class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
         self.prior_rate = prior_rate
         super().__init__(n_par, np.zeros(n_par), np.full(n_par, 3.0))
 
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    return _extension_loglike(params_in, self.center, self.prior_rate)
-
-    @override
-    def prior_draw(self) -> NDArray[np.floating]:
-        return _extension_prior_draw(self.n_par, self.low_lims, self.high_lims, self.prior_rate)
-
-    @override
-    def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-        return _extension_prior_factor(params_in, self.prior_rate)
-
     @property
     @override
     def inputs(self) -> _ExtensionNativeInput:
@@ -348,13 +341,15 @@ class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[L
         self.manager = manager
         self.print_name = 'Custom Gaussian'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[None, Any]:
+    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[None]:
         del likelihood_natives
         scale = self.manager.scale
 
         @njit(inline='always')
         def native_call(
-            sample_point: NDArray[np.floating], _itrt: int, _inputs: None, _like_input: Any
+            sample_point: NDArray[np.floating],
+            _itrt: int,
+            _inputs: None,
         ) -> tuple[NDArray[np.floating], float, bool]:
             return _custom_jump_helper(sample_point, scale)
 
@@ -511,10 +506,6 @@ def _standalone_snapshot[LikelihoodType: AbstractLikelihood[NamedTuple]](
 class _UndecoratedGaussian(GaussianLikelihood):
     """An extension that must not inherit its parent's native binding."""
 
-    @override
-    def get_loglike(self, params_in: np.ndarray) -> float:
-        return float(-np.sum(np.abs(params_in)))
-
 
 def _run_standalone_graph(
     backend: str, *, bindable: bool, custom_exchange: bool = False
@@ -552,8 +543,10 @@ def _run_standalone_graph(
 
 
 def _bad_native_loglike(params: NDArray[np.floating], _inputs: Any) -> float:
-    return np.linalg.norm(
-        scipy.interpolate.InterpolatedUnivariateSpline(np.arange(-5, 5), np.arange(-5, 5) ** 2, k=3)(params)
+    return float(
+        np.linalg.norm(
+            scipy.interpolate.InterpolatedUnivariateSpline(np.arange(-5, 5), np.arange(-5, 5) ** 2, k=3)(params)
+        )
     )
     # return params.this_attribute_does_not_exist()  # type: ignore[attr-defined,no-any-return]
 
@@ -824,11 +817,9 @@ class _IncompleteLikelihood:
         pass
 
     @property
-    @override
     def n_par(self) -> int:
         return 2
 
-    @override
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         del params_in
         return 0.0
@@ -843,7 +834,7 @@ def test_incomplete_likelihood_fails_fast_with_conformance_error() -> None:
     """
     ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
     with pytest.raises(TypeError, match='n_par, get_loglike, prior_draw, prior_factor, validate_bounds'):
-        DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')
+        DTMCMCSampler(ladder, _IncompleteLikelihood(), 8, 8, kernel_backend='python')  # type: ignore[type-var] # pyrefly: ignore[bad-specialization]
 
 
 class _FisherDeficientLikelihood:
@@ -853,24 +844,19 @@ class _FisherDeficientLikelihood:
         pass
 
     @property
-    @override
     def n_par(self) -> int:
         return 2
 
-    @override
     def get_loglike(self, params_in: NDArray[np.floating]) -> float:
         return -float(np.sum(params_in * params_in))
 
-    @override
     def prior_draw(self) -> NDArray[np.floating]:
         return np.zeros(self.n_par)
 
-    @override
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
         del params_in
         return 0.0
 
-    @override
     def validate_bounds(self, params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
         return params_in, True
 
@@ -881,15 +867,15 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     config = configparser.ConfigParser()
     config.read('default_config.ini')
     with pytest.raises(TypeError, match='correct_bounds and get_epsilons'):
-        FisherJumpManager(ladder, _FisherDeficientLikelihood(), np.zeros((4, 2)), config)
+        FisherJumpManager(ladder, _FisherDeficientLikelihood(), np.zeros((4, 2)), config)  # type: ignore[type-var] # pyrefly: ignore[bad-specialization]
 
 
 @pytest.mark.parametrize(
     'hook',
     [
         RectangularLikelihood.bind_native,
-        RectangularLikelihood.loglike_fn,
-        RectangularLikelihood.inputs.fget,
+        RectangularLikelihood.loglike_fn,  # type: ignore[misc] # pyright: ignore[reportGeneralTypeIssues] # pyrefly: ignore[missing-attribute]
+        RectangularLikelihood.inputs.fget,  # type: ignore[attr-defined]
         GaussianLikelihood.loglike_fn,
         SigmaFullJump.bind_native,
         DEStandardFullJump.bind_native,
@@ -898,7 +884,7 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
         DEJumpManager.bind_native_post_step,
         DEJumpManager.native_state,
         ExchangeManager.bind_native,
-        ExchangeManager.inputs.fget,
+        ExchangeManager.inputs.fget,  # type: ignore[attr-defined]
     ],
 )
 def test_native_binding_type_hints_resolve_at_runtime(hook: Any) -> None:

@@ -310,6 +310,7 @@ class ExchangeManager(AbstractExchangeManager):
     def track_full_exchanges(self) -> bool:
         return self.inputs.track_full_exchanges
 
+    @override
     def do_ptmcmc_exchange(
         self,
         itrb: int,
@@ -335,6 +336,7 @@ class ExchangeManager(AbstractExchangeManager):
             self.inputs.track_full_exchanges,
         )
 
+    @override
     def is_exchange_step(self, itrb: int) -> bool:
         """Check whether the step with the given index should be an exchange,
         currently based on alternating even and odd
