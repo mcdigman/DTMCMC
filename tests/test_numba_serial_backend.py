@@ -771,7 +771,7 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
 @pytest.mark.parametrize(
     'hook',
     [
-        RectangularLikelihood.bind_native,
+        RectangularLikelihood.bind_native.fget,  # type: ignore[attr-defined]
         RectangularLikelihood.loglike_fn,  # type: ignore[misc] # pyright: ignore[reportGeneralTypeIssues] # pyrefly: ignore[missing-attribute]
         RectangularLikelihood.inputs.fget,  # type: ignore[attr-defined]
         GaussianLikelihood.loglike_fn,
@@ -779,9 +779,9 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
         DEStandardFullJump.__call__,
         PriorFullJump.__call__,
         BlankJump.__call__,
-        DEJumpManager.bind_native_post_step,
+        DEJumpManager.bind_native_post_step.fget,  # type: ignore[attr-defined]
         DEJumpManager.native_state.fget,  # type: ignore[attr-defined]
-        ExchangeManager.bind_native,
+        ExchangeManager.bind_native.fget,  # type: ignore[attr-defined]
         ExchangeManager.inputs.fget,  # type: ignore[attr-defined]
     ],
 )

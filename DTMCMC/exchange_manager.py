@@ -2,13 +2,12 @@
 helpers to perform the parallel tempering exchanges
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, NamedTuple, Protocol, final, runtime_checkable
 
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
-
-from DTMCMC.numba_backend import NativeExchangeFunctions
 
 if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
@@ -23,6 +22,36 @@ REVERSE_SEQUENTIAL_TARGETS = 4  # target sequentially from front to back
 ALTERNATE_SEQUENTIAL_TARGETS = 5  # target sequentially from front to back and back to front alternating
 
 
+type NativeExchangeStepCall[ExchangeInputType] = Callable[[int, ExchangeInputType], bool]
+
+
+class NativeExchangeCall[ExchangeInputType](Protocol):
+    """Exchange executor over the exchange manager's inputs."""
+
+    def __call__(
+        self,
+        itrb: int,
+        samples: NDArray[np.floating],
+        logLs: NDArray[np.floating],
+        n_chain: int,
+        betas: NDArray[np.floating],
+        exchange_tracker: NDArray[np.int64],
+        esd_exchange: NDArray[np.floating],
+        chain_track: NDArray[np.int64],
+        inputs: ExchangeInputType,
+        /,
+    ) -> None:
+        """Execute one exchange step."""
+        ...
+
+
+class NativeExchangeFunctions[ExchangeInputType](NamedTuple):
+    """Store function handles for native binding"""
+
+    is_exchange_step: NativeExchangeStepCall[ExchangeInputType]
+    exchange: NativeExchangeCall[ExchangeInputType]
+
+
 class ExchangeNativeInputs(NamedTuple):
     """Compile-time inputs for the built-in native exchange functions."""
 
@@ -31,14 +60,14 @@ class ExchangeNativeInputs(NamedTuple):
 
 
 @runtime_checkable
-class AbstractExchangeManager(Protocol):
+class AbstractExchangeManager[ExchangeInputType](Protocol):
     """Structural exchange-manager interface used by sampler kernels."""
 
     @property
     def track_full_exchanges(self) -> int: ...
 
     @property
-    def inputs(self) -> NamedTuple: ...
+    def inputs(self) -> ExchangeInputType: ...
 
     def do_ptmcmc_exchange(
         self,
@@ -57,7 +86,8 @@ class AbstractExchangeManager(Protocol):
         """Return whether a sampler step is an exchange step."""
         ...
 
-    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
+    @property
+    def bind_native(self) -> NativeExchangeFunctions[ExchangeInputType]:
         """Return the per-class native exchange schedule and executor."""
         ...
 
@@ -342,6 +372,7 @@ class ExchangeManager:
         return self.is_exchange_step_native(itrb, self.inputs)
 
     @final
+    @property
     def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
         """Return the per-class native exchange schedule and executor."""
         return NativeExchangeFunctions(is_exchange_step=self.is_exchange_step_native, exchange=self.exchange_native)

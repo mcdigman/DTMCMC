@@ -311,6 +311,8 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
         """Return the runtime state bundle shared by this manager's jumps and post-step."""
         return DENativeState(self.de_buffer, self.de_subspace_frac, self.de_thin, self._de_counters)
 
+    @property
+    @override
     def bind_native_post_step(self) -> NativePostStepCall[DENativeState]:
         """Return the per-class native ring-buffer write."""
         return _de_post_step_native
@@ -374,6 +376,7 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
         self._jump_weights = jump_weights
         assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
