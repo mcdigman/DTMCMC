@@ -4,6 +4,7 @@ in order to be properly recognized by the framework
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, final, runtime_checkable
 
 import numpy as np
@@ -54,43 +55,17 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
 ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
 
 
-class NativeJumpCall(Protocol[ManagerStateT_contra]):
-    """Jitted jump: ``AbstractJump.__call__`` plus the manager and likelihood states."""
-
-    def __call__(
-        self,
-        sample_point: NDArray[np.floating],
-        itrt: int,
-        manager_state: ManagerStateT_contra,
-        /,
-    ) -> tuple[NDArray[np.floating], float, bool]:
-        """Return the proposed point, its density factor, and success."""
-        ...
+type NativeJumpCall[ManagerType] = Callable[
+    [NDArray[np.floating], int, ManagerType], tuple[NDArray[np.floating], float, bool]
+]
 
 
-class NativePostStepCall(Protocol[ManagerStateT_contra]):
-    """Jitted per-step manager update over the manager's runtime state."""
-
-    def __call__(self, state: ManagerStateT_contra, samples_row: NDArray[np.floating], /) -> None:
-        """Update the manager state in place after one step of all chains."""
-        ...
+type NativePostStepCall[ManagerType] = Callable[[ManagerType, NDArray[np.floating]], None]
 
 
 @runtime_checkable
 class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any]](Protocol):
-    """Structural component-manager interface used by aggregate dispatchers.
-
-    A manager whose ``post_step_update`` does real work may opt into native
-    execution by defining ``bind_native_post_step()`` returning a per-class
-    jitted ``(state, samples_row) -> None`` function paired with the runtime
-    state bundle from ``native_state()`` (see DTMCMC.numba_backend); a
-    manager that inherits the base no-op needs nothing.
-
-    Managers whose construction evaluates the likelihood should declare the
-    deterministic cost in a ``declared_construction_evals`` attribute (the
-    ``JumpManager`` base declares 0); a manager without the attribute makes
-    the sampler's evaluation accounting incomplete.
-    """
+    """Structural component-manager interface used by aggregate dispatchers."""
 
     @property
     def like_obj(self) -> LikelihoodType:
@@ -342,8 +317,9 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any]:
         inputs:
             samples: 2D float array of samples
         """
-        self.bind_native_post_step()(self.native_state, samples)
+        self.bind_native_post_step(self.native_state, samples)
 
+    @property
     def bind_native_post_step(self) -> NativePostStepCall[StateType]:
         return _null_bind_post_step
 

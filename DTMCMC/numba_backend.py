@@ -26,7 +26,7 @@ likelihood functions have the ``AbstractLikelihood`` method signatures.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, NamedTuple, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 from warnings import warn
 
 import numpy as np
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from DTMCMC.eval_accounting import EvalAccounting
+    from DTMCMC.exchange_manager import NativeExchangeFunctions
     from DTMCMC.likelihood import (
         AbstractLikelihood,
     )
@@ -59,45 +60,6 @@ if TYPE_CHECKING:
     from DTMCMC.tracker_manager import TrackerManager
 
 _VALID_MODES = ('auto', 'numba', 'python')
-
-ExchangeStateT = TypeVar('ExchangeStateT')
-ExchangeStateT_contra = TypeVar('ExchangeStateT_contra', contravariant=True)
-
-
-class NativeExchangeStepCall(Protocol[ExchangeStateT_contra]):
-    """Jitted exchange cadence over the exchange manager's runtime state."""
-
-    def __call__(self, itrb: int, state: ExchangeStateT_contra, /) -> bool:
-        """Return whether step ``itrb`` is an exchange step."""
-        ...
-
-
-class NativeExchangeCall(Protocol[ExchangeStateT_contra]):
-    """Jitted exchange executor over the exchange manager's runtime state."""
-
-    def __call__(
-        self,
-        itrb: int,
-        samples: NDArray[np.floating],
-        logLs: NDArray[np.floating],
-        n_chain: int,
-        betas: NDArray[np.floating],
-        exchange_tracker: NDArray[np.int64],
-        esd_exchange: NDArray[np.floating],
-        chain_track: NDArray[np.int64],
-        state: ExchangeStateT_contra,
-        /,
-    ) -> None:
-        """Execute one exchange step."""
-        ...
-
-
-@dataclass(frozen=True)
-class NativeExchangeFunctions(Generic[ExchangeStateT]):
-    """Per-class jitted exchange schedule and executor over a runtime state bundle."""
-
-    is_exchange_step: NativeExchangeStepCall[Any]
-    exchange: NativeExchangeCall[Any]
 
 
 def _defining_class(cls: type, name: str) -> type | None:
@@ -247,7 +209,7 @@ class _LocalDispatchCall(Protocol):
     """Internal chain link: one manager's jumps behind a local index."""
 
     def __call__(
-        self, idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: Any, /
+        self, idx_jump: int, sample_point: NDArray[np.floating], itrt: int, state: object, /
     ) -> tuple[NDArray[np.floating], float, bool]:
         """Dispatch the manager-local jump index."""
         ...
@@ -563,7 +525,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     ) -> NativeSerialProgram:
         """Bind every component and fetch or assemble the structural program."""
         _check_flattening(proposal_manager)
-        likelihood_natives = like_obj.bind_native()
+        likelihood_natives = like_obj.bind_native
         per_manager_calls: list[tuple[NativeJumpCall[Any], ...]] = []
         post_steps: list[NativePostStepCall[Any] | None] = []
         manager_has_state: list[bool] = []
@@ -571,9 +533,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             per_manager_calls.append(tuple(jump.handle for jump in manager.jumps))
             manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
             has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
-            post_steps.append(manager.bind_native_post_step() if has_post else None)
+            post_steps.append(manager.bind_native_post_step if has_post else None)
         assert sum(len(calls) for calls in per_manager_calls) == proposal_manager.jump_probs.shape[1]
-        exchange_natives = proposal_manager.exchange_manager.bind_native()
+        exchange_natives = proposal_manager.exchange_manager.bind_native
 
         declared: list[int | None] = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
         self._jump_internal_known = all(value is not None for value in declared)

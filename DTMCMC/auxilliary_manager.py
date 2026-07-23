@@ -93,6 +93,7 @@ class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
         assert np.all(self._jump_weights >= 0.0)
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)

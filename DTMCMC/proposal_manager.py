@@ -33,7 +33,7 @@ class AbstractProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
         ...
 
     @property
-    def exchange_manager(self) -> AbstractExchangeManager:
+    def exchange_manager(self) -> AbstractExchangeManager[Any]:
         """Exchange scheduler and executor."""
         ...
 
@@ -58,7 +58,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
         T_ladder: TemperatureLadder,
         like_obj: LikelihoodType,
         managers: tuple[JumpManager[LikelihoodType, Any], ...],
-        exchange_manager: AbstractExchangeManager,
+        exchange_manager: AbstractExchangeManager[Any],
         config: ConfigParser,
     ) -> None:
         """Create the core proposal manager object.
@@ -84,7 +84,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
         self._n_managers: int = len(self._managers)
         self._n_jumps_managers: NDArray[np.int64] = np.zeros(self._n_managers, dtype=np.int64)
 
-        self._exchange_manager: AbstractExchangeManager = exchange_manager
+        self._exchange_manager: AbstractExchangeManager[Any] = exchange_manager
 
         jump_labels_temp: list[str] = []
         jumps_temp: list[AbstractNativeJump[LikelihoodType, Any]] = []
@@ -112,7 +112,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
     @property
     @override
     def native_state(self) -> ProposalManagerNativeState:
-        post_step_bindings = tuple(manager.bind_native_post_step() for manager in self._managers)
+        post_step_bindings = tuple(manager.bind_native_post_step for manager in self._managers)
         native_states = tuple(manager.native_state for manager in self._managers)
         return ProposalManagerNativeState(post_step_bindings=post_step_bindings, native_states=native_states)
 
@@ -121,7 +121,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
         return self._managers
 
     @property
-    def exchange_manager(self) -> AbstractExchangeManager:
+    def exchange_manager(self) -> AbstractExchangeManager[Any]:
         return self._exchange_manager
 
     @override
@@ -154,6 +154,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
         # but the overarching proposal manager must make proposals for all temps
         assert np.all(np.sum(self._jump_probs, axis=1) == 1.0)
 
+    @property
     @override
     def bind_native_post_step(self) -> NativePostStepCall[ProposalManagerNativeState]:
         return _call_bind_post_step
@@ -177,6 +178,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
                 n_evals += got
         return n_evals
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in."""
         for itrm in range(self._n_managers):

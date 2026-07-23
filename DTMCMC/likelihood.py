@@ -146,6 +146,7 @@ class AbstractLikelihood[InputType](Protocol):
         """Get formatted axis labels for corner plots"""
         ...
 
+    @property
     def bind_native(self, /) -> NativeLikelihoodFunctions[InputType]:
         """Get the bundle of functions as baked callables."""
         ...
@@ -595,6 +596,7 @@ class AbstractNativeLikelihood[InputType](ABC):
         """
         return self.loglike_fn_baked(params_in)
 
+    @property
     @final
     def bind_native(self) -> NativeLikelihoodFunctions[Any]:
         """Assemble the per-class native likelihood functions for the block kernel."""
@@ -694,10 +696,12 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
         return self._inputs_rect.high_lims
 
     @property
+    @override
     def n_par(self) -> int:
         """Read-only return of the number of parameters."""
         return self._inputs_rect.n_par
 
+    @override
     def get_epsilons(self) -> NDArray[np.floating]:
         """Special helper for FisherJumpManager
         if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
