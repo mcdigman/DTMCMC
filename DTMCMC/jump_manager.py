@@ -4,7 +4,6 @@ in order to be properly recognized by the framework
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, final, runtime_checkable
 
 import numpy as np
@@ -12,6 +11,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from configparser import ConfigParser
 
     from DTMCMC.likelihood import AbstractLikelihood

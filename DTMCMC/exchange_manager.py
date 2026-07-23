@@ -2,7 +2,7 @@
 helpers to perform the parallel tempering exchanges
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, final, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -21,6 +21,13 @@ ADJACENT_TARGETS = 2  # target alternating +/- 1 positions
 NULL_TARGETS = 3  # do not do any exchanges
 REVERSE_SEQUENTIAL_TARGETS = 4  # target sequentially from front to back
 ALTERNATE_SEQUENTIAL_TARGETS = 5  # target sequentially from front to back and back to front alternating
+
+
+class ExchangeNativeInputs(NamedTuple):
+    """Compile-time inputs for the built-in native exchange functions."""
+
+    strategy: int
+    track_full_exchanges: bool
 
 
 @runtime_checkable
@@ -48,6 +55,10 @@ class AbstractExchangeManager(Protocol):
 
     def is_exchange_step(self, itrb: int) -> bool:
         """Return whether a sampler step is an exchange step."""
+        ...
+
+    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
+        """Return the per-class native exchange schedule and executor."""
         ...
 
 
@@ -246,22 +257,9 @@ def do_ptmcmc_exchange(
 
 
 @njit(inline='always')
-def exchange_is_step_native(itrb: int) -> bool:
-    """Default alternating local/exchange cadence."""
-    return itrb % 2 == 0
-
-
-class ExchangeNativeInputs(NamedTuple):
-    """Compile-time inputs for the built-in native exchange functions."""
-
-    strategy: int
-    track_full_exchanges: bool
-
-
-@njit(inline='always')
 def _exchange_is_step_inputs_native(itrb: int, _input: ExchangeNativeInputs) -> bool:
-    """Per-class native exchange cadence."""
-    return exchange_is_step_native(itrb)
+    """Default per-class native exchange cadence."""
+    return itrb % 2 == 0
 
 
 @njit(inline='always')
@@ -291,26 +289,27 @@ def _exchange_native(
     )
 
 
-class ExchangeManager(AbstractExchangeManager):
+class ExchangeManager:
     """class to take a temperature ladder and state of a chain
     and define the strategy by which to propose exchanges
     """
+
+    is_exchange_step_native = staticmethod(_exchange_is_step_inputs_native)
+    exchange_native = staticmethod(_exchange_native)
 
     def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
         """Select the exchange targeting strategy"""
         self._inputs = ExchangeNativeInputs(strategy, track_full_exchanges)
 
     @property
-    @override
     def inputs(self) -> ExchangeNativeInputs:
         return self._inputs
 
     @property
-    @override
     def track_full_exchanges(self) -> bool:
         return self.inputs.track_full_exchanges
 
-    @override
+    @final
     def do_ptmcmc_exchange(
         self,
         itrb: int,
@@ -323,8 +322,8 @@ class ExchangeManager(AbstractExchangeManager):
     ) -> None:
         """Do the exchange step"""
         assert self.is_exchange_step(itrb)
-        do_ptmcmc_exchange(
-            itrb - 1,
+        self.exchange_native(
+            itrb,
             samples,
             logLs,
             T_ladder.n_chain,
@@ -332,17 +331,17 @@ class ExchangeManager(AbstractExchangeManager):
             exchange_tracker,
             esd_exchange,
             chain_track,
-            self.inputs.strategy,
-            self.inputs.track_full_exchanges,
+            self.inputs,
         )
 
-    @override
+    @final
     def is_exchange_step(self, itrb: int) -> bool:
         """Check whether the step with the given index should be an exchange,
         currently based on alternating even and odd
         """
-        return exchange_is_step_native(itrb)
+        return self.is_exchange_step_native(itrb, self.inputs)
 
+    @final
     def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
         """Return the per-class native exchange schedule and executor."""
-        return NativeExchangeFunctions(is_exchange_step=_exchange_is_step_inputs_native, exchange=_exchange_native)
+        return NativeExchangeFunctions(is_exchange_step=self.is_exchange_step_native, exchange=self.exchange_native)
