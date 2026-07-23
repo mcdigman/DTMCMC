@@ -496,6 +496,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpMana
             return self.declared_refresh_evals()
         return 0
 
+    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
