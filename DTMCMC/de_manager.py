@@ -9,9 +9,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import NativeLikelihoodFunctions  # noqa: TC001
-from DTMCMC.numba_backend import NativeJumpCall, NativePostStepCall
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager, NativePostStepCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -146,7 +144,9 @@ def _de_post_step_native(state: DENativeState, samples: NDArray[np.floating]) ->
     state.counters[1] = itrde_count
 
 
-class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, DENativeState]
+):
     """apply a jump with standard random size in all dimensions
     null proposals are marked as failures
     """
@@ -154,19 +154,13 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Abstrac
     declared_internal_evals = 0
 
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
-        self.manager: DEJumpManager[LikelihoodType] = manager
-        self.print_name = 'DE Std All-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _de_standard_full_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, False)
+        print_name = 'DE Std All-D'
+        super().__init__(_de_standard_full_native, manager, print_name)
 
 
-class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, DENativeState]
+):
     """apply a jump with standard random size in a random subspace
     null proposals are marked as failures
     """
@@ -174,19 +168,11 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple
     declared_internal_evals = 0
 
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
-        self.manager: DEJumpManager[LikelihoodType] = manager
-        self.print_name = 'DE Std Random-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _de_standard_subspace_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, False)
+        print_name = 'DE Std Random-D'
+        super().__init__(_de_standard_subspace_native, manager, print_name)
 
 
-class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractNativeJump[LikelihoodType, DENativeState]):
     """apply the full length differential evolution jump in all dimensions
     null proposals are marked as failures
     """
@@ -194,19 +180,13 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump
     declared_internal_evals = 0
 
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
-        self.manager: DEJumpManager[LikelihoodType] = manager
-        self.print_name = 'DE Big All-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _de_big_full_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, False, True)
+        print_name = 'DE Big All-D'
+        super().__init__(_de_big_full_native, manager, print_name)
 
 
-class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, DENativeState]
+):
     """apply the full length differential evolution jump in a random subspace
     null proposals are marked as failures
     """
@@ -214,16 +194,8 @@ class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Ab
     declared_internal_evals = 0
 
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
-        self.manager: DEJumpManager[LikelihoodType] = manager
-        self.print_name = 'DE Big Random-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[DENativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _de_big_subspace_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return apply_de_helper(self.manager.de_buffer, self.manager.de_subspace_frac, itrt, sample_point, True, True)
+        print_name = 'DE Big Random-D'
+        super().__init__(_de_big_subspace_native, manager, print_name)
 
 
 def initialize_de_helper(
@@ -281,7 +253,7 @@ class DEStrategyParameters:
         config_de['de_thin'] = str(self.de_thin)
 
 
-class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, DENativeState]):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The ring buffer and the write/thinning counter array are allocated once
@@ -297,7 +269,7 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
         self.de_size: int = self.strategy_params.de_size
         self.de_subspace_frac: float = self.strategy_params.de_subspace_frac
 
-        jumps: list[AbstractJump[LikelihoodType]] = [
+        jumps: list[AbstractNativeJump[LikelihoodType, DENativeState]] = [
             DEStandardFullJump(self),
             DEStandardRandomSubspaceJump(self),
             DEBigFullJump(self),
@@ -333,6 +305,8 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
     def itrde_count(self, value: int) -> None:
         self._de_counters[1] = value
 
+    @property
+    @override
     def native_state(self) -> DENativeState:
         """Return the runtime state bundle shared by this manager's jumps and post-step."""
         return DENativeState(self.de_buffer, self.de_subspace_frac, self.de_thin, self._de_counters)
@@ -340,16 +314,6 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
     def bind_native_post_step(self) -> NativePostStepCall[DENativeState]:
         """Return the per-class native ring-buffer write."""
         return _de_post_step_native
-
-    def write_de(self, samples: NDArray[np.floating]) -> None:
-        """Write to the differential evolution buffer"""
-        self.itrde_write, self.itrde_count = advance_de_state_helper(
-            self.itrde_count,
-            self.itrde_write,
-            self.de_thin,
-            self.de_buffer,
-            samples,
-        )
 
     @override
     def set_jump_weights(self) -> None:
@@ -410,14 +374,6 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[
         self._jump_weights = jump_weights
         assert np.all(self._jump_weights >= 0.0)
 
-    @override
-    def post_step_update(self, samples: NDArray[np.floating]) -> None:
-        """Do any needed internal processing after an individual step of all temperatures;
-        mainly intended to be used to write to differential evolution buffer
-        """
-        self.write_de(samples)
-
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
