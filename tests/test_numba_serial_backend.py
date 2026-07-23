@@ -32,9 +32,6 @@ from DTMCMC.likelihood import (
 )
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
-from DTMCMC.numba_backend import (
-    NativeExchangeFunctions,
-)
 from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
@@ -383,13 +380,8 @@ class _CustomManager[LikelihoodType: AbstractLikelihood[_CustomNativeState]](
 
 
 @njit(inline='always')
-def _every_third_exchange_schedule(itrb: int) -> bool:
+def _every_third_exchange_schedule_native(itrb: int, _input: ExchangeNativeInputs) -> bool:
     return itrb % 3 == 0
-
-
-@njit(inline='always')
-def _every_third_schedule_native(itrb: int, _state: ExchangeNativeInputs) -> bool:
-    return _every_third_exchange_schedule(itrb)
 
 
 @njit(inline='always')
@@ -402,7 +394,7 @@ def _every_third_exchange_native(
     exchange_tracker: NDArray[np.int64],
     esd_exchange: NDArray[np.floating],
     chain_track: NDArray[np.int64],
-    state: ExchangeNativeInputs,
+    inputs: ExchangeNativeInputs,
 ) -> None:
     do_ptmcmc_exchange(
         itrb - 1,
@@ -414,44 +406,13 @@ def _every_third_exchange_native(
         esd_exchange,
         chain_track,
         NULL_TARGETS,
-        state.track_full_exchanges,
+        inputs.track_full_exchanges,
     )
 
 
 class _EveryThirdExchange(ExchangeManager):
-    @override
-    def is_exchange_step(self, itrb: int) -> bool:
-        return _every_third_exchange_schedule(itrb)
-
-    @override
-    def do_ptmcmc_exchange(
-        self,
-        itrb: int,
-        samples: NDArray[np.floating],
-        logLs: NDArray[np.floating],
-        T_ladder: TemperatureLadder,
-        exchange_tracker: NDArray[np.int64],
-        esd_exchange: NDArray[np.floating],
-        chain_track: NDArray[np.int64],
-    ) -> None:
-        do_ptmcmc_exchange(
-            itrb - 1,
-            samples,
-            logLs,
-            T_ladder.n_chain,
-            T_ladder.betas,
-            exchange_tracker,
-            esd_exchange,
-            chain_track,
-            NULL_TARGETS,
-            self.inputs.track_full_exchanges,
-        )
-
-    @override
-    def bind_native(self) -> NativeExchangeFunctions[ExchangeNativeInputs]:
-        return NativeExchangeFunctions(
-            is_exchange_step=_every_third_schedule_native, exchange=_every_third_exchange_native
-        )
+    is_exchange_step_native = staticmethod(_every_third_exchange_schedule_native)
+    exchange_native = staticmethod(_every_third_exchange_native)
 
 
 def _standalone_snapshot[LikelihoodType: AbstractLikelihood[Any]](

@@ -16,7 +16,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast, override
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from warnings import warn
 
 import numpy as np
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     import configparser
     from collections.abc import Callable
 
-    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.likelihood import AbstractLikelihood, AbstractNativeLikelihood
     from DTMCMC.proposal_manager import AbstractProposalManager
 
 from diagnostic_commentary_helpers import print_diagnostic_commentary
@@ -78,7 +78,7 @@ DE_MEMORY_MIN_BLOCKS_FIXED = 4
 # one constructor per spec likelihood name; a test asserts the keys stay in
 # sync with spec.LIKELIHOOD_NAMES (spec.py cannot import these back without a
 # circular import, so drift is caught by CI instead)
-LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractLikelihood[NamedTuple]]] = {
+LIKELIHOOD_BUILDERS: dict[str, Callable[..., AbstractNativeLikelihood[Any]]] = {
     'gaussian': GaussianLikelihood,
     'cake': CakeLikelihood,
     'constant_rectangular': ConstantRectangularLikelihood,
@@ -103,7 +103,7 @@ def build_likelihood(spec: RunSpec[AbstractLikelihood[NamedTuple]]) -> AbstractL
     if builder is None:
         msg = f'unknown likelihood {spec.likelihood_name!r}'
         raise ValueError(msg)
-    return builder(**params)
+    return builder(**params)  # pyright: ignore[reportReturnType]
 
 
 def _scalar(value: object) -> float:
@@ -333,7 +333,6 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
         # Ts in place, so the copy must be taken before the first block runs
         self.initial_Ts = self.Ts.copy()
 
-    @override
     def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
 
@@ -357,7 +356,6 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
             exchange_manager_loc=exchange_manager,
         )
 
-    @override
     def postblock_operations(self) -> None:
         """Advance the adaptive controller's schedule at the block boundary."""
         if self.controller is not None:
@@ -386,7 +384,6 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
                 de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng)
             )
 
-    @override
     def post_Nblock_teardown(self) -> None:
         """Checkpoint at the end of each advance_N_blocks segment.
 
@@ -591,6 +588,8 @@ def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
     # build_sampler consumes scientific run modes from the effective spec,
     # including zero_loglike, so artifact provenance and execution agree.
+    # Keep the invariant controller ahead of optional like_obj so pyrefly binds
+    # the call's LikelihoodType from the narrowed controller, not its bound.
     sampler, _like_obj = build_sampler(
         spec,
         config=config,

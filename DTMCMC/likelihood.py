@@ -614,6 +614,34 @@ class AbstractNativeLikelihood[InputType](ABC):
         """Get the read-only NamedTuple storing all likelihood input attributes."""
         ...
 
+    @property
+    @abstractmethod
+    def n_par(self) -> int:
+        """Number of parameters."""
+        ...
+
+    @abstractmethod
+    def get_epsilons(self) -> NDArray[np.floating]:
+        """Special helper for FisherJumpManager
+        if this likelihood has special epsilons specified for fisher matrix jumps, get them here,
+        otherwise just return zeros
+        """
+        ...
+
+    def get_labels(self) -> list[str]:
+        """Get formatted axis labels for corner plots"""
+        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
+
+    def format_samples_output(
+        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
+        """Purely a convenience function for making corner plots:
+        if we desire to do any adjustments to input samples to make corner plots
+        look nice, for example converting some dimension the raw parameter
+        to Delta that parameter, or changing the units, we can do that here
+        """
+        return samples_store.copy(), params_fid.copy()
+
 
 class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNativeLikelihood[InputType]):
     """Handle a likelihood with rectangular bounds
@@ -676,17 +704,3 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
         otherwise just return zeros
         """
         return np.zeros(self.n_par)
-
-    def get_labels(self) -> list[str]:
-        """Get formatted axis labels for corner plots"""
-        return [r'$v_' + str(itrp) + '$' for itrp in range(self.n_par)]
-
-    def format_samples_output(
-        self, samples_store: NDArray[np.floating], params_fid: NDArray[np.floating]
-    ) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-        """Purely a convenience function for making corner plots:
-        if we desire to do any adjustments to input samples to make corner plots
-        look nice, for example converting some dimension the raw parameter
-        to Delta that parameter, or changing the units, we can do that here
-        """
-        return samples_store.copy(), params_fid.copy()
