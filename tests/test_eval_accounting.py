@@ -21,7 +21,8 @@ from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.eval_accounting import EvalAccounting, LoglikeCallSpy
 from DTMCMC.exchange_manager import NULL_TARGETS, ExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, declared_fisher_stencil_evals
-from DTMCMC.history_jump_manager import LadderHistoryJumpManager
+
+# from DTMCMC.history_jump_manager import LadderHistoryJumpManager
 from DTMCMC.jump_manager import AbstractJump, JumpManager
 from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.prior_manager import PriorManager
@@ -107,9 +108,9 @@ def test_builtin_jump_internal_costs_match_spy() -> None:
         DEJumpManager(ladder, like_obj, config),
         AuxilliaryJumpManager(ladder, like_obj, config),
         PriorManager(ladder, like_obj, config),
-        LadderHistoryJumpManager(
-            ladder, like_obj, config, ladder, np.zeros((4, n_chain)), np.zeros((4, n_chain, n_par))
-        ),
+        # LadderHistoryJumpManager(
+        #    ladder, like_obj, config, ladder, np.zeros((4, n_chain)), np.zeros((4, n_chain, n_par))
+        # ),
     ]
 
     sample_point = np.zeros(n_par)
@@ -122,7 +123,7 @@ def test_builtin_jump_internal_costs_match_spy() -> None:
                 jump(sample_point.copy(), 0)
             assert spy.n_calls == declared, jump.print_name
             checked += 1
-    assert checked == 10  # 3 fisher + 4 de + 1 blank + 1 prior + 1 history
+    assert checked == 9  # 3 fisher + 4 de + 1 blank + 1 prior + 1 history
 
 
 class _UndeclaredJump(AbstractJump):

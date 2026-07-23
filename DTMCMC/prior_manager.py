@@ -4,60 +4,76 @@ manager to manage prior-draw based jumps
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, NamedTuple, override
+from warnings import warn
 
+import numba.core.types as nb_types
 import numpy as np
-from numba import njit
-from numpy.typing import NDArray
+from numba import typeof
+from numpy.typing import NDArray  # noqa: TC002
 
-from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.numba_backend import NativeJumpCall
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager, NativeJumpCall
+from DTMCMC.likelihood import CompilationFallbackWarning, compile_handle
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
 
-    from DTMCMC.likelihood import AbstractLikelihood, NativeLikelihoodFunctions, PriorProposalFn
+    from DTMCMC.likelihood import AbstractLikelihood, PriorProposalFn
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+
+
+class PriorNativeState(NamedTuple):
+    """Runtime state bundle for the prior proposal jumps."""
+
 
 # composition memo keyed on the likelihood's per-class functions: repeated
 # binds return the same jitted function, so structurally identical samplers
 # share one compiled program (holding the keys alive keeps ids stable)
-_PRIOR_NATIVE_MEMO: dict[PriorProposalFn, NativeJumpCall[None]] = {}
+_PRIOR_NATIVE_MEMO: dict[tuple[object], tuple[NativeJumpCall[PriorNativeState], str | None]] = {}
+
+_JUMP_ARGS: tuple[nb_types.Type, ...] = (
+    nb_types.Array(nb_types.float64, 1, 'C'),  # type: ignore[no-untyped-call]
+    nb_types.int64,
+    typeof(PriorNativeState()),  # type: ignore[no-untyped-call]
+)
 
 
 def _make_prior_native(
     prior_proposal: PriorProposalFn,
-) -> NativeJumpCall[None]:
+) -> tuple[NativeJumpCall[PriorNativeState], str | None]:
     """Compose the likelihood's native prior draw and density into a jump."""
-    key = prior_proposal
-    cached = _PRIOR_NATIVE_MEMO.get(key)
-    if cached is not None:
-        return cached
+    key = (prior_proposal,)
+    got = _PRIOR_NATIVE_MEMO.get(key)
+    if got is not None:
+        return got
 
-    @njit(inline='always')
+    # @njit(inline='always')
     def prior_native(
-        sample_point: NDArray[np.floating],
-        _itrt: int,
-        _manager_state: None,
+        sample_point: NDArray[np.floating], _itrt: int, _manager_state: PriorNativeState, /
     ) -> tuple[NDArray[np.floating], float, bool]:
         return prior_proposal(sample_point)
 
-    _PRIOR_NATIVE_MEMO[key] = prior_native
-    return prior_native
+    got = compile_handle(prior_native, _JUMP_ARGS)
+
+    _PRIOR_NATIVE_MEMO[key] = got
+    return got
 
 
-class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, PriorNativeState]
+):
     declared_internal_evals = 0
 
-    def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
-        self.manager: JumpManager[LikelihoodType] = manager
-        self.print_name = 'Prior All-D'
+    def __init__(self, manager: JumpManager[LikelihoodType, PriorNativeState]) -> None:
+        print_name = 'Prior All-D'
 
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None]:
-        """Compose the likelihood's own native prior draw and density functions."""
-        return _make_prior_native(likelihood_natives.prior_proposal)
-
-    def __call__(self, sample_point: NDArray[np.floating], _itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        return self.manager.like_obj.prior_proposal(sample_point)
+        handle, failure = _make_prior_native(manager.like_obj.prior_proposal_fn_baked)
+        if failure is not None:
+            warn(
+                f'{print_name} failed nopython compilation and will run as plain Python:\n{failure}',
+                CompilationFallbackWarning,
+                stacklevel=2,
+            )
+        super().__init__(handle, manager, print_name)
 
 
 @dataclass(init=False)
@@ -85,16 +101,20 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, PriorNativeState]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
         self.strategy_params = PriorStrategyParameters(config)
 
-        jumps: list[AbstractJump[LikelihoodType]] = [PriorFullJump(self)]
+        self._like_obj = like_obj
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        jumps: list[AbstractNativeJump[LikelihoodType, PriorNativeState]] = [PriorFullJump(self)]
+
+        self._state = PriorNativeState()
+
+        super().__init__(T_ladder, like_obj, jumps)
 
     @override
     def set_jump_weights(self) -> None:
@@ -125,7 +145,11 @@ class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[L
         self._jump_weights = jump_weights
         assert np.all(self._jump_weights >= 0.0)
 
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+    @property
+    @override
+    def native_state(self) -> PriorNativeState:
+        return self._state

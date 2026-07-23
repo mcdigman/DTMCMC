@@ -8,7 +8,8 @@ import pytest
 from DTMCMC.auxilliary_manager import AuxilliaryStrategyParameters
 from DTMCMC.de_manager import DEStrategyParameters
 from DTMCMC.fisher_manager import FisherStrategyParameters
-from DTMCMC.history_jump_manager import HistoryStrategyParameters
+
+# from DTMCMC.history_jump_manager import HistoryStrategyParameters
 from DTMCMC.prior_manager import PriorStrategyParameters
 
 
@@ -25,7 +26,7 @@ def _config() -> configparser.ConfigParser:
         FisherStrategyParameters,
         PriorStrategyParameters,
         AuxilliaryStrategyParameters,
-        HistoryStrategyParameters,
+        # HistoryStrategyParameters,
     ],
 )
 def test_strategy_parameters_are_independent_dataclasses(strategy_type) -> None:

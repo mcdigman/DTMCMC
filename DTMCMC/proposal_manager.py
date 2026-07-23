@@ -4,17 +4,17 @@ Manager object to handle all dispatching of proposals.
 C 2023 Matthew C. Digman
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, override, runtime_checkable
 
 import numpy as np
+from numba.extending import register_jitable
+from numpy.typing import NDArray  # noqa: TC002
 
 import DTMCMC.prior_manager as ph
-from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager, JumpManager
+from DTMCMC.jump_manager import AbstractJumpManager, AbstractNativeJump, JumpManager, NativePostStepCall
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
-
-    from numpy.typing import NDArray
 
     from DTMCMC.exchange_manager import AbstractExchangeManager
     from DTMCMC.likelihood import AbstractLikelihood
@@ -28,7 +28,7 @@ class AbstractProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
     """Structural aggregate proposal interface required by sampler kernels."""
 
     @property
-    def managers(self) -> tuple[AbstractJumpManager[LikelihoodType], ...]:
+    def managers(self) -> tuple[JumpManager[LikelihoodType, NamedTuple], ...]:
         """Ordered component proposal managers."""
         ...
 
@@ -38,16 +38,26 @@ class AbstractProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
         ...
 
 
-class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    JumpManager[LikelihoodType], AbstractProposalManager[LikelihoodType]
-):
+class ProposalManagerNativeState(NamedTuple):
+    post_step_bindings: tuple[NativePostStepCall[NamedTuple], ...]
+    native_states: tuple[NamedTuple, ...]
+
+
+@register_jitable
+def _call_bind_post_step(state: ProposalManagerNativeState, samples_row: NDArray[np.floating], /) -> None:
+    """Call the bindings of every manager."""
+    for itr in range(len(state.native_states)):
+        state.post_step_bindings[itr](state.native_states[itr], samples_row)
+
+
+class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, ProposalManagerNativeState]):
     """Manage generation of proposals, handles all dispatching of jumps."""
 
     def __init__(
         self,
         T_ladder: TemperatureLadder,
         like_obj: LikelihoodType,
-        managers: tuple[AbstractJumpManager[LikelihoodType], ...],
+        managers: tuple[JumpManager[LikelihoodType, Any], ...],
         exchange_manager: AbstractExchangeManager,
         config: ConfigParser,
     ) -> None:
@@ -70,21 +80,21 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
         # self.T_ladder = T_ladder
 
-        self._managers: tuple[AbstractJumpManager[LikelihoodType], ...] = managers
+        self._managers: tuple[JumpManager[LikelihoodType, NamedTuple], ...] = managers
         self._n_managers: int = len(self._managers)
         self._n_jumps_managers: NDArray[np.int64] = np.zeros(self._n_managers, dtype=np.int64)
 
         self._exchange_manager: AbstractExchangeManager = exchange_manager
 
         jump_labels_temp: list[str] = []
-        jumps_temp: list[AbstractJump[LikelihoodType]] = []
+        jumps_temp: list[AbstractNativeJump[LikelihoodType, Any]] = []
         for itrm, manager in enumerate(self._managers):
             jump_labels_loc: list[str] = manager.jump_labels
             self._n_jumps_managers[itrm] = len(manager.jumps)
             jump_labels_temp.extend(jump_labels_loc)
             jumps_temp.extend(manager.jumps)
 
-        self._jumps: list[AbstractJump[LikelihoodType]] = jumps_temp
+        self._jumps: list[AbstractNativeJump[LikelihoodType, Any]] = jumps_temp
         self._jump_labels_array: list[str] = jump_labels_temp
         self._n_jump_types: int = int(np.sum(self._n_jumps_managers))
 
@@ -101,11 +111,16 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
     @property
     @override
-    def managers(self) -> tuple[AbstractJumpManager[LikelihoodType], ...]:
+    def native_state(self) -> ProposalManagerNativeState:
+        post_step_bindings = tuple(manager.bind_native_post_step() for manager in self._managers)
+        native_states = tuple(manager.native_state for manager in self._managers)
+        return ProposalManagerNativeState(post_step_bindings=post_step_bindings, native_states=native_states)
+
+    @property
+    def managers(self) -> tuple[JumpManager[LikelihoodType, NamedTuple], ...]:
         return self._managers
 
     @property
-    @override
     def exchange_manager(self) -> AbstractExchangeManager:
         return self._exchange_manager
 
@@ -140,13 +155,8 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
         assert np.all(np.sum(self._jump_probs, axis=1) == 1.0)
 
     @override
-    def post_step_update(self, samples: NDArray[np.floating]) -> None:
-        """Do any needed internal processing after an individual step of all temperatures.
-
-        Mainly intended to be used to write to e.g. differential evolution buffer.
-        """
-        for itrm in range(self._n_managers):
-            self._managers[itrm].post_step_update(samples)
+    def bind_native_post_step(self) -> NativePostStepCall[ProposalManagerNativeState]:
+        return _call_bind_post_step
 
     @override
     def post_block_update(
@@ -167,7 +177,6 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
                 n_evals += got
         return n_evals
 
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in."""
         for itrm in range(self._n_managers):

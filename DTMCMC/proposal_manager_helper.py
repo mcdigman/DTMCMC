@@ -3,7 +3,7 @@ get a default proposal manager object
 """
 
 import configparser
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
@@ -64,7 +64,7 @@ def get_default_proposal_manager[LikelihoodType: AbstractLikelihood[NamedTuple]]
     if exchange_manager_loc is None:
         exchange_manager_loc = ExchangeManager(em.SEQUENTIAL_TARGETS, track_full_exchanges=False)
 
-    managers: tuple[JumpManager[LikelihoodType], ...] = (
+    managers: tuple[JumpManager[LikelihoodType, Any], ...] = (
         fisher_manager_loc,
         de_manager_loc,
         auxilliary_manager_loc,

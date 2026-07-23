@@ -9,9 +9,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import NativeLikelihoodFunctions  # noqa: TC001
-from DTMCMC.numba_backend import NativeJumpCall
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -20,33 +18,29 @@ if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
+class AuxilliaryNativeState(NamedTuple): ...
+
+
 @njit(inline='always')
 def _blank_jump_native(
     sample_point: NDArray[np.floating],
     _itrt: int,
-    _state: None,
+    _state: AuxilliaryNativeState,
 ) -> tuple[NDArray[np.floating], float, bool]:
     return sample_point.copy(), 0.0, True
 
 
-class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, AuxilliaryNativeState]
+):
     """Template jump for future extensions"""
 
     declared_internal_evals = 0
 
-    def __init__(self, manager: JumpManager[LikelihoodType]) -> None:
-        self.manager: JumpManager[LikelihoodType] = manager
-        self.print_name = 'Blank Jump'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[None]:
-        """The blank jump is stateless, so the per-class module function suffices."""
-        del likelihood_natives
-        return _blank_jump_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        """Call the jump"""
-        del itrt
-        return sample_point.copy(), 0.0, True
+    def __init__(self, manager: JumpManager[LikelihoodType, AuxilliaryNativeState]) -> None:
+        print_name = 'Blank Jump'
+        handle = _blank_jump_native
+        super().__init__(handle, manager, print_name)
 
 
 @dataclass(init=False)
@@ -69,7 +63,9 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    JumpManager[LikelihoodType, AuxilliaryNativeState]
+):
     """template manager for an extra jump type,
     subclass of DTMCMC.jump_manager.JumpManager
     """
@@ -78,7 +74,9 @@ class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](Jump
         """A blank proposal as a template"""
         self.strategy_params = AuxilliaryStrategyParameters(config)
 
-        jumps: list[AbstractJump[LikelihoodType]] = [BlankJump(self)]
+        jumps: list[AbstractNativeJump[LikelihoodType, AuxilliaryNativeState]] = [BlankJump(self)]
+
+        self._native_state = AuxilliaryNativeState()
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
 
@@ -95,7 +93,11 @@ class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](Jump
 
         assert np.all(self._jump_weights >= 0.0)
 
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+    @property
+    @override
+    def native_state(self) -> AuxilliaryNativeState:
+        return self._native_state

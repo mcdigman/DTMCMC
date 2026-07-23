@@ -34,7 +34,12 @@ from numba import njit
 from numba.core.errors import NumbaError
 from numpy.typing import NDArray
 
-from DTMCMC.jump_manager import JumpManager, choose_prob_helper
+from DTMCMC.jump_manager import (
+    JumpManager,
+    NativeJumpCall,
+    NativePostStepCall,
+    choose_prob_helper,
+)
 from DTMCMC.likelihood import (
     NativeBackendCompilationError,
     NativeBackendUnsupportedError,
@@ -55,31 +60,8 @@ if TYPE_CHECKING:
 
 _VALID_MODES = ('auto', 'numba', 'python')
 
-ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
 ExchangeStateT = TypeVar('ExchangeStateT')
 ExchangeStateT_contra = TypeVar('ExchangeStateT_contra', contravariant=True)
-
-
-class NativeJumpCall(Protocol[ManagerStateT_contra]):
-    """Jitted jump: ``AbstractJump.__call__`` plus the manager and likelihood states."""
-
-    def __call__(
-        self,
-        sample_point: NDArray[np.floating],
-        itrt: int,
-        manager_state: ManagerStateT_contra,
-        /,
-    ) -> tuple[NDArray[np.floating], float, bool]:
-        """Return the proposed point, its density factor, and success."""
-        ...
-
-
-class NativePostStepCall(Protocol[ManagerStateT_contra]):
-    """Jitted per-step manager update over the manager's runtime state."""
-
-    def __call__(self, state: ManagerStateT_contra, samples_row: NDArray[np.floating], /) -> None:
-        """Update the manager state in place after one step of all chains."""
-        ...
 
 
 class NativeExchangeStepCall(Protocol[ExchangeStateT_contra]):
@@ -173,9 +155,9 @@ def _likelihood_problem(like_obj: AbstractLikelihood[NamedTuple]) -> str | None:
 
 def _jump_problem(jump: object) -> str | None:
     cls = type(jump)
-    if _defining_class(cls, 'bind_native') is None:
-        return f'{cls.__qualname__} does not define bind_native'
-    return _stale_native_override(cls, '__call__', ('bind_native',))
+    if _defining_class(cls, '__call__') is None:
+        return f'{cls.__qualname__} does not define __call__'
+    return _stale_native_override(cls, '__call__', ('__call__',))
 
 
 def _exchange_problem(exchange_manager: object) -> str | None:
@@ -428,7 +410,7 @@ def make_serial_kernel(
     is_exchange_step = exchange_natives.is_exchange_step
     do_exchange = exchange_natives.exchange
 
-    # @njit()
+    @njit()
     def advance_block_numba_serial(
         samples: NDArray[np.floating],
         logLs: NDArray[np.floating],
@@ -548,7 +530,10 @@ def _structural_key(
             id(likelihood_natives.loglike),
             id(likelihood_natives.prior_draw),
             id(likelihood_natives.prior_factor),
+            id(likelihood_natives.prior_proposal),
             id(likelihood_natives.validate_bounds),
+            id(likelihood_natives.check_bounds),
+            id(likelihood_natives.correct_bounds),
         ),
         tuple(
             (None if post is None else id(post), tuple(id(call) for call in calls))
@@ -583,7 +568,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         post_steps: list[NativePostStepCall[Any] | None] = []
         manager_has_state: list[bool] = []
         for manager in proposal_manager.managers:
-            per_manager_calls.append(tuple(jump.bind_native(likelihood_natives) for jump in manager.jumps))
+            per_manager_calls.append(tuple(jump.handle for jump in manager.jumps))
             manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
             has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
             post_steps.append(manager.bind_native_post_step() if has_post else None)
@@ -665,7 +650,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         # runtime state bundles are re-read at every block entry, so
         # configuration changes between blocks behave like the Python path
         manager_states = tuple(
-            manager.native_state() if has_state else None
+            manager.native_state if has_state else None
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
         )
         exchange_inputs = proposal_manager.exchange_manager.inputs

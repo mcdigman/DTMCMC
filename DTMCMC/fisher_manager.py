@@ -9,10 +9,9 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager
 from DTMCMC.lapack_wrappers import solve_triangular
-from DTMCMC.likelihood import AbstractLikelihood, NativeLikelihoodFunctions
-from DTMCMC.numba_backend import NativeJumpCall
+from DTMCMC.likelihood import AbstractLikelihood
 
 if TYPE_CHECKING:
     from configparser import ConfigParser
@@ -114,61 +113,29 @@ def _fisher_full_native(
     return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
 
 
-class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, FisherNativeState]
+):
     """Standard Deviation Jump in Full Dimensions"""
 
     declared_internal_evals = 0
 
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         """Create the jump"""
-        self.manager: FisherJumpManager[LikelihoodType] = manager
-        self.print_name = 'Std All-D'
-        # n_par = self.manager.n_par
-        # mult = np.random.normal(0., 1., n_par)
-        # new_point = sample_point+self.manager.sigma_scales[itrt]*mult
-        # return new_point, 0., True
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[FisherNativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _sigma_full_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        """Apply a standard deviation jump"""
-        return sigma_subspace_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.n_par,
-            self.manager.strategy_params.fisher_subspace_frac,
-            self.manager.sigma_scales,
-            True,
-        )
+        print_name = 'Std All-D'
+        super().__init__(_sigma_full_native, manager, print_name)
 
 
-class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, FisherNativeState]
+):
     """Standard deviation jump in random subspaces"""
 
     declared_internal_evals = 0
 
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
-        self.manager: FisherJumpManager[LikelihoodType] = manager
-        self.print_name = 'Std Random-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[FisherNativeState]:
-        """Return the per-class native jump reading the manager runtime state."""
-        del likelihood_natives
-        return _sigma_subspace_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        """Apply a standard deviation jump in random subspaces"""
-        return sigma_subspace_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.n_par,
-            self.manager.strategy_params.fisher_subspace_frac,
-            self.manager.sigma_scales,
-            False,
-        )
+        print_name = 'Std Random-D'
+        super().__init__(_sigma_subspace_native, manager, print_name)
 
 
 @dataclass(init=False)
@@ -373,7 +340,7 @@ def set_scales(
     return sigma_scales, gamma_mults
 
 
-class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, FisherNativeState]):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The fisher arrays are allocated once and refreshed in place; the native
@@ -397,7 +364,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpMana
             raise TypeError(msg)
         self.strategy_params = FisherStrategyParameters(config)
 
-        jumps: list[AbstractJump[LikelihoodType]] = [
+        jumps: list[AbstractNativeJump[LikelihoodType, FisherNativeState]] = [
             FisherFullJump(self),
             SigmaFullJump(self),
             SigmaRandomSubspaceJump(self),
@@ -424,6 +391,8 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpMana
         """Deterministic likelihood-evaluation cost of one fisher refresh."""
         return declared_fisher_stencil_evals(self.n_chain, self.n_par, self.strategy_params.use_chol_fishers)
 
+    @property
+    @override
     def native_state(self) -> FisherNativeState:
         """Return the runtime state bundle read by this manager's native jumps."""
         return FisherNativeState(
@@ -527,29 +496,16 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpMana
             return self.declared_refresh_evals()
         return 0
 
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
 
 
-class FisherFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+class FisherFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    AbstractNativeJump[LikelihoodType, FisherNativeState]
+):
     declared_internal_evals = 0
 
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
-        self.manager: FisherJumpManager[LikelihoodType] = manager
-        self.print_name = 'Fisher All-D'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[object]) -> NativeJumpCall[FisherNativeState]:
-        """Return the per-class native jump over the manager's runtime Cholesky state."""
-        del likelihood_natives
-        return _fisher_full_native
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        """Apply a fisher matrix jump"""
-        return fisher_full_jump_helper(
-            sample_point,
-            itrt,
-            self.manager.chol_fishers,
-            self.manager.gamma_mults,
-        )
+        print_name = 'Fisher All-D'
+        super().__init__(_fisher_full_native, manager, print_name)
