@@ -3,7 +3,9 @@ Abstract class for the interface a proposal manager must export
 in order to be properly recognized by the framework
 """
 
-from typing import TYPE_CHECKING, NamedTuple, Protocol, override, runtime_checkable
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, final, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -17,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
+class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
     """An object that performs a single proposal from its __call__ method.
 
     A jump may additionally define ``bind_native(likelihood_natives)``
@@ -33,6 +35,7 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
     """
 
     print_name: str
+    declared_internal_evals: int
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Generate the MCMC proposal.
@@ -48,8 +51,33 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
         ...
 
 
+ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
+
+
+class NativeJumpCall(Protocol[ManagerStateT_contra]):
+    """Jitted jump: ``AbstractJump.__call__`` plus the manager and likelihood states."""
+
+    def __call__(
+        self,
+        sample_point: NDArray[np.floating],
+        itrt: int,
+        manager_state: ManagerStateT_contra,
+        /,
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        """Return the proposed point, its density factor, and success."""
+        ...
+
+
+class NativePostStepCall(Protocol[ManagerStateT_contra]):
+    """Jitted per-step manager update over the manager's runtime state."""
+
+    def __call__(self, state: ManagerStateT_contra, samples_row: NDArray[np.floating], /) -> None:
+        """Update the manager state in place after one step of all chains."""
+        ...
+
+
 @runtime_checkable
-class AbstractJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](Protocol):
+class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any]](Protocol):
     """Structural component-manager interface used by aggregate dispatchers.
 
     A manager whose ``post_step_update`` does real work may opt into native
@@ -80,7 +108,7 @@ class AbstractJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](Protoc
         ...
 
     @property
-    def jumps(self) -> list[AbstractJump[LikelihoodType]]:
+    def jumps(self) -> Sequence[AbstractJump[LikelihoodType]]:
         """Ordered jump objects exported by this manager."""
         ...
 
@@ -149,7 +177,13 @@ def choose_prob_helper(jump_probs: NDArray[np.floating]) -> int:
     return choose
 
 
-class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpManager[LikelihoodType]):
+@njit()
+def _null_bind_post_step(_state: NamedTuple, _samples_row: NDArray[np.floating], /) -> None:
+    """Placeholder post step binding that does nothing."""
+    return
+
+
+class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any]:
     """Extensions of this class dispatch MCMC proposals."""
 
     # deterministic likelihood-evaluation cost of constructing the manager;
@@ -157,16 +191,19 @@ class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpMa
     declared_construction_evals: int = 0
 
     def __init__(
-        self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, jumps: list[AbstractJump[LikelihoodType]]
+        self,
+        T_ladder: TemperatureLadder,
+        like_obj: LikelihoodType,
+        jumps: list[AbstractNativeJump[LikelihoodType, StateType]],
     ) -> None:
         """Default constructor that handles all the common actions we expect to need"""
         self._T_ladder: TemperatureLadder = T_ladder
         self._like_obj: LikelihoodType = like_obj
-        self.n_chain: int = self.T_ladder.n_chain
-        self.n_par: int = self.like_obj.n_par
+        self.n_chain: int = T_ladder.n_chain
+        self.n_par: int = like_obj.n_par
 
         # self.jump_names = jump_names
-        self._jumps: list[AbstractJump[LikelihoodType]] = jumps
+        self._jumps: list[AbstractNativeJump[LikelihoodType, StateType]] = jumps
         self._n_jump_types = len(jumps)
 
         self._jump_probs: NDArray[np.floating] = np.zeros((self.n_chain, self._n_jump_types))
@@ -182,36 +219,38 @@ class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpMa
         self.set_jump_probs()
 
     @property
-    @override
+    @abstractmethod
+    def native_state(self) -> StateType: ...
+
+    @final
+    @property
     def like_obj(self) -> LikelihoodType:
         return self._like_obj
 
     @property
-    @override
     def T_ladder(self) -> TemperatureLadder:
         return self._T_ladder
 
     @T_ladder.setter
-    @override
     def T_ladder(self, T_ladder_in: TemperatureLadder) -> None:
         self._T_ladder = T_ladder_in
 
+    @final
     @property
-    @override
-    def jumps(self) -> list[AbstractJump[LikelihoodType]]:
+    def jumps(self) -> list[AbstractNativeJump[LikelihoodType, StateType]]:
         return self._jumps
 
+    @final
     @property
-    @override
     def n_jump_types(self) -> int:
         return self._n_jump_types
 
+    @final
     @property
-    @override
     def jump_probs(self) -> NDArray[np.floating]:
         return self._jump_probs
 
-    @override
+    @final
     def dispatch_jump(
         self, sample_point: NDArray[np.floating], itrt: int, choose: int = -1
     ) -> tuple[NDArray[np.floating], float, bool, int]:
@@ -259,6 +298,7 @@ class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpMa
         self.set_jump_weights()
         self.normalize_jump_probs()
 
+    @final
     def normalize_jump_probs(self) -> None:
         """Normalize the jump probabilities."""
         assert np.all(self._jump_weights >= 0.0)
@@ -278,35 +318,35 @@ class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpMa
             assert sum_check in {0.0, 1.0}
 
     @property
-    @override
     def jump_weights(self) -> NDArray[np.floating]:
         """Get the desired weights of this jump type as a function of temperature"""
         return self._jump_weights
 
     @jump_weights.setter
-    @override
     def jump_weights(self, jump_weights_in: NDArray[np.floating]) -> None:
         """Override the default jump weights."""
         self._jump_weights = jump_weights_in
         self.normalize_jump_probs()
         # self.set_jump_probs() # TODO need to enforce jump weight normalization
 
+    @final
     @property
-    @override
     def jump_labels(self) -> list[str]:
         """Get text labels for the different jump types"""
         return self._jump_labels_array.copy()
 
-    @override
+    @final
     def post_step_update(self, samples: NDArray[np.floating]) -> None:
         """Do any needed internal processing after an individual step of all temperatures;
         mainly intended to be used to write to differential evolution buffer
         inputs:
             samples: 2D float array of samples
         """
-        del samples
+        self.bind_native_post_step()(self.native_state, samples)
 
-    @override
+    def bind_native_post_step(self) -> NativePostStepCall[StateType]:
+        return _null_bind_post_step
+
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
     ) -> int | None:
@@ -327,3 +367,24 @@ class JumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJumpMa
         del samples
         del logLs
         return 0
+
+    @abstractmethod
+    def record_config(self, config_in: ConfigParser) -> None: ...
+
+
+class AbstractNativeJump[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
+    declared_internal_evals: int
+    handle: NativeJumpCall[StateType]
+    manager: JumpManager[LikelihoodType, StateType]
+    print_name: str
+
+    def __init__(
+        self, handle: NativeJumpCall[StateType], manager: JumpManager[LikelihoodType, StateType], print_name: str
+    ) -> None:
+        self.handle = handle
+        self.manager = manager
+        self.print_name = print_name
+
+    @final
+    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
+        return self.handle(sample_point, itrt, self.manager.native_state)

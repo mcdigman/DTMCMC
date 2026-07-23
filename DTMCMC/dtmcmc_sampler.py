@@ -2,7 +2,7 @@
 Module with the overall PTMCMC Chain object
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -192,11 +192,7 @@ def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return n_target_evals, n_internal_evals, internal_known
 
 
-# TODO rename this module
-# TODO add any necessary handlers for block length
-
-
-class DTMCMCSampler[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
     """object to manage the overall chain evolution"""
 
     def __init__(
@@ -268,7 +264,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         self.zero_loglike: bool = zero_loglike
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
-        self._native_serial_backend = NativeSerialBackend(kernel_backend)
+        self._native_serial_backend: NativeSerialBackend[LikelihoodType] = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: str = 'python'
         self.tracker_manager: TrackerManager[LikelihoodType]
         self.proposal_manager: AbstractProposalManager[LikelihoodType]

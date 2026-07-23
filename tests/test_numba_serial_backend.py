@@ -22,12 +22,11 @@ from DTMCMC.exchange_manager import (
     do_ptmcmc_exchange,
 )
 from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
-from DTMCMC.jump_manager import AbstractJump, JumpManager
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager
 from DTMCMC.likelihood import (
     AbstractLikelihood,
+    CompilationFallbackWarning,
     NativeBackendCompilationError,
-    NativeBackendUnsupportedError,
-    NativeLikelihoodFunctions,
     RectangularBoundsProtocol,
     RectangularLikelihood,
 )
@@ -35,7 +34,6 @@ from DTMCMC.likelihoods.normal_nd import GaussianLikelihood
 from DTMCMC.likelihoods.uniform_gaussian_prior import UniformGaussianPriorLikelihood
 from DTMCMC.numba_backend import (
     NativeExchangeFunctions,
-    NativeJumpCall,
 )
 from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
@@ -323,12 +321,27 @@ class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
         return _ExtensionNativeInput(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
 
 
+class _CustomNativeState(NamedTuple):
+    scale: float
+
+
 @njit(inline='always')
 def _custom_jump_helper(sample_point: NDArray[np.floating], scale: float) -> tuple[NDArray[np.floating], float, bool]:
     return sample_point + scale * np.random.normal(0.0, 1.0, sample_point.size), 0.0, True
 
 
-class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
+@njit(inline='always')
+def _custom_jump_native(
+    sample_point: NDArray[np.floating],
+    _itrt: int,
+    inputs: _CustomNativeState,
+) -> tuple[NDArray[np.floating], float, bool]:
+    return _custom_jump_helper(sample_point, inputs.scale)
+
+
+class _CustomJump[LikelihoodType: AbstractLikelihood[_CustomNativeState]](
+    AbstractNativeJump[LikelihoodType, _CustomNativeState]
+):
     """External-style jump whose type is unknown to numba_backend.py.
 
     Binds a per-instance closure rather than a per-class function: allowed
@@ -338,29 +351,13 @@ class _CustomJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[L
     declared_internal_evals = 0
 
     def __init__(self, manager: _CustomManager[LikelihoodType]) -> None:
-        self.manager = manager
-        self.print_name = 'Custom Gaussian'
-
-    def bind_native(self, likelihood_natives: NativeLikelihoodFunctions[Any]) -> NativeJumpCall[None]:
-        del likelihood_natives
-        scale = self.manager.scale
-
-        @njit(inline='always')
-        def native_call(
-            sample_point: NDArray[np.floating],
-            _itrt: int,
-            _inputs: None,
-        ) -> tuple[NDArray[np.floating], float, bool]:
-            return _custom_jump_helper(sample_point, scale)
-
-        return native_call
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        del itrt
-        return _custom_jump_helper(sample_point, self.manager.scale)
+        print_name = 'Custom Gaussian'
+        super().__init__(_custom_jump_native, manager, print_name)
 
 
-class _CustomManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class _CustomManager[LikelihoodType: AbstractLikelihood[_CustomNativeState]](
+    JumpManager[LikelihoodType, _CustomNativeState]
+):
     """External-style manager bound without backend source changes.
 
     Its post_step_update is the inherited base no-op, so no explicit native
@@ -368,7 +365,7 @@ class _CustomManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager
     """
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, scale: float = 0.2) -> None:
-        self.scale = scale
+        self._state = _CustomNativeState(scale=scale)
         super().__init__(T_ladder, like_obj, [_CustomJump(self)])
 
     @override
@@ -379,42 +376,10 @@ class _CustomManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager
     def record_config(self, config_in: configparser.ConfigParser) -> None:
         del config_in
 
-
-class _PythonOnlyJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractJump[LikelihoodType]):
-    print_name = 'Python only'
-
-    def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
-        del itrt
-        return sample_point.copy(), 0.0, True
-
-
-class _PythonOnlyManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
-        super().__init__(T_ladder, like_obj, [_PythonOnlyJump()])
-
+    @property
     @override
-    def set_jump_weights(self) -> None:
-        self.jump_weights = np.ones((self.n_chain, self.n_jump_types))
-
-    @override
-    def record_config(self, config_in: configparser.ConfigParser) -> None:
-        del config_in
-
-
-class _PythonOnlyExchange(ExchangeManager):
-    """Overrides the Python schedule without rebinding: must not run natively."""
-
-    @override
-    def is_exchange_step(self, itrb: int) -> bool:
-        del itrb
-        return False
-
-    @override
-    def do_ptmcmc_exchange(self, *args: Any, **kwargs: Any) -> None:
-        del args
-        del kwargs
-        msg = 'unscheduled exchange should not execute'
-        raise AssertionError(msg)
+    def native_state(self) -> _CustomNativeState:
+        return self._state
 
 
 @njit(inline='always')
@@ -489,7 +454,7 @@ class _EveryThirdExchange(ExchangeManager):
         )
 
 
-def _standalone_snapshot[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def _standalone_snapshot[LikelihoodType: AbstractLikelihood[Any]](
     sampler: DTMCMCSampler[LikelihoodType],
 ) -> dict[str, object]:
     tracker = sampler.tracker_manager
@@ -503,29 +468,21 @@ def _standalone_snapshot[LikelihoodType: AbstractLikelihood[NamedTuple]](
     }
 
 
-class _UndecoratedGaussian(GaussianLikelihood):
-    """An extension that must not inherit its parent's native binding."""
-
-
-def _run_standalone_graph(
-    backend: str, *, bindable: bool, custom_exchange: bool = False
-) -> tuple[dict[str, object], str]:
+def _run_standalone_graph(backend: str, *, custom_exchange: bool = False) -> tuple[dict[str, object], str]:
     reset_seed_guard_for_tests()
     try:
         seed_run(20260715)
-        like_obj = GaussianLikelihood(2) if bindable else _UndecoratedGaussian(2)
+        like_obj: Any = GaussianLikelihood(2)
         ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
         config = configparser.ConfigParser()
         config.read('default_config.ini')
         config['ProposalManager']['only_prior_hot'] = 'False'
-        manager = _CustomManager(ladder, like_obj) if bindable else _PythonOnlyManager(ladder, like_obj)
+        manager = _CustomManager(ladder, like_obj)
         exchange: ExchangeManager
         if custom_exchange:
             exchange = _EveryThirdExchange(NULL_TARGETS, False)
-        elif bindable:
-            exchange = ExchangeManager(NULL_TARGETS, False)
         else:
-            exchange = _PythonOnlyExchange(NULL_TARGETS, False)
+            exchange = ExchangeManager(NULL_TARGETS, False)
         proposal = ProposalManager(ladder, like_obj, (manager,), exchange, config)
         sampler = DTMCMCSampler(
             ladder,
@@ -615,8 +572,8 @@ def test_external_nonuniform_prior_contract_is_bit_exact() -> None:
 
 def test_external_jump_and_manager_binding_is_bit_exact() -> None:
     """A new manager and jump need no backend dispatch changes."""
-    python_state, python_backend = _run_standalone_graph('python', bindable=True)
-    numba_state, numba_backend = _run_standalone_graph('numba', bindable=True)
+    python_state, python_backend = _run_standalone_graph('python')
+    numba_state, numba_backend = _run_standalone_graph('numba')
     assert python_backend == 'python'
     assert numba_backend == 'numba'
     _assert_snapshots_equal(python_state, numba_state)
@@ -624,35 +581,31 @@ def test_external_jump_and_manager_binding_is_bit_exact() -> None:
 
 def test_external_exchange_cadence_binding_is_bit_exact() -> None:
     """Bound control flow uses the bound scheduler rather than even/odd hard-coding."""
-    python_state, _ = _run_standalone_graph('python', bindable=True, custom_exchange=True)
-    numba_state, backend = _run_standalone_graph('numba', bindable=True, custom_exchange=True)
+    python_state, _ = _run_standalone_graph('python', custom_exchange=True)
+    numba_state, backend = _run_standalone_graph('numba', custom_exchange=True)
     assert backend == 'numba'
     _assert_snapshots_equal(python_state, numba_state)
 
 
-def test_fully_unbindable_auto_graph_falls_back_without_warning() -> None:
-    """Auto remains quiet when no graph component opts into native execution."""
-    with warnings.catch_warnings(record=True) as warning_records:
-        warnings.simplefilter('always')
-        _state, backend = _run_standalone_graph('auto', bindable=False)
-    assert backend == 'python'
-    assert warning_records == []
+def test_native_compile_failure_warns_during_eager_likelihood_compilation() -> None:
+    """A bad handle is diagnosed once while the shared public handle is built."""
+    with pytest.warns(CompilationFallbackWarning, match='_BadNativeLikelihood get_loglike failed') as warning_records:
+        like_obj: Any = _BadNativeLikelihood()
+    assert len(warning_records) == 1
+
+    # The fallback is a normal public likelihood handle, so the forced Python
+    # orchestrator can run without discovering a second compilation failure.
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CompilationFallbackWarning)
+        state, selected = _run(_make_spec(n_steps=4), 'python', like_factory=lambda: like_obj)
+    assert selected == 'python'
+    assert state['itrn'] == 4
 
 
 def test_native_compile_failure_raises_in_numba_mode() -> None:
     """A broken native binding is loud when the native backend is required."""
     with pytest.raises(NativeBackendCompilationError, match='failed Numba compilation'):
         _run(_make_spec(n_steps=4), 'numba', like_factory=_BadNativeLikelihood)
-
-
-def test_native_compile_failure_warns_once_and_falls_back_in_auto_mode() -> None:
-    """Auto degrades to Python with a single warning when compilation fails."""
-    with pytest.warns(RuntimeWarning, match='failed to compile') as warning_records:
-        state, selected = _run(_make_spec(n_steps=4), 'auto', like_factory=_BadNativeLikelihood)
-    assert selected == 'python'
-    compile_warnings = [record for record in warning_records if 'failed to compile' in str(record.message)]
-    assert len(compile_warnings) == 1
-    assert state['itrn'] == 4
 
 
 def test_native_binding_supports_many_input_fields() -> None:
@@ -699,22 +652,6 @@ def test_builtin_likelihood_compiles_native(likelihood_name: str) -> None:
     spec = _make_spec(likelihood_name, n_par=2, n_steps=4)
     _state, backend = _run(spec, 'numba')
     assert backend == 'numba'
-
-
-def test_mixed_auto_graph_warns_once_and_falls_back() -> None:
-    """Auto warns once when built-in native proposals meet an unbindable likelihood."""
-    spec = _make_spec(n_steps=4)
-    with pytest.warns(RuntimeWarning, match='mixed native/Python graph') as warning_records:
-        _state, selected = _run(spec, 'auto', like_factory=lambda: _UndecoratedGaussian(n_par=4))
-    assert selected == 'python'
-    assert len(warning_records) == 1
-
-
-def test_numba_backend_rejects_stale_likelihood_override() -> None:
-    """A subclass overriding get_loglike must not inherit its parent's binding."""
-    spec = _make_spec(n_steps=4)
-    with pytest.raises(NativeBackendUnsupportedError, match='likelihood _UndecoratedGaussian'):
-        _run(spec, 'numba', like_factory=lambda: _UndecoratedGaussian(n_par=4))
 
 
 def test_hawaii_likelihood_warns_in_auto_and_is_rejected_by_numba() -> None:
@@ -877,12 +814,12 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
         RectangularLikelihood.loglike_fn,  # type: ignore[misc] # pyright: ignore[reportGeneralTypeIssues] # pyrefly: ignore[missing-attribute]
         RectangularLikelihood.inputs.fget,  # type: ignore[attr-defined]
         GaussianLikelihood.loglike_fn,
-        SigmaFullJump.bind_native,
-        DEStandardFullJump.bind_native,
-        PriorFullJump.bind_native,
-        BlankJump.bind_native,
+        SigmaFullJump.__call__,
+        DEStandardFullJump.__call__,
+        PriorFullJump.__call__,
+        BlankJump.__call__,
         DEJumpManager.bind_native_post_step,
-        DEJumpManager.native_state,
+        DEJumpManager.native_state.fget,  # type: ignore[attr-defined]
         ExchangeManager.bind_native,
         ExchangeManager.inputs.fget,  # type: ignore[attr-defined]
     ],

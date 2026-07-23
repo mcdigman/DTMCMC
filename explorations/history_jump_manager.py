@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 # TODO create a specialized likelihood object that makes this useful
 
 
+class HistoryNativeState(NamedTuple): ...
+
+
 @dataclass(init=False)
 class HistoryStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
@@ -41,7 +44,9 @@ class HistoryStrategyParameters:
         config_h['history_jump_weight'] = str(self.history_jump_weight)
 
 
-class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType]):
+class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
+    JumpManager[LikelihoodType, HistoryNativeState]
+):
     """manager for a jump that proposes jumps to historical states
     at different temperatures
     """
@@ -62,9 +67,14 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](J
 
         self.strategy_params: HistoryStrategyParameters = HistoryStrategyParameters(config)
 
-        jumps: list[AbstractJump[LikelihoodType]] = [LadderHistoryJump(self)]
+        jumps: list[AbstractJump[LikelihoodType, HistoryNativeState]] = [LadderHistoryJump(self)]
 
         JumpManager.__init__(self, T_ladder, like_obj, jumps)
+
+    @property
+    @override
+    def native_state(self) -> HistoryNativeState:
+        return HistoryNativeState()
 
     @override
     def set_jump_weights(self) -> None:
@@ -77,7 +87,6 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](J
         self._jump_weights = jump_weights
         assert np.all(self._jump_weights >= 0.0)
 
-    @override
     def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
