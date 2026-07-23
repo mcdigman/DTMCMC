@@ -105,7 +105,7 @@ def profile_likelihood(name: str, repeats: int, seed: int) -> tuple[dict[str, fl
     """
     target = BENCHMARKS[name]
     builder = LIKELIHOOD_BUILDERS[name]
-    like: AbstractLikelihood[NamedTuple] = builder(**target.default_params)
+    like: AbstractLikelihood[Any] = builder(**target.default_params)  # pyright: ignore[reportAssignmentType]
 
     # a valid point for get_loglike, and a fresh pool for correct_bounds
     point = np.asarray(like.prior_draw(), dtype=np.float64)
