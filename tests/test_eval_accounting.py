@@ -107,26 +107,29 @@ def test_builtin_jump_internal_costs_match_spy() -> None:
     config = _config(use_chol_fishers=True)
 
     starting = np.zeros((n_chain, n_par))
-    managers: list[JumpManager[AbstractLikelihood[Any], Any]] = [
-        FisherJumpManager(ladder, like_obj, starting, config),
-        DEJumpManager(ladder, like_obj, config),
-        AuxilliaryJumpManager(ladder, like_obj, config),
-        PriorManager(ladder, like_obj, config),
-        LadderHistoryJumpManager(
-            ladder, like_obj, config, ladder, np.zeros((4, n_chain)), np.zeros((4, n_chain, n_par))
-        ),
-    ]
+    original_loglike_fn_baked = like_obj.loglike_fn_baked
+    with LoglikeCallSpy(like_obj) as spy:
+        managers: list[JumpManager[AbstractLikelihood[Any], Any]] = [
+            FisherJumpManager(ladder, like_obj, starting, config),
+            DEJumpManager(ladder, like_obj, config),
+            AuxilliaryJumpManager(ladder, like_obj, config),
+            PriorManager(ladder, like_obj, config),
+            LadderHistoryJumpManager(
+                ladder, like_obj, config, ladder, np.zeros((4, n_chain)), np.zeros((4, n_chain, n_par))
+            ),
+        ]
 
-    sample_point = np.zeros(n_par)
-    checked = 0
-    for manager in managers:
-        for jump in manager.jumps:
-            declared = getattr(jump, 'declared_internal_evals', None)
-            assert declared is not None, jump.print_name
-            with LoglikeCallSpy(like_obj) as spy:
+        sample_point = np.zeros(n_par)
+        checked = 0
+        for manager in managers:
+            for jump in manager.jumps:
+                declared = getattr(jump, 'declared_internal_evals', None)
+                assert declared is not None, jump.print_name
+                calls_before = spy.n_calls
                 jump(sample_point.copy(), 0)
-            assert spy.n_calls == declared, jump.print_name
-            checked += 1
+                assert spy.n_calls - calls_before == declared, jump.print_name
+                checked += 1
+    assert like_obj.loglike_fn_baked is original_loglike_fn_baked
     assert checked == 10  # 3 fisher + 4 de + 1 blank + 1 prior + 1 history
 
 
@@ -137,18 +140,13 @@ def _dummy_call(sample_point: NDArray[np.floating], _itrt: int, _state: _Undecla
     return sample_point.copy(), 0.0, True
 
 
-class _UndeclaredJump[LikelihoodType: AbstractLikelihood[Any]](
+class _DeclaredJump[LikelihoodType: AbstractLikelihood[Any]](
     AbstractNativeJump[LikelihoodType, _UndeclaredNativeState]
 ):
-    """Extension jump without a declared_internal_evals attribute."""
+    """Extension jump with a declared_internal_evals attribute."""
 
-    def __init__(self, manager: _ExtensionManager[LikelihoodType], print_name: str = 'Undeclared') -> None:
+    def __init__(self, manager: _ExtensionManager[LikelihoodType], print_name: str = 'Declared') -> None:
         super().__init__(_dummy_call, manager, print_name)
-
-
-class _DeclaredJump[LikelihoodType: AbstractLikelihood[Any]](_UndeclaredJump[LikelihoodType]):
-    def __init__(self, manager: _ExtensionManager[LikelihoodType]) -> None:
-        super().__init__(manager, 'Declared')
 
     @property
     @override
@@ -157,11 +155,8 @@ class _DeclaredJump[LikelihoodType: AbstractLikelihood[Any]](_UndeclaredJump[Lik
 
 
 class _ExtensionManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, _UndeclaredNativeState]):
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, jump_sel: int = 0) -> None:
-        if jump_sel == 0:
-            jump: _UndeclaredJump[LikelihoodType] = _DeclaredJump(self)
-        else:
-            jump = _UndeclaredJump(self)
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType) -> None:
+        jump: _DeclaredJump[LikelihoodType] = _DeclaredJump(self)
 
         super().__init__(T_ladder, like_obj, [jump])
 
@@ -208,23 +203,12 @@ def _run_tiny_sampler(
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_unknown_internal_cost_marks_accounting_incomplete() -> None:
-    """A jump without a declaration must not be silently counted as zero."""
-    seed_run(20260717)
-    like_obj = GaussianLikelihood(n_par=2)
-    ladder = _ladder(3)
-    accounting = _run_tiny_sampler(_ExtensionManager(ladder, like_obj, 1), like_obj, ladder)
-    assert not accounting.complete
-    assert accounting.proposal_targets > 0
-
-
-@pytest.mark.usefixtures('fresh_seed_guard')
 def test_unknown_post_block_cost_marks_accounting_incomplete() -> None:
     """A post-block update returning None must not be silently counted as zero."""
     seed_run(20260718)
     like_obj = GaussianLikelihood(n_par=2)
     ladder = _ladder(3)
-    accounting = _run_tiny_sampler(_UndeclaredPostBlockManager(ladder, like_obj, 0), like_obj, ladder)
+    accounting = _run_tiny_sampler(_UndeclaredPostBlockManager(ladder, like_obj), like_obj, ladder)
     assert not accounting.complete
     assert accounting.post_block == 0
 
@@ -236,6 +220,6 @@ def test_declared_extension_graph_stays_complete() -> None:
     like_obj = GaussianLikelihood(n_par=2)
     ladder = _ladder(3)
     with LoglikeCallSpy(like_obj) as spy:
-        accounting = _run_tiny_sampler(_ExtensionManager(ladder, like_obj, 0), like_obj, ladder)
+        accounting = _run_tiny_sampler(_ExtensionManager(ladder, like_obj), like_obj, ladder)
     assert accounting.complete
     assert accounting.total == spy.n_calls
