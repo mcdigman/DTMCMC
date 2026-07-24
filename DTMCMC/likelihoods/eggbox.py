@@ -79,7 +79,6 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
     return new_point, success
 
 
-# @jitclass([('n_par', nb.int64), ('epsilons', nb.float64[:])])  # type: ignore[no-untyped-call] # pyright: ignore[reportCallIssue]
 class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
@@ -88,13 +87,6 @@ class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
         super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
         self.epsilons = np.zeros(n_par) + eps_default
 
-    # def get_loglike(self, v: NDArray[np.floating]) -> float:
-    #    """Get the log likelihood given a set of parameters v"""
-    #    return get_loglike(v, self.n_par)
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native
     @property
     @override
     def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:

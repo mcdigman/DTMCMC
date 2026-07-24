@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class EvalAccounting[LikelihoodType: AbstractLikelihood[Any]]:
+class EvalAccounting:
     """Likelihood-evaluation totals by source phase.
 
     ``complete`` is False when any component could not declare its cost

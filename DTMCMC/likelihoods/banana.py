@@ -55,11 +55,3 @@ class BananaLikelihood(RectangularLikelihood[RectangularInputs]):
     @override
     def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:
         return _loglike_native
-
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    """Get the log likelihood given a set of parameters v"""
-    #    return get_loglike(params_in, self.n_par)
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native

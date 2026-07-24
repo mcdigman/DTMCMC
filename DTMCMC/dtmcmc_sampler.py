@@ -2,7 +2,7 @@
 Module with the overall PTMCMC Chain object
 """
 
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numba import njit
@@ -65,7 +65,7 @@ def store_sample_helper(
     return store_idx, store_counter
 
 
-def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[Any]](
     itrb: int,
     samples: NDArray[np.floating],
     logLs: NDArray[np.floating],
@@ -121,7 +121,7 @@ def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return n_target_evals, n_internal_evals
 
 
-def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[Any]](
     proposal_manager: AbstractProposalManager[LikelihoodType],
 ) -> tuple[NDArray[np.int64], bool]:
     """Collect the per-jump declared internal evaluation costs in flattened order.
@@ -135,7 +135,7 @@ def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[NamedTuple]]
     return np.array([0 if value is None else value for value in declared], dtype=np.int64), known
 
 
-def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[Any]](
     T_ladder: TemperatureLadder,
     logLs: NDArray[np.floating],
     samples: NDArray[np.floating],
@@ -252,7 +252,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
                 '(n_par, get_loglike, prior_draw, prior_factor, validate_bounds)'
             )
             raise TypeError(msg)
-        self.eval_accounting: EvalAccounting[LikelihoodType] = EvalAccounting()
+        self.eval_accounting: EvalAccounting = EvalAccounting()
         self.block_size: int = block_size
         self.n_par: int = like_obj.n_par
         self.store_size: int = store_size

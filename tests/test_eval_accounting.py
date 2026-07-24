@@ -185,7 +185,7 @@ class _UndeclaredPostBlockManager[LikelihoodType: AbstractLikelihood[Any]](_Exte
 
 def _run_tiny_sampler(
     manager: JumpManager[GaussianLikelihood, Any], like_obj: GaussianLikelihood, ladder: TemperatureLadder
-) -> EvalAccounting[GaussianLikelihood]:
+) -> EvalAccounting:
     config = _config()
     config['ProposalManager']['only_prior_hot'] = 'False'
     proposal = ProposalManager(ladder, like_obj, (manager,), ExchangeManager(NULL_TARGETS, False), config)

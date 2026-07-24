@@ -464,7 +464,7 @@ def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: Rectangu
 # @njit(inline='always')
 @register_jitable
 def _unavailable_loglike_fn(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
-    """Return the per-class jitted ``(params, state) -> float`` log likelihood."""
+    """Return the per-class jitted ``(params, inputs) -> float`` log likelihood."""
     msg = 'No wired native log-likelihood binding for this path.'
     raise NativeBackendUnsupportedError(msg)
 
