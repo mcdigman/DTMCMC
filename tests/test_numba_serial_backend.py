@@ -906,12 +906,37 @@ def test_flattening_violation_rejected_in_python_mode() -> None:
         reset_seed_guard_for_tests()
 
 
-def test_auto_kernel_failure_backstop_is_bit_exact_with_python() -> None:
-    """A NumbaError at the compiled kernel call falls back losslessly in auto.
+_UNTYPABLE_GLOBAL = object()
 
-    Kernel compilation happens before any execution, so the Python program
-    reruns the block from untouched arrays: the whole run stays bit-exact
-    with a pure python-mode run of the same seed.
+
+@njit()
+def _uncompilable_kernel(
+    _samples: NDArray[np.floating],
+    _logLs: NDArray[np.floating],
+    _chain_track: NDArray[np.int64],
+    _betas: NDArray[np.floating],
+    _jump_probs: NDArray[np.floating],
+    _exchange_tracker: NDArray[np.int64],
+    _esd_exchange: NDArray[np.floating],
+    _accept_record: NDArray[np.int64],
+    _esd_record: NDArray[np.floating],
+    _manager_states: tuple[object, ...],
+    _exchange_inputs: object,
+    _jump_internal_evals: NDArray[np.int64],
+    _zero_loglike: bool,
+) -> tuple[int, int]:
+    """Kernel stand-in whose nopython compilation always fails."""
+    # numba cannot type a bare object() global: TypingError at compile
+    return _UNTYPABLE_GLOBAL  # type: ignore[return-value]
+
+
+def test_auto_kernel_failure_backstop_is_bit_exact_with_python() -> None:
+    """A NumbaError while compiling the kernel falls back losslessly in auto.
+
+    The kernel is compiled for the exact runtime signature before any
+    execution, so the Python program reruns the block from untouched
+    arrays: the whole run stays bit-exact with a pure python-mode run of
+    the same seed.
     """
     spec = _make_spec(n_steps=12, block_size=4)
     python_state, _ = _run(spec, 'python')
@@ -927,12 +952,9 @@ def test_auto_kernel_failure_backstop_is_bit_exact_with_python() -> None:
         assert program is not None
         assert program.flavor == 'numba'
 
-        def failing_kernel(*_args: object) -> tuple[int, int]:
-            msg = 'injected compile failure'
-            raise TypingError(msg)
-
-        backend.program = replace(program, kernel=failing_kernel)
-        with pytest.warns(RuntimeWarning, match='compiled kernel failed'):
+        backend.program = replace(program, kernel=_uncompilable_kernel)
+        backend._kernel_ready = False
+        with pytest.warns(RuntimeWarning, match='failed to compile'):
             sampler.advance_block()
         flavor_used = sampler.last_kernel_backend
         assert flavor_used == 'python'
@@ -943,6 +965,63 @@ def test_auto_kernel_failure_backstop_is_bit_exact_with_python() -> None:
     finally:
         reset_seed_guard_for_tests()
     _assert_snapshots_equal(python_state, auto_state)
+
+
+class _ReplayProbeState(NamedTuple):
+    scale: float
+    counter: NDArray[np.int64]
+
+
+@njit()
+def _replay_probe_post_step(state: _ReplayProbeState, _samples_row: NDArray[np.floating]) -> None:
+    """Mutate runtime state, then raise a NumbaError subclass mid-block."""
+    state.counter[0] += 1
+    if state.counter[0] == 4:
+        msg = 'runtime failure after partial block execution'
+        raise TypingError(msg)
+
+
+class _ReplayProbeManager(_CustomManager[Any]):
+    """Manager whose compiled post-step fails at runtime after tracker writes."""
+
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: Any, scale: float = 0.2) -> None:
+        self._replay_state = _ReplayProbeState(scale=scale, counter=np.zeros(1, dtype=np.int64))
+        super().__init__(T_ladder, like_obj, scale)
+
+    @property
+    @override
+    def native_state(self) -> _ReplayProbeState:  # type: ignore[override]
+        return self._replay_state
+
+    @property
+    @override
+    def bind_native_post_step(self) -> Any:
+        return _replay_probe_post_step
+
+
+def test_runtime_numba_error_is_never_replayed() -> None:
+    """P1 review fix: a runtime NumbaError must propagate, not trigger replay.
+
+    Only a failure of the pre-execution compilation step may engage the
+    auto fallback; an error raised while the compiled kernel executes
+    (after RNG draws and tracker writes) propagates instead of silently
+    rerunning the block and double-counting its side effects.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260719)
+        sampler = _build_standalone_sampler(
+            GaussianLikelihood(2), manager_cls=_ReplayProbeManager, kernel_backend='auto'
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            with pytest.raises(TypingError, match='after partial block execution'):
+                sampler.advance_block()
+        # the jump steps completed before the failing post-step (itrb 1 and 3
+        # of the 5-step block; even steps are exchanges) stay single-counted
+        assert int(sampler.tracker_manager.accept_record[:2].sum()) == 8
+    finally:
+        reset_seed_guard_for_tests()
 
 
 @pytest.mark.parametrize(
