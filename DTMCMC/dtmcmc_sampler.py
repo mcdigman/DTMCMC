@@ -14,8 +14,7 @@ from DTMCMC.exchange_manager import AbstractExchangeManager
 from DTMCMC.fisher_manager import FisherJumpManager, set_scales
 from DTMCMC.jump_manager import AbstractJump, AbstractJumpManager
 from DTMCMC.likelihood import AbstractLikelihood
-from DTMCMC.mcmc_kernel_helpers import mcmc_decision_helper
-from DTMCMC.numba_backend import NativeSerialBackend
+from DTMCMC.numba_backend import KernelFlavor, NativeSerialBackend, find_native_divergences
 from DTMCMC.proposal_manager import AbstractProposalManager
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.temperature_ladder_helpers import remap_ladder_indices
@@ -65,133 +64,6 @@ def store_sample_helper(
     return store_idx, store_counter
 
 
-def advance_step_ptmcmc[LikelihoodType: AbstractLikelihood[Any]](
-    itrb: int,
-    samples: NDArray[np.floating],
-    logLs: NDArray[np.floating],
-    T_ladder: TemperatureLadder,
-    accept_record: NDArray[np.int64],
-    esd_record: NDArray[np.floating],
-    proposal_manager: AbstractProposalManager[LikelihoodType],
-    like_obj: LikelihoodType,
-    jump_internal_evals: NDArray[np.int64],
-    zero_loglike: bool,
-) -> tuple[int, int]:
-    """Advance a single step in the ptmcmc chain.
-
-    Returns the number of target likelihood evaluations performed and the
-    declared jump-internal evaluations incurred (``jump_internal_evals``
-    holds the per-jump declared cost in flattened jump order).
-    """
-    n_chain: int = T_ladder.n_chain
-    betas: NDArray[np.floating] = T_ladder.betas
-    n_target_evals = 0
-    n_internal_evals = 0
-
-    for itrt in range(n_chain):
-        new_point, density_fac, success, idx_jump = proposal_manager.dispatch_jump(samples[itrb - 1, itrt], itrt)
-        n_internal_evals += int(jump_internal_evals[idx_jump])
-
-        if success:
-            # see if the point is in bounds, if not try to make it legal
-            new_point, success = like_obj.validate_bounds(new_point)
-
-        if success:
-            # The prior is not tempered. For a prior-draw proposal this target
-            # factor cancels the reverse/forward proposal factor supplied by
-            # PriorFullJump; other jumps retain the target-prior contribution.
-            density_fac += like_obj.prior_factor(new_point) - like_obj.prior_factor(samples[itrb - 1, itrt])
-
-        # skip likelihood evaluation if proposal is marked as a failure
-        if success:
-            # if the point passes, get the likelihood
-            if zero_loglike:
-                logL_new: float = 0.0
-            else:
-                logL_new = like_obj.get_loglike(new_point)
-            n_target_evals += 1
-        else:
-            # Failed, ensure the point will not be accepted
-            logL_new = -np.inf
-
-        mcmc_decision_helper(
-            itrb, samples, logLs, betas, accept_record, esd_record, itrt, new_point, logL_new, density_fac, idx_jump
-        )
-
-    return n_target_evals, n_internal_evals
-
-
-def declared_jump_internal_evals[LikelihoodType: AbstractLikelihood[Any]](
-    proposal_manager: AbstractProposalManager[LikelihoodType],
-) -> tuple[NDArray[np.int64], bool]:
-    """Collect the per-jump declared internal evaluation costs in flattened order.
-
-    Returns the cost array and whether every jump declared one; a missing
-    declaration contributes 0 to the array but marks the accounting
-    incomplete — an unknown cost is never silently treated as zero.
-    """
-    declared = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
-    known = all(value is not None for value in declared)
-    return np.array([0 if value is None else value for value in declared], dtype=np.int64), known
-
-
-def advance_block_ptmcmc[LikelihoodType: AbstractLikelihood[Any]](
-    T_ladder: TemperatureLadder,
-    logLs: NDArray[np.floating],
-    samples: NDArray[np.floating],
-    chain_track: NDArray[np.int64],
-    proposal_manager: AbstractProposalManager[LikelihoodType],
-    like_obj: LikelihoodType,
-    tracker_manager: TrackerManager[LikelihoodType],
-    zero_loglike: bool,
-) -> tuple[int, int, bool]:
-    """Advance an entire block in the ptmcmc chain, alternating regular and exchange proposals.
-
-    Returns the target evaluation count, the declared jump-internal
-    evaluation count, and whether every jump declared its internal cost.
-    """
-    block_size: int = samples.shape[0] - 1
-    jump_internal_evals, internal_known = declared_jump_internal_evals(proposal_manager)
-    n_target_evals = 0
-    n_internal_evals = 0
-
-    for itrb in range(1, block_size + 1):
-        if proposal_manager.exchange_manager.is_exchange_step(itrb):
-            # if the index requests an exchange, do that
-            proposal_manager.exchange_manager.do_ptmcmc_exchange(
-                itrb,
-                samples,
-                logLs,
-                T_ladder,
-                tracker_manager.exchange_tracker,
-                tracker_manager.esd_exchange,
-                chain_track,
-            )
-        else:
-            # if the index is a normal jump
-            step_targets, step_internal = advance_step_ptmcmc(
-                itrb,
-                samples,
-                logLs,
-                T_ladder,
-                tracker_manager.accept_record,
-                tracker_manager.esd_record,
-                proposal_manager,
-                like_obj,
-                jump_internal_evals,
-                zero_loglike,
-            )
-            n_target_evals += step_targets
-            n_internal_evals += step_internal
-            # track the indexes of the chains, which only change on exchange steps
-            chain_track[itrb, :] = chain_track[itrb - 1, :]
-
-        # record the differential evolution buffer
-        proposal_manager.post_step_update(samples[itrb])
-
-    return n_target_evals, n_internal_evals, internal_known
-
-
 class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
     """object to manage the overall chain evolution"""
 
@@ -231,13 +103,16 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
             arg_record columns follow in the given order, and an index that
             duplicates a readout chain is simply stored twice
         kernel_backend: {'auto', 'numba', 'python'}
-            Select the native serial block kernel. 'numba' requires every
-            concrete graph component to provide native bindings and raises
-            on binding or compilation failure. 'auto' silently falls back
-            for a graph with no native bindings and warns once for a mixed
-            graph or a compilation failure before using Python. 'python'
-            disables only the native block kernel, leaving existing jitted
-            helpers enabled.
+            Select which flavor of the assembled serial block program runs.
+            Both flavors share one control flow: the block program is
+            assembled once from the components' bound native functions,
+            and either compiled with numba ('numba') or run as the same
+            call chain in plain Python ('python'). 'numba' requires every
+            handle the kernel closes over to be nopython-compiled and
+            raises otherwise. 'auto' runs the compiled program when every
+            handle compiled, and warns once per graph before running the
+            Python program for a partially compiled graph (a graph with no
+            compiled handles falls back silently).
         zero_loglike: bool
             Prior-recovery review mode: set the sampler's target log
             likelihood values to zero without evaluating them. The original
@@ -265,7 +140,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
         self._native_serial_backend: NativeSerialBackend[LikelihoodType] = NativeSerialBackend(kernel_backend)
-        self.last_kernel_backend: str = 'python'
+        self.last_kernel_backend: KernelFlavor = 'python'
         self.tracker_manager: TrackerManager[LikelihoodType]
         self.proposal_manager: AbstractProposalManager[LikelihoodType]
         self.starting_samples = starting_samples
@@ -312,13 +187,17 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
                 self.eval_accounting.initialization += declared
 
     def validate_protocol_conformance(self) -> None:
-        """Fail fast when a component is missing structural protocol members.
+        """Fail fast when a component is missing structural protocol members
+        or diverges from its native bindings.
 
         runtime_checkable protocols verify member existence (not
         signatures), which catches incomplete extensions at construction
         in every kernel backend instead of failing obscurely mid-run. The
         likelihood's core interface is checked before any use at the top
         of ``__init__``; this hook validates the assembled proposal graph.
+        Conforming graphs are then checked for Python-contract overrides
+        that would silently diverge from the bound behavior both program
+        flavors execute.
         """
         problems: list[str] = []
         if not isinstance(self.proposal_manager, AbstractProposalManager):
@@ -339,6 +218,8 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
             for idx, jump in enumerate(self.proposal_manager.jumps):
                 if not isinstance(jump, AbstractJump):
                     problems.append(f'jump {idx} {type(jump).__qualname__} does not implement AbstractJump')
+        if not problems:
+            problems = find_native_divergences(self.proposal_manager, self.like_obj)
         if problems:
             msg = '; '.join(problems)
             raise TypeError(msg)
@@ -482,7 +363,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
 
     def block_main(self) -> None:
         """The main body of the block with the mcmc step"""
-        if self._native_serial_backend.try_advance_block(
+        self.last_kernel_backend = self._native_serial_backend.advance_block(
             self.T_ladder,
             self.logLs,
             self.samples,
@@ -492,24 +373,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
             self.tracker_manager,
             self.eval_accounting,
             self.zero_loglike,
-        ):
-            self.last_kernel_backend = 'numba'
-            return
-        self.last_kernel_backend = 'python'
-        n_target_evals, n_internal_evals, internal_known = advance_block_ptmcmc(
-            self.T_ladder,
-            self.logLs,
-            self.samples,
-            self.chain_track,
-            self.proposal_manager,
-            self.like_obj,
-            self.tracker_manager,
-            self.zero_loglike,
         )
-        self.eval_accounting.proposal_targets += n_target_evals
-        self.eval_accounting.proposal_internal += n_internal_evals
-        if not internal_known:
-            self.eval_accounting.complete = False
 
     def block_end(self) -> None:
         """Things to execute after the main mcmc body of the block,
