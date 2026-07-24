@@ -583,6 +583,21 @@ def _structural_key(
     )
 
 
+def _compile_for_args(kernel: SerialBlockKernel[Any], args: tuple[object, ...]) -> None:
+    """Eagerly compile the compiled-flavor kernel for the exact runtime signature.
+
+    Compilation is forced without executing the kernel, so a NumbaError
+    here is guaranteed to leave the block arrays, tracker state, and RNG
+    streams untouched — the only condition under which auto mode may fall
+    back and run the same block through the Python program. A NumbaError
+    raised while the kernel executes (user-compiled code may raise any
+    exception class) must never be treated as a compilation failure.
+    """
+    dispatcher: Any = kernel  # numba Dispatcher: typeof_pyval/compile are untyped
+    arg_types = tuple(dispatcher.typeof_pyval(arg) for arg in args)
+    dispatcher.compile(arg_types)
+
+
 class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     """Bind, cache, and run the serial block programs for one sampler."""
 
@@ -598,6 +613,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         self._manager_has_state: tuple[bool, ...] = ()
         self._jump_internal_evals: NDArray[np.int64] = np.zeros(0, dtype=np.int64)
         self._jump_internal_known: bool = True
+        self._kernel_ready: bool = False
 
     def _bind_program(
         self, proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType, flavor: KernelFlavor
@@ -664,6 +680,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         if identity == self.graph_identity:
             return
         _check_flattening(proposal_manager)
+        self._kernel_ready = False
         if self.mode == 'python':
             self.program = self._bind_program(proposal_manager, like_obj, 'python')
             self.graph_identity = identity
@@ -719,46 +736,46 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
         )
         exchange_inputs = proposal_manager.exchange_manager.inputs
-
-        def run_kernel(kernel: SerialBlockKernel[Any]) -> tuple[int, int]:
-            return kernel(
-                samples,
-                logLs,
-                chain_track,
-                T_ladder.betas,
-                proposal_manager.jump_probs,
-                tracker_manager.exchange_tracker,
-                tracker_manager.esd_exchange,
-                tracker_manager.accept_record,
-                tracker_manager.esd_record,
-                manager_states,
-                exchange_inputs,
-                self._jump_internal_evals,
-                zero_loglike,
-            )
-
-        try:
-            n_target_evals, n_internal_evals = run_kernel(program.kernel)
-        except NumbaError as exc:
-            if program.flavor == 'python':
-                # a bound handle failed inside the Python program itself;
-                # there is no further fallback
-                raise
-            # NumbaError from the compiled program means the kernel failed to
-            # compile, which happens before any execution, so the block arrays
-            # are untouched and the Python program can rerun the block from samples[0]
-            if self.mode == 'numba':
-                cls = type(like_obj)
-                msg = f'fully compiled-bindable graph failed Numba compilation or execution for {cls.__qualname__} '
-                raise NativeBackendCompilationError(msg) from exc
-            warn(
-                f"kernel_backend='auto' compiled kernel failed and will run the Python program: {exc}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
-            program = self._bind_program(proposal_manager, like_obj, 'python')
-            self.program = program
-            n_target_evals, n_internal_evals = run_kernel(program.kernel)
+        args = (
+            samples,
+            logLs,
+            chain_track,
+            T_ladder.betas,
+            proposal_manager.jump_probs,
+            tracker_manager.exchange_tracker,
+            tracker_manager.esd_exchange,
+            tracker_manager.accept_record,
+            tracker_manager.esd_record,
+            manager_states,
+            exchange_inputs,
+            self._jump_internal_evals,
+            zero_loglike,
+        )
+        if program.flavor == 'numba' and not self._kernel_ready:
+            # separate compilation from execution: only a failure here, with
+            # the block arrays and RNG streams still untouched, may fall back.
+            # A later block with a changed state signature lazily recompiles
+            # inside the call and a failure there propagates — never a replay.
+            try:
+                _compile_for_args(program.kernel, args)
+            except NumbaError as exc:
+                if self.mode == 'numba':
+                    cls = type(like_obj)
+                    msg = f'fully compiled-bindable graph failed Numba compilation for {cls.__qualname__} '
+                    raise NativeBackendCompilationError(msg) from exc
+                warn(
+                    f"kernel_backend='auto' compiled kernel failed to compile and will run the Python program: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                program = self._bind_program(proposal_manager, like_obj, 'python')
+                self.program = program
+            else:
+                self._kernel_ready = True
+        # runtime exceptions (numba or otherwise) propagate: execution may
+        # already have consumed RNG draws and mutated trackers, so rerunning
+        # the block would silently double-count its side effects
+        n_target_evals, n_internal_evals = program.kernel(*args)
         eval_accounting.proposal_targets += n_target_evals
         eval_accounting.proposal_internal += n_internal_evals
         if not self._jump_internal_known:
