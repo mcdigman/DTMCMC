@@ -1,15 +1,16 @@
-"""Regression tests for the binding-driven serial nopython block kernel."""
+"""Regression tests for the binding-driven serial block programs (both flavors)."""
 
 import configparser
 import typing
 import warnings
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 import pytest
 import scipy.interpolate
 from numba import njit
+from numba.core.errors import TypingError
 from numpy.typing import NDArray
 
 from DTMCMC.auxilliary_manager import BlankJump
@@ -29,6 +30,7 @@ from DTMCMC.likelihood import (
     AbstractLikelihood,
     CompilationFallbackWarning,
     NativeBackendCompilationError,
+    NativeBackendUnsupportedError,
     RectangularBoundsProtocol,
     RectangularLikelihood,
 )
@@ -795,6 +797,152 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     config.read('default_config.ini')
     with pytest.raises(TypeError, match='correct_bounds and get_epsilons'):
         FisherJumpManager(ladder, _FisherDeficientLikelihood(), np.zeros((4, 2)), config)  # type: ignore[type-var] # pyrefly: ignore[bad-specialization]
+
+
+def _build_standalone_sampler(
+    like_obj: Any,
+    *,
+    manager_cls: type[_CustomManager[Any]] = _CustomManager,
+    exchange: ExchangeManager | None = None,
+    kernel_backend: str = 'python',
+) -> DTMCMCSampler[Any]:
+    """Assemble a one-manager sampler around externally supplied components."""
+    ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
+    config = configparser.ConfigParser()
+    config.read('default_config.ini')
+    config['ProposalManager']['only_prior_hot'] = 'False'
+    manager = manager_cls(ladder, like_obj)
+    if exchange is None:
+        exchange = ExchangeManager(NULL_TARGETS, False)
+    proposal = ProposalManager(ladder, like_obj, (manager,), exchange, config)
+    return DTMCMCSampler(
+        ladder,
+        like_obj,
+        block_size=5,
+        store_size=5,
+        proposal_manager=proposal,
+        starting_samples=np.zeros((ladder.n_chain, like_obj.n_par)),
+        kernel_backend=kernel_backend,
+    )
+
+
+class _StaleLoglikeLikelihood(GaussianLikelihood):
+    """Overrides the Python contract below the loglike_fn hook definition."""
+
+    def get_loglike(self, params_in: NDArray[np.floating]) -> float:  # type: ignore[misc]
+        return -float(np.sum(params_in))
+
+
+class _StalePostStepManager(_CustomManager[Any]):
+    """Adds per-step behavior as a method only, with no post-step binding."""
+
+    def post_step_update(self, samples: NDArray[np.floating]) -> None:  # type: ignore[misc]
+        del samples
+
+
+class _StaleCadenceExchange(ExchangeManager):
+    """Overrides the exchange cadence below the native schedule hook."""
+
+    def is_exchange_step(self, itrb: int) -> bool:  # type: ignore[misc]
+        return itrb % 3 == 0
+
+
+@pytest.mark.parametrize('backend', ['python', 'auto', 'numba'])
+def test_stale_loglike_override_fails_fast_in_every_mode(backend: str) -> None:
+    """A method override that outruns its binding is a construction error.
+
+    Both program flavors execute the bound functions, so routing such a
+    graph to the Python program would no longer honor the override; the
+    divergence is rejected at construction in every kernel backend mode.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260717)
+        with pytest.raises(TypeError, match='overrides get_loglike without overriding'):
+            _build_standalone_sampler(_StaleLoglikeLikelihood(2), kernel_backend=backend)
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_stale_post_step_override_fails_fast() -> None:
+    """Per-step behavior must arrive as a native binding, not a method override."""
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260717)
+        with pytest.raises(TypeError, match='overrides post_step_update without overriding bind_native_post_step'):
+            _build_standalone_sampler(GaussianLikelihood(2), manager_cls=_StalePostStepManager)
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_stale_exchange_cadence_override_fails_fast() -> None:
+    """The exchange schedule must arrive as a native binding, not a method override."""
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260717)
+        with pytest.raises(TypeError, match='overrides is_exchange_step without overriding'):
+            _build_standalone_sampler(GaussianLikelihood(2), exchange=_StaleCadenceExchange(NULL_TARGETS, False))
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_flattening_violation_rejected_in_python_mode() -> None:
+    """The unified assembly needs the flattening invariant in every mode.
+
+    Both flavors dispatch per manager against the aggregate's flattened
+    jump_probs columns, so a reordered aggregate jump list is rejected
+    rather than silently misaligning probabilities with proposals.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260718)
+        spec = _make_spec(n_steps=4)
+        sampler, _like_obj = build_sampler(spec, kernel_backend='python')
+        jumps = typing.cast('list[Any]', sampler.proposal_manager.jumps)
+        jumps.append(jumps.pop(0))
+        with pytest.raises(NativeBackendUnsupportedError, match='ordered identity-preserving flattening'):
+            sampler.advance_block()
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_auto_kernel_failure_backstop_is_bit_exact_with_python() -> None:
+    """A NumbaError at the compiled kernel call falls back losslessly in auto.
+
+    Kernel compilation happens before any execution, so the Python program
+    reruns the block from untouched arrays: the whole run stays bit-exact
+    with a pure python-mode run of the same seed.
+    """
+    spec = _make_spec(n_steps=12, block_size=4)
+    python_state, _ = _run(spec, 'python')
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(spec.seed)
+        sampler, _like_obj = build_sampler(spec, kernel_backend='auto')
+        sampler.advance_block()
+        flavor_used: str = sampler.last_kernel_backend
+        assert flavor_used == 'numba'
+        backend = sampler._native_serial_backend
+        program = backend.program
+        assert program is not None
+        assert program.flavor == 'numba'
+
+        def failing_kernel(*_args: object) -> tuple[int, int]:
+            msg = 'injected compile failure'
+            raise TypingError(msg)
+
+        backend.program = replace(program, kernel=failing_kernel)
+        with pytest.warns(RuntimeWarning, match='compiled kernel failed'):
+            sampler.advance_block()
+        flavor_used = sampler.last_kernel_backend
+        assert flavor_used == 'python'
+        sampler.advance_block()
+        flavor_used = sampler.last_kernel_backend
+        assert flavor_used == 'python'
+        auto_state = _snapshot(sampler)
+    finally:
+        reset_seed_guard_for_tests()
+    _assert_snapshots_equal(python_state, auto_state)
 
 
 @pytest.mark.parametrize(
