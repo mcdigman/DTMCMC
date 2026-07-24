@@ -30,9 +30,7 @@ def _blank_jump_native(
     return sample_point.copy(), 0.0, True
 
 
-class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractNativeJump[LikelihoodType, AuxilliaryNativeState]
-):
+class BlankJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, AuxilliaryNativeState]):
     """Template jump for future extensions"""
 
     def __init__(self, manager: JumpManager[LikelihoodType, AuxilliaryNativeState]) -> None:

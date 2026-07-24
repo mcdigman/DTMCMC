@@ -5,7 +5,7 @@ in order to be properly recognized by the framework
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypeVar, final, runtime_checkable
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, final, runtime_checkable
 
 import numpy as np
 from numba import njit
@@ -26,19 +26,7 @@ type NativeJumpCall[ManagerType] = Callable[
 
 @runtime_checkable
 class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
-    """An object that performs a single proposal from its __call__ method.
-
-    A jump may additionally define ``bind_native(likelihood_natives)``
-    returning a per-class jitted function with this ``__call__``
-    signature plus the manager and likelihood runtime states (see DTMCMC.numba_backend).
-
-    A jump should also declare ``declared_internal_evals``: the fixed
-    number of target-likelihood evaluations one dispatch performs
-    internally (0 for every proposal that does not evaluate the
-    likelihood itself). A jump without the attribute makes the sampler's
-    evaluation accounting incomplete — an unknown cost is never silently
-    treated as zero.
-    """
+    """An object that performs a single proposal from its __call__ method."""
 
     @property
     def declared_internal_evals(self) -> int: ...
@@ -61,9 +49,6 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
             success: a boolean, whether generating the proposal succeeded
         """
         ...
-
-
-ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
 
 
 type NativePostStepCall[ManagerType] = Callable[[ManagerType, NDArray[np.floating]], None]

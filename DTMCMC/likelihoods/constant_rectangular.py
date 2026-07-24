@@ -45,12 +45,3 @@ class ConstantRectangularLikelihood(RectangularLikelihood[RectangularInputs]):
     @override
     def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:
         return _loglike_native
-
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    """Return a constant log likelihood over the whole parameter space."""
-    #    del params_in
-    #    return 0.0
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-    #    """Return the per-class native zero log likelihood."""
-    #    return _loglike_native
