@@ -253,10 +253,21 @@ def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
             jump_idx = sampler.proposal_manager.jump_labels.index('Blank Jump')
             sampler.proposal_manager.jump_probs.fill(0.0)
             sampler.proposal_manager.jump_probs[:, jump_idx] = 1.0
+            if backend == 'python':
+                sampler.advance_block()
+
+        # The spy's Python counting closure is intentionally not a native
+        # binding. Resolve and compile the strict native backend only after
+        # the original baked handle has been restored.
+        if backend == 'numba':
             sampler.advance_block()
 
         assert sampler.last_kernel_backend == backend
-        assert spy.n_calls == 2 * fisher.declared_construction_evals
+        if backend == 'python':
+            assert spy.n_calls == 2 * fisher.declared_construction_evals
+        else:
+            assert spy.n_calls == fisher.declared_construction_evals
+            assert sampler.eval_accounting.post_block == fisher.declared_construction_evals
         assert sampler.eval_accounting.proposal_targets > 0
         assert np.all(sampler.logLs == 0.0)
     finally:
