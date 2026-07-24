@@ -11,13 +11,13 @@ of ``post_block_update``. A component that cannot declare its cost yields an
 incomplete total — never a silent zero.
 
 ``LoglikeCallSpy`` is the conformance helper for verifying declarations:
-it independently counts actual ``get_loglike`` calls on one likelihood
-instance, so tests (including third-party extension tests) can assert that
-declared costs equal observed calls.
+it independently counts actual calls through one likelihood instance's
+baked log-likelihood handle, so tests (including third-party extension
+tests) can assert that declared costs equal observed calls.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,13 +50,15 @@ class EvalAccounting[LikelihoodType: AbstractLikelihood[Any]]:
 
 
 class LoglikeCallSpy[LikelihoodType: AbstractLikelihood[Any]]:
-    """Independently count actual ``get_loglike`` calls on one likelihood.
+    """Independently count actual log-likelihood calls on one likelihood.
 
-    Context manager that wraps the instance's ``get_loglike`` with a
-    counting shim (restored on exit). Use it to verify that declared
-    evaluation costs match observed behavior::
+    Context manager that wraps the instance's baked log-likelihood handle
+    with a counting shim (restored on exit). Enter the context before
+    constructing components that may capture the baked handle. Use it to
+    verify that declared evaluation costs match observed behavior::
 
         with LoglikeCallSpy(like_obj) as spy:
+            manager = build_manager(like_obj)
             manager.post_block_update(itrn, block_size, samples, logLs)
         assert spy.n_calls == declared_cost
     """
@@ -64,17 +66,31 @@ class LoglikeCallSpy[LikelihoodType: AbstractLikelihood[Any]]:
     def __init__(self, like_obj: LikelihoodType) -> None:
         self.like_obj: LikelihoodType = like_obj
         self.n_calls: int = 0
+        self._original_loglike_fn_baked: Callable[[NDArray[np.floating]], float] | None = None
+        self._active: bool = False
 
     def __enter__(self) -> LoglikeCallSpy[LikelihoodType]:
-        original: Callable[[NDArray[np.floating]], float] = self.like_obj.get_loglike
+        if self._active:
+            msg = 'LoglikeCallSpy cannot be entered while it is already active'
+            raise RuntimeError(msg)
+        original = cast(
+            'Callable[[NDArray[np.floating]], float]',
+            object.__getattribute__(self.like_obj, '_loglike_fn_baked'),
+        )
+        self._original_loglike_fn_baked = original
+        self._active = True
 
         def counting_loglike(params_in: NDArray[np.floating]) -> float:
-            self.n_calls += 1
+            if self._active:
+                self.n_calls += 1
             return original(params_in)
 
-        # instance attribute shadows the class method until __exit__
-        self.like_obj.get_loglike = counting_loglike  # type: ignore[method-assign]
+        object.__setattr__(self.like_obj, '_loglike_fn_baked', counting_loglike)
         return self
 
     def __exit__(self, *exc_info: object) -> None:
-        del self.like_obj.get_loglike
+        original = self._original_loglike_fn_baked
+        assert original is not None
+        self._active = False
+        object.__setattr__(self.like_obj, '_loglike_fn_baked', original)
+        self._original_loglike_fn_baked = None
