@@ -2,6 +2,7 @@
 
 import configparser
 from dataclasses import is_dataclass
+from typing import Any
 
 import pytest
 
@@ -29,7 +30,7 @@ def _config() -> configparser.ConfigParser:
         # HistoryStrategyParameters,
     ],
 )
-def test_strategy_parameters_are_independent_dataclasses(strategy_type) -> None:
+def test_strategy_parameters_are_independent_dataclasses(strategy_type: Any) -> None:
     """Strategy snapshots no longer retain a live ConfigParser as hidden state."""
     strategy = strategy_type(_config())
 

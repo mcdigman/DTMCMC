@@ -1,6 +1,6 @@
 """helper to print some diagnostic commentary about chain performance"""
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import scipy
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
 
 
-def print_diagnostic_commentary[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def print_diagnostic_commentary[LikelihoodType: AbstractLikelihood[Any]](
     mcc: DTMCMCSampler[LikelihoodType],
 ) -> None:
     print('==========Descriptive Summary===========')

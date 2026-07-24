@@ -1,10 +1,15 @@
 """Unit tests for construction of temperature ladders"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
 import DTMCMC.temperature_ladder_helpers as th
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
 TEST_DATA_DIR = 'tests/test_data/'
 INVALID_N_COLD_PATTERN = r'(n cold cannot be more than total number of chain|n_cold \d+ not in \[0,)'
@@ -41,7 +46,9 @@ test_set1 = [
 ]
 
 
-def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final) -> None:
+def unique_check_helper(
+    Ts_in: NDArray[np.floating], T_cold: float, n_chain: int, n_cold: int, n_inf_final: int
+) -> None:
     uniq, counts = np.unique(Ts_in, return_counts=True)
     print(Ts_in)
     print(T_cold, n_cold, n_inf_final)
@@ -68,7 +75,7 @@ def unique_check_helper(Ts_in, T_cold, n_chain, n_cold, n_inf_final) -> None:
 
 @pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 @pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
-def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
+def test_entropy_spacing_fromfile_inf(n_cold: int, n_chain: int, T_cold: float, n_inf_final: int) -> None:
     """Test the entropy based spacing produces results that makes sense"""
     if n_cold > n_chain:
         with pytest.raises(ValueError, match=INVALID_N_COLD_PATTERN):
@@ -136,7 +143,7 @@ def test_entropy_spacing_fromfile_inf(n_cold, n_chain, T_cold, n_inf_final) -> N
 
 @pytest.mark.parametrize(('n_cold', 'n_chain', 'T_cold'), test_set1)
 @pytest.mark.parametrize('n_inf_final', [0, 1, 2, 3, 4])
-def test_geometric_spacing_inf(n_cold, n_chain, T_cold, n_inf_final) -> None:
+def test_geometric_spacing_inf(n_cold: int, n_chain: int, T_cold: float, n_inf_final: int) -> None:
     """Test the entropy based spacing produces results that makes sense"""
     T_min = 1.0
     T_max = 1000.0

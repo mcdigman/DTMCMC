@@ -3,7 +3,7 @@ Module to manage differential evoultion jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -151,11 +151,14 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
     null proposals are marked as failures
     """
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
         print_name = 'DE Std All-D'
         super().__init__(_de_standard_full_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
@@ -165,11 +168,14 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple
     null proposals are marked as failures
     """
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
         print_name = 'DE Std Random-D'
         super().__init__(_de_standard_subspace_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractNativeJump[LikelihoodType, DENativeState]):
@@ -177,11 +183,14 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractNati
     null proposals are marked as failures
     """
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
         print_name = 'DE Big All-D'
         super().__init__(_de_big_full_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
@@ -191,11 +200,14 @@ class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
     null proposals are marked as failures
     """
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: DEJumpManager[LikelihoodType]) -> None:
         print_name = 'DE Big Random-D'
         super().__init__(_de_big_subspace_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 def initialize_de_helper(
@@ -253,7 +265,7 @@ class DEStrategyParameters:
         config_de['de_thin'] = str(self.de_thin)
 
 
-class DEJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, DENativeState]):
+class DEJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, DENativeState]):
     """manage the differential evolution jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The ring buffer and the write/thinning counter array are allocated once

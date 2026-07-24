@@ -88,7 +88,7 @@ if __name__ == '__main__':
         block_size,
         store_size,
         starting_samples=starting_samples,
-        arg_record=np.arange(n_cold, n_chain),
+        arg_record=np.arange(n_cold, n_chain).tolist(),
         proposal_manager=proposal_manager,
     )
 
@@ -266,12 +266,12 @@ if __name__ == '__main__':
     # plt.plot(T_ladder.betas,accept_exchange_nn)
     # plt.show()
 
+    Ts_old = np.load('data/Ts_cake_gold.npy')
+    vars_old = np.load('data/vars_cake_gold.npy')
     do_heat_plot_gold = False
     if do_heat_plot_gold:
         # Ts_old = np.load('Ts_cake_combo2.npy')
         # vars_old = np.load('vars_cake_combo2.npy')
-        Ts_old = np.load('data/Ts_cake_gold.npy')
-        vars_old = np.load('data/vars_cake_gold.npy')
         plt.loglog(Ts_old, vars_old)
         plt.loglog(
             T_ladder.Ts[argTs],
@@ -300,7 +300,7 @@ if __name__ == '__main__':
 
     rs_stack = np.hstack(rs_save)[n_burnin:]
 
-    counts, bins = np.histogram(rs_stack, 10000, range=[0.0, np.sqrt(n_par) * like_obj.high_lims[1]], density=True)
+    counts, bins = np.histogram(rs_stack, 10000, range=(0.0, np.sqrt(n_par) * like_obj.high_lims[1]), density=True)
 
     integ_true = cumulative_trapezoid(ibf.get_density_pred(1.0)[::-1], ibf.rs[::-1], initial=0)[::-1] + 1
     integ_loc = cumulative_trapezoid(counts[::-1], bins[::-1][1:], initial=0)[::-1] + 1
@@ -489,9 +489,9 @@ if __name__ == '__main__':
 
     dch.print_diagnostic_commentary(mcc)
 
-    counts, bins = np.histogram(rs_stack, 10000, range=[0.0, np.sqrt(n_par) * like_obj.high_lims[1]], density=True)
+    counts, bins = np.histogram(rs_stack, 10000, range=(0.0, np.sqrt(n_par) * like_obj.high_lims[1]), density=True)
 
-    rs_stack = None
+    # rs_stack = None
 
     plt.plot(bins[1:], counts)
     plt.plot(ibf.rs, ibf.get_density_pred(1.0))
@@ -721,19 +721,19 @@ if __name__ == '__main__':
         )
     )[:, 0]
     integrand_left1, integrand_right1, integrand_avg1 = integral_heat_estimator.cumulant_integrand(
-        cumulants[:2], mcc.betas
+        cumulants[:2].tolist(), mcc.betas
     )
     integrand_left2, integrand_right2, integrand_avg2 = integral_heat_estimator.cumulant_integrand(
-        cumulants[:3], mcc.betas
+        cumulants[:3].tolist(), mcc.betas
     )
     integrand_left3, integrand_right3, integrand_avg3 = integral_heat_estimator.cumulant_integrand(
-        cumulants[:4], mcc.betas
+        cumulants[:4].tolist(), mcc.betas
     )
     integrand_left4, integrand_right4, integrand_avg4 = integral_heat_estimator.cumulant_integrand(
-        cumulants[:5], mcc.betas
+        cumulants[:5].tolist(), mcc.betas
     )
     integrand_left5, integrand_right5, integrand_avg5 = integral_heat_estimator.cumulant_integrand(
-        cumulants[:6], mcc.betas
+        cumulants[:6].tolist(), mcc.betas
     )
     plt.plot(mcc.betas[1:], np.cumsum(integrand_avg1))
     plt.plot(mcc.betas[1:], np.cumsum(integrand_avg2))
@@ -938,7 +938,7 @@ if __name__ == '__main__':
 
     rs_stack = np.hstack(rs_save)[n_burnin:]
 
-    counts, bins, _ = plt.hist(rs_stack, 10000, range=[0.0, np.sqrt(n_par) * like_obj.high_lims[1]], density=True)
+    counts, bins, _ = plt.hist(rs_stack, 10000, range=(0.0, np.sqrt(n_par) * like_obj.high_lims[1]), density=True)
 
     plt.plot(ibf.rs, ibf.get_density_pred(1.0))
     plt.show()

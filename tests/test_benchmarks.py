@@ -8,7 +8,7 @@ across modes at the registered weights. The symmetric NN divergence and
 the segmented round-trip loader are covered here too.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
@@ -23,6 +23,9 @@ from experiments.harness.spec import LIKELIHOOD_NAMES, RunSpec
 from experiments.metrics import nn_divergence_symmetric, nn_kl
 from experiments.pilots.common import load_run_metrics
 from experiments.pilots.family_compare import summarize_arms
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # tiny-but-representative dimensionality per likelihood for smoke runs:
 # fixed-dimension targets pin their n_par, flexible ones shrink for speed
@@ -150,9 +153,9 @@ def test_mode_weights_match_reference_draws() -> None:
 
 @pytest.mark.parametrize('name', sorted(LIKELIHOOD_NAMES))
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_every_likelihood_runs_end_to_end(name, tmp_path) -> None:
+def test_every_likelihood_runs_end_to_end(name: str, tmp_path: Path) -> None:
     """Each likelihood runs through run_from_spec and yields a valid artifact."""
-    spec = RunSpec.from_dict(_smoke_spec_data(name))
+    spec: RunSpec[Any] = RunSpec.from_dict(_smoke_spec_data(name))
     artifact_path = run_from_spec(spec, tmp_path)
     assert validate(artifact_path, mode='complete') == []
 
@@ -177,7 +180,7 @@ def test_symmetric_nn_divergence_catches_both_failure_signs() -> None:
     assert nn_kl(reference, collapsed, 2000, get_rng(4)) < 0.0
 
 
-def _write_synthetic_artifact(path, events: np.ndarray, segment_itrns: np.ndarray, n_iterations: int) -> None:
+def _write_synthetic_artifact(path: Path, events: np.ndarray, segment_itrns: np.ndarray, n_iterations: int) -> None:
     """Write the minimal dataset set load_run_metrics reads."""
     rng = get_rng(7)
     with h5py.File(str(path), 'w') as hf:
@@ -243,7 +246,7 @@ def test_family_compare_summarize_ranks_pass_rate_before_efficiency() -> None:
     assert tie['ranking_by_pass_rate_then_efficiency'] == ['length', 'entropy']
 
 
-def test_load_run_metrics_respects_segment_boundaries(tmp_path) -> None:
+def test_load_run_metrics_respects_segment_boundaries(tmp_path: Path) -> None:
     """The pilot loader must not pair round-trip arrivals across a ladder update.
 
     Walker 0's cold/hot arrivals straddle the boundary (must not pair);

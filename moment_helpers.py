@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from DTMCMC.likelihood import AbstractLikelihood
 
 
-def get_averaged_means[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def get_averaged_means[LikelihoodType: AbstractLikelihood[Any]](
     mcc: DTMCMCSampler[LikelihoodType], length: int, cut: int = 0
 ) -> list[NDArray[np.floating]]:
     l1_means = np.array(mcc.logL_means)
@@ -69,7 +69,7 @@ def get_cumulants(l_means: list[NDArray[np.floating]]) -> list[NDArray[np.floati
     return [l_cum1, l_cum2, l_cum3, l_cum4, l_cum5, l_cum6]
 
 
-def get_averaged_adjacents[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def get_averaged_adjacents[LikelihoodType: AbstractLikelihood[Any]](
     mcc: DTMCMCSampler[LikelihoodType], length: int, cut: int = 0
 ) -> list[NDArray[np.floating]]:
     l_p11_means = np.array(mcc.logL_prod11_means)

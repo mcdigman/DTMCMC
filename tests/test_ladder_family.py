@@ -57,7 +57,12 @@ def gold_inputs() -> tuple[np.ndarray, np.ndarray]:
 
 @pytest.mark.parametrize(('n_chain', 'n_cold', 'n_inf_final', 'T_cold', 'correct_last'), ENTROPY_REGRESSION_CONFIGS)
 def test_entropy_ladder_reproduces_frozen_fixture(
-    gold_inputs, n_chain, n_cold, n_inf_final, T_cold, correct_last
+    gold_inputs: tuple[np.ndarray, np.ndarray],
+    n_chain: int,
+    n_cold: int,
+    n_inf_final: int,
+    T_cold: float,
+    correct_last: bool,
 ) -> None:
     """Acceptance 1a: the refactored machinery reproduces the frozen fixture values.
 
@@ -109,7 +114,9 @@ def _original_heat_capacity_integrated(
 
 
 @pytest.mark.parametrize('correct_last', [False, True])
-def test_generalized_machinery_bit_exact_vs_original(gold_inputs, correct_last) -> None:
+def test_generalized_machinery_bit_exact_vs_original(
+    gold_inputs: tuple[np.ndarray, np.ndarray], correct_last: bool
+) -> None:
     """Acceptance 1b: the (p=1, q=1) generalized integral is bit-exact vs the original.
 
     Platform-independent: both implementations run in-process on the same
@@ -147,7 +154,7 @@ def test_gaussian_null_case_ladders_coincide() -> None:
 
 @pytest.mark.parametrize('beta1', [1.0, 0.5, 0.2])
 @pytest.mark.parametrize('delta_beta', [0.01, 0.05, 0.1, 0.3])
-def test_acceptance_predictor_vs_brute_force(beta1, delta_beta) -> None:
+def test_acceptance_predictor_vs_brute_force(beta1: float, delta_beta: float) -> None:
     """Acceptance 3: closed form within 1% absolute of swap Monte Carlo."""
     n_par = 4
     beta2 = beta1 - delta_beta
@@ -181,7 +188,7 @@ def cake1_inputs() -> tuple[np.ndarray, ...]:
     )
 
 
-def test_acceptance_ladder_equal_acceptance(cake1_inputs) -> None:
+def test_acceptance_ladder_equal_acceptance(cake1_inputs: np.ndarray) -> None:
     """The acceptance ladder's defining property: equal predicted swap acceptance.
 
     Rebuild the interpolants the ladder used and check every adjacent
@@ -250,13 +257,13 @@ def test_acceptance_ladder_equal_acceptance(cake1_inputs) -> None:
         },
     ],
 )
-def test_all_ladder_kinds_constructible_from_spec(ladder_table) -> None:
+def test_all_ladder_kinds_constructible_from_spec(ladder_table: dict[str, str | int | float | list[float]]) -> None:
     """Acceptance 4: every ladder kind builds from a harness spec."""
     data: dict[str, Any] = {
         key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
     }
     data['ladder'] = ladder_table
-    spec = RunSpec.from_dict(data)
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
     ladder = build_ladder(spec)
     assert ladder.n_chain == ladder_table['n_chain']
     assert np.all(ladder.Ts[np.isfinite(ladder.Ts)] > 0.0)

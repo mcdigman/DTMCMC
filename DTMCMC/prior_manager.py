@@ -3,7 +3,7 @@ manager to manage prior-draw based jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 from warnings import warn
 
 import numba.core.types as nb_types
@@ -61,8 +61,6 @@ def _make_prior_native(
 class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
     AbstractNativeJump[LikelihoodType, PriorNativeState]
 ):
-    declared_internal_evals = 0
-
     def __init__(self, manager: JumpManager[LikelihoodType, PriorNativeState]) -> None:
         print_name = 'Prior All-D'
 
@@ -74,6 +72,11 @@ class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
                 stacklevel=2,
             )
         super().__init__(handle, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 @dataclass(init=False)
@@ -101,7 +104,7 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, PriorNativeState]):
+class PriorManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, PriorNativeState]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:

@@ -3,7 +3,7 @@ module to store objects related to fisher matrix jumps
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -118,12 +118,15 @@ class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
 ):
     """Standard Deviation Jump in Full Dimensions"""
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         """Create the jump"""
         print_name = 'Std All-D'
         super().__init__(_sigma_full_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
@@ -131,11 +134,14 @@ class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
 ):
     """Standard deviation jump in random subspaces"""
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         print_name = 'Std Random-D'
         super().__init__(_sigma_subspace_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 @dataclass(init=False)
@@ -340,7 +346,7 @@ def set_scales(
     return sigma_scales, gamma_mults
 
 
-class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpManager[LikelihoodType, FisherNativeState]):
+class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, FisherNativeState]):
     """manage everything related to fisher matrix jumps, subclass of DTMCMC.jump_manager.JumpManager
 
     The fisher arrays are allocated once and refreshed in place; the native
@@ -505,8 +511,11 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](JumpMana
 class FisherFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
     AbstractNativeJump[LikelihoodType, FisherNativeState]
 ):
-    declared_internal_evals = 0
-
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         print_name = 'Fisher All-D'
         super().__init__(_fisher_full_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0

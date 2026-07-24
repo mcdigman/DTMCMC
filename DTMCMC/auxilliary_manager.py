@@ -3,7 +3,7 @@ blank manager to serve as template for adding more draw types
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import numpy as np
 from numba import njit
@@ -35,12 +35,15 @@ class BlankJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
 ):
     """Template jump for future extensions"""
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: JumpManager[LikelihoodType, AuxilliaryNativeState]) -> None:
         print_name = 'Blank Jump'
         handle = _blank_jump_native
         super().__init__(handle, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 @dataclass(init=False)
@@ -63,7 +66,7 @@ class AuxilliaryStrategyParameters:
         config_a['auxilliary_jump_weight'] = str(self.auxilliary_jump_weight)
 
 
-class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[NamedTuple]](
+class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[Any]](
     JumpManager[LikelihoodType, AuxilliaryNativeState]
 ):
     """template manager for an extra jump type,

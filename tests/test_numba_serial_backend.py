@@ -19,6 +19,8 @@ from DTMCMC.exchange_manager import (
     NULL_TARGETS,
     ExchangeManager,
     ExchangeNativeInputs,
+    NativeExchangeCall,
+    NativeExchangeStepCall,
     do_ptmcmc_exchange,
 )
 from DTMCMC.fisher_manager import FisherJumpManager, SigmaFullJump
@@ -303,10 +305,6 @@ def _extension_prior_factor_native(params: NDArray[np.floating], inputs: _Extens
 class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
     """Small external-style likelihood with a non-uniform prior."""
 
-    prior_draw_fn = staticmethod(_extension_prior_draw_native)
-    prior_factor_fn = staticmethod(_extension_prior_factor_native)
-    loglike_fn = staticmethod(_extension_loglike_native)
-
     def __init__(self, n_par: int = 4, center: float = 0.75, prior_rate: float = 0.5) -> None:
         self.center = center
         self.prior_rate = prior_rate
@@ -316,6 +314,21 @@ class _ExtensionLikelihood(RectangularLikelihood[_ExtensionNativeInput]):
     @override
     def inputs(self) -> _ExtensionNativeInput:
         return _ExtensionNativeInput(self.n_par, self.low_lims, self.high_lims, self.center, self.prior_rate)
+
+    @property
+    @override
+    def prior_draw_fn(self):
+        return _extension_prior_draw_native
+
+    @property
+    @override
+    def prior_factor_fn(self):
+        return _extension_prior_factor_native
+
+    @property
+    @override
+    def loglike_fn(self):
+        return _extension_loglike_native
 
 
 class _CustomNativeState(NamedTuple):
@@ -345,11 +358,14 @@ class _CustomJump[LikelihoodType: AbstractLikelihood[_CustomNativeState]](
     (the program cache just cannot share it across samplers).
     """
 
-    declared_internal_evals = 0
-
     def __init__(self, manager: _CustomManager[LikelihoodType]) -> None:
         print_name = 'Custom Gaussian'
         super().__init__(_custom_jump_native, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
 
 
 class _CustomManager[LikelihoodType: AbstractLikelihood[_CustomNativeState]](
@@ -411,8 +427,15 @@ def _every_third_exchange_native(
 
 
 class _EveryThirdExchange(ExchangeManager):
-    is_exchange_step_native = staticmethod(_every_third_exchange_schedule_native)
-    exchange_native = staticmethod(_every_third_exchange_native)
+    @property
+    @override
+    def is_exchange_step_native(self) -> NativeExchangeStepCall[ExchangeNativeInputs]:
+        return _every_third_exchange_schedule_native
+
+    @property
+    @override
+    def exchange_native(self) -> NativeExchangeCall[ExchangeNativeInputs]:
+        return _every_third_exchange_native
 
 
 def _standalone_snapshot[LikelihoodType: AbstractLikelihood[Any]](
@@ -472,10 +495,13 @@ def _bad_native_loglike(params: NDArray[np.floating], _inputs: Any) -> float:
 class _BadNativeLikelihood[InputType: RectangularBoundsProtocol](RectangularLikelihood[RectangularBoundsProtocol]):
     """Valid Python likelihood with an intentionally invalid native function."""
 
-    loglike_fn = staticmethod(_bad_native_loglike)
-
     def __init__(self) -> None:
         super().__init__(4, np.full(4, -5.0), np.full(4, 5.0))
+
+    @property
+    @override
+    def loglike_fn(self):
+        return _bad_native_loglike
 
 
 @njit(inline='always')
@@ -502,8 +528,6 @@ def _many_input_loglike_native(params: NDArray[np.floating], inputs: _ManyInputN
 class _ManyInputLikelihood(RectangularLikelihood[_ManyInputNativeInput]):
     """Regression likelihood whose input carries many extension fields."""
 
-    loglike_fn = staticmethod(_many_input_loglike_native)
-
     def __init__(self) -> None:
         self.a, self.b, self.c, self.d, self.e = 1.0, 2.0, 3.0, 4.0, 5.0
         n_par = 4
@@ -513,6 +537,11 @@ class _ManyInputLikelihood(RectangularLikelihood[_ManyInputNativeInput]):
         high_lims.setflags(write=False)
         self._inputs = _ManyInputNativeInput(n_par, low_lims, high_lims, self.a, self.b, self.c, self.d, self.e)
         super().__init__(n_par, low_lims, high_lims)
+
+    @property
+    @override
+    def loglike_fn(self):
+        return _many_input_loglike_native
 
     @property
     @override
@@ -772,9 +801,9 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
     'hook',
     [
         RectangularLikelihood.bind_native.fget,  # type: ignore[attr-defined]
-        RectangularLikelihood.loglike_fn,  # type: ignore[misc] # pyright: ignore[reportGeneralTypeIssues] # pyrefly: ignore[missing-attribute]
+        RectangularLikelihood.loglike_fn.fget,  # type: ignore[attr-defined]
         RectangularLikelihood.inputs.fget,  # type: ignore[attr-defined]
-        GaussianLikelihood.loglike_fn,
+        GaussianLikelihood.loglike_fn.fget,  # type: ignore[attr-defined]
         SigmaFullJump.__call__,
         DEStandardFullJump.__call__,
         PriorFullJump.__call__,
