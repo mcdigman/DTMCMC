@@ -1,3 +1,5 @@
+from typing import Any
+
 import numpy as np
 from numpy.testing import assert_allclose
 
@@ -56,7 +58,7 @@ def test_corr_summary_uses_stored_sample_count_for_n_eff() -> None:
     Ts = np.ones(2)
     view = make_store_view(samples_store, logLs_store, Ts)
 
-    summary = CorrelationSummary(do_corr_summary=True, do_autocorr=True, do_cross=False)
+    summary: CorrelationSummary[Any] = CorrelationSummary(do_corr_summary=True, do_autocorr=True, do_cross=False)
     summary.obs_vars.append(np.array([np.var(samples_store[:, :, 0])]))
     summary.corr_summary(view, 0)
 

@@ -11,7 +11,7 @@ gates the base tracker summary through sampler_verbosity; the run CLI
 threads its overrides into the effective RunSpec and run_from_spec.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
@@ -21,6 +21,14 @@ from experiments.harness import run as run_mod
 from experiments.harness import runner as runner_mod
 from experiments.harness.runner import build_sampler, run_from_spec
 from experiments.harness.spec import RunSpec, dumps_toml
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from numpy.typing import NDArray
+
+    from DTMCMC.likelihood import AbstractLikelihood
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 TINY_SPEC: dict[str, Any] = {
     'name': 'ext_api_test',
@@ -44,7 +52,7 @@ TINY_SPEC: dict[str, Any] = {
 }
 
 
-def make_spec(**run_overrides: object) -> RunSpec:
+def make_spec(**run_overrides: object) -> RunSpec[Any]:
     """Build the tiny extension-API test spec, overriding [run] entries."""
     data = dict(TINY_SPEC)
     run_table = dict(TINY_SPEC['run'])
@@ -62,7 +70,7 @@ def fresh_seed_guard():
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_initialize_jumps_builds_manager_from_base_drawn_samples(monkeypatch) -> None:
+def test_initialize_jumps_builds_manager_from_base_drawn_samples(monkeypatch: Any) -> None:
     """initialize_jumps builds the manager around the base-class-drawn samples[0].
 
     Locks the de-dup contract: the subclass does not re-draw starting
@@ -73,7 +81,13 @@ def test_initialize_jumps_builds_manager_from_base_drawn_samples(monkeypatch) ->
     captured: dict[str, np.ndarray] = {}
     real = runner_mod.get_default_proposal_manager  # type: ignore[attr-defined]
 
-    def spy(T_ladder, like_obj, *, starting_samples, **kwargs):
+    def spy(
+        T_ladder: TemperatureLadder,
+        like_obj: AbstractLikelihood[Any],
+        *,
+        starting_samples: NDArray[np.floating],
+        **kwargs: Any,
+    ):
         captured['starting_samples'] = starting_samples
         return real(T_ladder, like_obj, starting_samples=starting_samples, **kwargs)
 
@@ -136,7 +150,7 @@ def test_postblock_operations_without_controller_is_noop() -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_teardown_flushes_each_segment_and_marks_major_reports(monkeypatch, tmp_path) -> None:
+def test_teardown_flushes_each_segment_and_marks_major_reports(monkeypatch: Any, tmp_path: Path) -> None:
     """post_Nblock_teardown flushes once per segment; finalized tracks the report interval.
 
     Also guards the periodic major-report contract (PR #20 inline
@@ -147,7 +161,7 @@ def test_teardown_flushes_each_segment_and_marks_major_reports(monkeypatch, tmp_
     finalized_flags: list[bool] = []
     real = runner_mod.write_artifact  # type: ignore[attr-defined]
 
-    def spy(*args, **kwargs):
+    def spy(*args: Any, **kwargs: Any):
         finalized_flags.append(bool(kwargs['finalized']))
         return real(*args, **kwargs)
 
@@ -168,7 +182,9 @@ def test_teardown_flushes_each_segment_and_marks_major_reports(monkeypatch, tmp_
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 @pytest.mark.parametrize(('verbosity', 'expected_summaries'), [(0, 0), (1, 1), (2, 2)])
-def test_sampler_verbosity_gates_tracker_summary(monkeypatch, tmp_path, verbosity, expected_summaries) -> None:
+def test_sampler_verbosity_gates_tracker_summary(
+    monkeypatch: Any, tmp_path: Path, verbosity: int, expected_summaries: int
+) -> None:
     """sampler_verbosity gates the base tracker-summary print.
 
     0 stays silent, 1 prints once at the single major report, 2 prints at
@@ -205,7 +221,9 @@ class _StubCorrelationSummary:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 @pytest.mark.parametrize(('verbosity', 'exp_commentary', 'exp_corr'), [(0, 0, 0), (1, 1, 0), (2, 1, 1)])
-def test_verbosity_gates_major_report_diagnostics(monkeypatch, tmp_path, verbosity, exp_commentary, exp_corr) -> None:
+def test_verbosity_gates_major_report_diagnostics(
+    monkeypatch: Any, tmp_path: Path, verbosity: int, exp_commentary: int, exp_corr: int
+) -> None:
     """Major-report diagnostics fire per verbosity: commentary at >=1, correlation summary at 2.
 
     Both are gated on the major-report boundary, so for the tiny spec's
@@ -235,7 +253,7 @@ class _FrozenController:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 @pytest.mark.parametrize(('frozen_block', 'expected_factor'), [(None, 0), (0, 0), (5, 5)])
-def test_adaptive_burnin_iterations_from_freeze(frozen_block, expected_factor) -> None:
+def test_adaptive_burnin_iterations_from_freeze(frozen_block: None | int, expected_factor: int) -> None:
     """adaptive_burnin_iterations is the freeze block times the block size (0 while adapting)."""
     seed_run(TINY_SPEC['seed'])
     controller = _FrozenController(frozen_block)
@@ -257,7 +275,7 @@ def test_adaptive_burnin_iterations_no_controller() -> None:
     [(False, '--zero-loglike', True), (True, '--no-zero-loglike', False)],
 )
 def test_run_cli_forwards_verbosity_and_zero_mode(
-    monkeypatch, tmp_path, spec_zero_loglike, cli_flag, expected_zero_loglike
+    monkeypatch: Any, tmp_path: Path, spec_zero_loglike: bool, cli_flag: str, expected_zero_loglike: bool
 ) -> None:
     """The run CLI threads verbosity and zero mode into run_from_spec."""
     spec_path = tmp_path / 'spec.toml'
@@ -265,7 +283,7 @@ def test_run_cli_forwards_verbosity_and_zero_mode(
 
     captured: dict[str, object] = {}
 
-    def fake_run(_spec, _out, _artifact_name=None, sampler_verbosity=0):
+    def fake_run(_spec: RunSpec[Any], _out: Any, _artifact_name: None = None, sampler_verbosity: int = 0):
         captured['sampler_verbosity'] = sampler_verbosity
         captured['zero_loglike'] = _spec.zero_loglike
         return tmp_path / 'artifact.h5'

@@ -8,7 +8,7 @@ from numba import njit
 from numpy.typing import NDArray
 
 from DTMCMC.correction_helpers import reflect_into_range
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
+from DTMCMC.likelihood import NativeLoglikeCall, RectangularInputs, RectangularLikelihood
 
 tmax: float = 5.0 * np.pi
 
@@ -83,8 +83,6 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
 class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    loglike_fn = staticmethod(_loglike_native)
-
     def __init__(self, n_par: int = 5, eps_default: float = 1.0e-3) -> None:
         """Create the class and store any object specific variables"""
         super().__init__(n_par, np.full(n_par, low_lim), np.full(n_par, high_lim))
@@ -97,6 +95,10 @@ class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):
     # def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
     #    """Return the per-class native log likelihood."""
     #    return _loglike_native
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:
+        return _loglike_native
 
     @override
     def get_epsilons(self) -> NDArray[np.floating]:

@@ -45,7 +45,7 @@ TARGET_EQUIVALENT_JUMP_LABELS = [
 FISHER_MANAGER_JUMP_LABELS = ['Fisher All-D', 'Std All-D', 'Std Random-D']
 
 
-def _make_spec(likelihood_table: dict[str, Any], *, zero_loglike: bool = False) -> RunSpec:
+def _make_spec(likelihood_table: dict[str, Any], *, zero_loglike: bool = False) -> RunSpec[Any]:
     return RunSpec.from_dict(
         {
             'name': 'zero_loglike_equivalence',
@@ -263,7 +263,7 @@ def test_zero_mode_skips_only_sampler_target_calls(backend: str) -> None:
         reset_seed_guard_for_tests()
 
 
-def test_run_from_spec_persists_zero_mode_in_artifact(tmp_path) -> None:
+def test_run_from_spec_persists_zero_mode_in_artifact(tmp_path: str) -> None:
     """The effective zero-mode setting survives run_from_spec as artifact provenance."""
     reset_seed_guard_for_tests()
     try:
@@ -274,5 +274,5 @@ def test_run_from_spec_persists_zero_mode_in_artifact(tmp_path) -> None:
 
     assert validate(artifact_path, mode='complete') == []
     attrs = read_attrs(artifact_path)
-    embedded = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
+    embedded: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
     assert embedded.zero_loglike

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 from dashboard.core import checks
 from dashboard.core import diagnostics as diag
-from dashboard.core.reader import ArtifactWatcher, list_artifacts, load_snapshot
+from dashboard.core.reader import ArtifactWatcher, RunSnapshot, list_artifacts, load_snapshot
 from dashboard.figures.options import ViewOptions
 from dashboard.figures.registry import LAYOUTS, PLOTS, build_figure
 from dashboard.themes import THEMES, get_theme
@@ -100,7 +100,7 @@ def midrun_artifact(tmp_path_factory: pytest.TempPathFactory) -> Path:
     spec_data = dict(TINY_FIXED_SPEC)
     spec_data['name'] = 'dash_midrun'
     spec_data['run'] = {'n_steps': 256, 'n_steps_per_major_report': 128, 'block_size': 64, 'checkpoint_every_blocks': 2}
-    spec = RunSpec.from_dict(spec_data)
+    spec: RunSpec[Any] = RunSpec.from_dict(spec_data)
     out_path = tmp_path_factory.mktemp('dash_midrun') / 'midrun.h5'
     reset_seed_guard_for_tests()
     try:
@@ -379,7 +379,7 @@ def test_artifact_selection_allowlist(tmp_path: Path, fixed_artifact: Path) -> N
     assert _allowed_artifact(config, None) is None
 
 
-def _single_check(check_id: str, snapshot) -> checks.CheckResult:
+def _single_check(check_id: str, snapshot: RunSnapshot) -> checks.CheckResult:
     """Evaluate one status light by id."""
     results = checks.evaluate_checks(snapshot, [check_id])
     assert len(results) == 1

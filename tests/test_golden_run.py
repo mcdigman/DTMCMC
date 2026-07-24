@@ -62,7 +62,7 @@ def run_golden_digest() -> str:
     state (samples, logLs, walker identity track) of the last block edge.
     """
     reset_seed_guard_for_tests()
-    spec = RunSpec.from_dict(GOLDEN_SPEC)
+    spec: RunSpec[Any] = RunSpec.from_dict(GOLDEN_SPEC)
     seed_run(spec.seed)
     sampler, _like_obj = build_sampler(spec)
     for _ in range(spec.n_blocks):

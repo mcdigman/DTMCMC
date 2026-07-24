@@ -1,10 +1,12 @@
 """two shell likelihood, adapted from https://github.com/joshspeagle/dynesty/blob/master/demos/Examples%20--%20Gaussian%20Shells.ipynb"""
 
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood, check_bounds_rectangular
+from DTMCMC.likelihood import NativeLoglikeCall, RectangularInputs, RectangularLikelihood, check_bounds_rectangular
 
 # constants
 low_lim: float = -40.0
@@ -56,8 +58,6 @@ def draw_shell_radius() -> float:
 class GaussianShellLikelihood(RectangularLikelihood[RectangularInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    loglike_fn = staticmethod(_loglike_native)
-
     def __init__(self, n_par: int = 2) -> None:
         """Create the class and store any object specific variables"""
         if n_par != 2:
@@ -67,6 +67,11 @@ class GaussianShellLikelihood(RectangularLikelihood[RectangularInputs]):
         high_lims = np.full(n_par, high_lim)
 
         RectangularLikelihood.__init__(self, n_par, low_lims, high_lims)
+
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:
+        return _loglike_native
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
     #    """Get the log likelihood given a set of parameters v"""

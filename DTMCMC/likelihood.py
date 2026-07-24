@@ -62,20 +62,34 @@ class AbstractLikelihood[InputType](Protocol):
     handled by the sampler's LikelihoodEvalTracker, not the likelihood.
     """
 
-    loglike_fn: NativeLoglikeCall[InputType]
-    prior_draw_fn: NativePriorDrawCall[InputType]
-    prior_factor_fn: NativePriorFactorCall[InputType]
-    prior_proposal_fn: NativePriorProposalCall[InputType]
-    validate_bounds_fn: NativeValidateBoundsCall[InputType]
-    check_bounds_fn: NativeCheckBoundsCall[InputType]
-    correct_bounds_fn: NativeCorrectBoundsCall[InputType]
-    loglike_fn_baked: LoglikeFn
-    prior_draw_fn_baked: PriorDrawFn
-    prior_factor_fn_baked: PriorFactorFn
-    validate_bounds_fn_baked: ValidateBoundsFn
-    check_bounds_fn_baked: CheckBoundsFn
-    correct_bounds_fn_baked: CorrectBoundsFn
-    prior_proposal_fn_baked: PriorProposalFn
+    @property
+    def loglike_fn(self) -> NativeLoglikeCall[InputType]: ...
+    @property
+    def prior_draw_fn(self) -> NativePriorDrawCall[InputType]: ...
+    @property
+    def prior_factor_fn(self) -> NativePriorFactorCall[InputType]: ...
+    @property
+    def prior_proposal_fn(self) -> NativePriorProposalCall[InputType]: ...
+    @property
+    def validate_bounds_fn(self) -> NativeValidateBoundsCall[InputType]: ...
+    @property
+    def check_bounds_fn(self) -> NativeCheckBoundsCall[InputType]: ...
+    @property
+    def correct_bounds_fn(self) -> NativeCorrectBoundsCall[InputType]: ...
+    @property
+    def loglike_fn_baked(self) -> LoglikeFn: ...
+    @property
+    def prior_draw_fn_baked(self) -> PriorDrawFn: ...
+    @property
+    def prior_factor_fn_baked(self) -> PriorFactorFn: ...
+    @property
+    def validate_bounds_fn_baked(self) -> ValidateBoundsFn: ...
+    @property
+    def check_bounds_fn_baked(self) -> CheckBoundsFn: ...
+    @property
+    def correct_bounds_fn_baked(self) -> CorrectBoundsFn: ...
+    @property
+    def prior_proposal_fn_baked(self) -> PriorProposalFn: ...
 
     @property
     def inputs(self) -> InputType:
@@ -470,31 +484,16 @@ def _prior_proposal_function[InputType](
 
 
 class AbstractNativeLikelihood[InputType](ABC):
-    loglike_fn: NativeLoglikeCall[InputType]
-    prior_draw_fn: NativePriorDrawCall[InputType]
-    prior_factor_fn: NativePriorFactorCall[InputType]
-    prior_proposal_fn: NativePriorProposalCall[InputType]
-    validate_bounds_fn: NativeValidateBoundsCall[InputType]
-    check_bounds_fn: NativeCheckBoundsCall[InputType]
-    correct_bounds_fn: NativeCorrectBoundsCall[InputType]
-    loglike_fn_baked: LoglikeFn
-    prior_draw_fn_baked: PriorDrawFn
-    prior_factor_fn_baked: PriorFactorFn
-    validate_bounds_fn_baked: ValidateBoundsFn
-    check_bounds_fn_baked: CheckBoundsFn
-    correct_bounds_fn_baked: CorrectBoundsFn
-    prior_proposal_fn_baked: PriorProposalFn
-
     def __init__(self) -> None:
         owner = type(self).__qualname__
         failures: list[tuple[str, str]] = []
 
         loglike_handle, failure = build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike')
-        self.loglike_fn_baked: LoglikeFn = cast('LoglikeFn', loglike_handle)
+        self._loglike_fn_baked: LoglikeFn = cast('LoglikeFn', loglike_handle)
         if failure is not None:
             failures.append(('get_loglike', failure))
 
-        self.prior_draw_fn_baked, failure = build_from_handle_no_params(
+        self._prior_draw_fn_baked, failure = build_from_handle_no_params(
             self.prior_draw_fn, self.inputs, owner, 'prior_draw'
         )
         if failure is not None:
@@ -503,14 +502,14 @@ class AbstractNativeLikelihood[InputType](ABC):
         prior_factor_handle, failure = build_from_handle_params(
             self.prior_factor_fn, self.inputs, owner, 'prior_factor'
         )
-        self.prior_factor_fn_baked: PriorFactorFn = cast('PriorFactorFn', prior_factor_handle)
+        self._prior_factor_fn_baked: PriorFactorFn = cast('PriorFactorFn', prior_factor_handle)
         if failure is not None:
             failures.append(('prior_factor', failure))
 
         validate_bounds_handle, failure = build_from_handle_params(
             self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'
         )
-        self.validate_bounds_fn_baked: ValidateBoundsFn = cast(
+        self._validate_bounds_fn_baked: ValidateBoundsFn = cast(
             'ValidateBoundsFn',
             validate_bounds_handle,
         )
@@ -520,25 +519,25 @@ class AbstractNativeLikelihood[InputType](ABC):
         check_bounds_handle, failure = build_from_handle_params(
             self.check_bounds_fn, self.inputs, owner, 'check_bounds'
         )
-        self.check_bounds_fn_baked: CheckBoundsFn = cast('CheckBoundsFn', check_bounds_handle)
+        self._check_bounds_fn_baked: CheckBoundsFn = cast('CheckBoundsFn', check_bounds_handle)
         if failure is not None:
             failures.append(('check_bounds', failure))
 
         correct_bounds_handle, failure = build_from_handle_params(
             self.correct_bounds_fn, self.inputs, owner, 'correct_bounds'
         )
-        self.correct_bounds_fn_baked: CorrectBoundsFn = cast(
+        self._correct_bounds_fn_baked: CorrectBoundsFn = cast(
             'CorrectBoundsFn',
             correct_bounds_handle,
         )
         if failure is not None:
             failures.append(('correct_bounds', failure))
 
-        self.prior_proposal_fn = _prior_proposal_function(self.prior_draw_fn, self.prior_factor_fn)
+        self._prior_proposal_fn = _prior_proposal_function(self.prior_draw_fn, self.prior_factor_fn)
         prior_proposal_handle, failure = build_from_handle_params(
             self.prior_proposal_fn, self.inputs, owner, 'prior_proposal'
         )
-        self.prior_proposal_fn_baked = cast(
+        self._prior_proposal_fn_baked = cast(
             'PriorProposalFn',
             prior_proposal_handle,
         )
@@ -555,6 +554,64 @@ class AbstractNativeLikelihood[InputType](ABC):
             )
 
         return
+
+    @property
+    @abstractmethod
+    def loglike_fn(self) -> NativeLoglikeCall[InputType]: ...
+    @property
+    @abstractmethod
+    def prior_draw_fn(self) -> NativePriorDrawCall[InputType]: ...
+    @property
+    @abstractmethod
+    def prior_factor_fn(self) -> NativePriorFactorCall[InputType]: ...
+    @property
+    @abstractmethod
+    def validate_bounds_fn(self) -> NativeValidateBoundsCall[InputType]: ...
+    @property
+    @abstractmethod
+    def check_bounds_fn(self) -> NativeCheckBoundsCall[InputType]: ...
+    @property
+    @abstractmethod
+    def correct_bounds_fn(self) -> NativeCorrectBoundsCall[InputType]: ...
+    @property
+    @final
+    def prior_proposal_fn(self) -> NativePriorProposalCall[InputType]:
+        return self._prior_proposal_fn
+
+    @property
+    @final
+    def loglike_fn_baked(self) -> LoglikeFn:
+        return self._loglike_fn_baked
+
+    @property
+    @final
+    def prior_draw_fn_baked(self) -> PriorDrawFn:
+        return self._prior_draw_fn_baked
+
+    @property
+    @final
+    def prior_factor_fn_baked(self) -> PriorFactorFn:
+        return self._prior_factor_fn_baked
+
+    @property
+    @final
+    def validate_bounds_fn_baked(self) -> ValidateBoundsFn:
+        return self._validate_bounds_fn_baked
+
+    @property
+    @final
+    def check_bounds_fn_baked(self) -> CheckBoundsFn:
+        return self._check_bounds_fn_baked
+
+    @property
+    @final
+    def correct_bounds_fn_baked(self) -> CorrectBoundsFn:
+        return self._correct_bounds_fn_baked
+
+    @property
+    @final
+    def prior_proposal_fn_baked(self) -> PriorProposalFn:
+        return self._prior_proposal_fn_baked
 
     @final
     def prior_factor(self, params_in: NDArray[np.floating]) -> float:
@@ -657,12 +714,12 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
 
     """
 
-    prior_draw_fn: NativePriorDrawCall[InputType] = staticmethod(prior_draw_rectangular)
-    prior_factor_fn: NativePriorFactorCall[InputType] = staticmethod(prior_factor_rectangular)
-    validate_bounds_fn: NativeValidateBoundsCall[InputType] = staticmethod(validate_bounds_rectangular)
-    loglike_fn: NativeLoglikeCall[InputType] = staticmethod(_unavailable_loglike_fn)
-    correct_bounds_fn: NativeCorrectBoundsCall[InputType] = staticmethod(correct_bounds_rectangular)
-    check_bounds_fn: NativeCheckBoundsCall[InputType] = staticmethod(check_bounds_rectangular)
+    _prior_draw_fn: NativePriorDrawCall[InputType] = staticmethod(prior_draw_rectangular)
+    _prior_factor_fn: NativePriorFactorCall[InputType] = staticmethod(prior_factor_rectangular)
+    _validate_bounds_fn: NativeValidateBoundsCall[InputType] = staticmethod(validate_bounds_rectangular)
+    _loglike_fn: NativeLoglikeCall[InputType] = staticmethod(_unavailable_loglike_fn)
+    _correct_bounds_fn: NativeCorrectBoundsCall[InputType] = staticmethod(correct_bounds_rectangular)
+    _check_bounds_fn: NativeCheckBoundsCall[InputType] = staticmethod(check_bounds_rectangular)
 
     def __init__(self, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating]) -> None:
         if low_lims.size != n_par or high_lims.size != n_par:
@@ -681,16 +738,48 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
 
     @property
     @override
+    def loglike_fn(self) -> NativeLoglikeCall[InputType]:
+        return self._loglike_fn
+
+    @property
+    @override
+    def prior_draw_fn(self) -> NativePriorDrawCall[InputType]:
+        return self._prior_draw_fn
+
+    @property
+    @override
+    def prior_factor_fn(self) -> NativePriorFactorCall[InputType]:
+        return self._prior_factor_fn
+
+    @property
+    @override
+    def validate_bounds_fn(self) -> NativeValidateBoundsCall[InputType]:
+        return self._validate_bounds_fn
+
+    @property
+    @override
+    def check_bounds_fn(self) -> NativeCheckBoundsCall[InputType]:
+        return self._check_bounds_fn
+
+    @property
+    @override
+    def correct_bounds_fn(self) -> NativeCorrectBoundsCall[InputType]:
+        return self._correct_bounds_fn
+
+    @property
+    @override
     def inputs(self) -> InputType:
         """Read-only return of the inputs fixed at construction."""
         return cast('InputType', self._inputs_rect)
 
     @property
+    @final
     def low_lims(self) -> NDArray[np.floating]:
         """Read-only lower rectangular bounds (fixed at construction)."""
         return self._inputs_rect.low_lims
 
     @property
+    @final
     def high_lims(self) -> NDArray[np.floating]:
         """Read-only upper rectangular bounds (fixed at construction)."""
         return self._inputs_rect.high_lims

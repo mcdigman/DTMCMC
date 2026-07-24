@@ -6,11 +6,13 @@ target for prior-recovery review runs: a run with any other likelihood and
 internals may still use that run's original likelihood by design.
 """
 
+from typing import override
+
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularInputs, RectangularLikelihood
+from DTMCMC.likelihood import NativeLoglikeCall, RectangularInputs, RectangularLikelihood
 
 # default rectangular bounds, borrowed from the banana likelihood's
 # n >= 2 dimensions; override per instance via the constructor
@@ -27,8 +29,6 @@ def _loglike_native(_params_in: NDArray[np.floating], _inputs: RectangularInputs
 class ConstantRectangularLikelihood(RectangularLikelihood[RectangularInputs]):
     """Identically-zero log likelihood over standard rectangular bounds."""
 
-    loglike_fn = staticmethod(_loglike_native)
-
     def __init__(
         self,
         n_par: int = 4,
@@ -40,6 +40,11 @@ class ConstantRectangularLikelihood(RectangularLikelihood[RectangularInputs]):
         high_arr = np.full(n_par, high_lim) if high_lims is None else high_lims.copy()
 
         RectangularLikelihood.__init__(self, n_par, low_arr, high_arr)
+
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[RectangularInputs]:
+        return _loglike_native
 
     # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
     #    """Return a constant log likelihood over the whole parameter space."""

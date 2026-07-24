@@ -56,7 +56,7 @@ class ExchangeNativeInputs(NamedTuple):
     """Compile-time inputs for the built-in native exchange functions."""
 
     strategy: int
-    track_full_exchanges: bool
+    track_full_exchanges: int
 
 
 @runtime_checkable
@@ -100,7 +100,7 @@ def exchange_step_helper(
     exchange_order: NDArray[np.int64],
     targets: NDArray[np.int64],
     no_repeat: bool,
-    track_full_exchanges: bool,
+    track_full_exchanges: int,
 ) -> NDArray[np.int64]:
     """Actually execute the swaps for an exchange step"""
     n_chain = betas.shape[0]
@@ -218,7 +218,7 @@ def do_ptmcmc_exchange(
     esd_exchange: NDArray[np.floating],
     chain_track: NDArray[np.int64],
     target_select: int,
-    track_full_exchanges: bool,
+    track_full_exchanges: int,
 ) -> None:
     """Chose and exchange strategy and do the exchange step"""
     no_repeat = True
@@ -324,19 +324,17 @@ class ExchangeManager:
     and define the strategy by which to propose exchanges
     """
 
-    is_exchange_step_native = staticmethod(_exchange_is_step_inputs_native)
-    exchange_native = staticmethod(_exchange_native)
-
-    def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: bool = True) -> None:
+    def __init__(self, strategy: int = RANDOM_TARGETS, track_full_exchanges: int = 1) -> None:
         """Select the exchange targeting strategy"""
-        self._inputs = ExchangeNativeInputs(strategy, track_full_exchanges)
+        self._inputs: ExchangeNativeInputs = ExchangeNativeInputs(strategy, track_full_exchanges)
 
     @property
     def inputs(self) -> ExchangeNativeInputs:
         return self._inputs
 
     @property
-    def track_full_exchanges(self) -> bool:
+    @final
+    def track_full_exchanges(self) -> int:
         return self.inputs.track_full_exchanges
 
     @final
@@ -363,6 +361,14 @@ class ExchangeManager:
             chain_track,
             self.inputs,
         )
+
+    @property
+    def is_exchange_step_native(self) -> NativeExchangeStepCall[ExchangeNativeInputs]:
+        return _exchange_is_step_inputs_native
+
+    @property
+    def exchange_native(self) -> NativeExchangeCall[ExchangeNativeInputs]:
+        return _exchange_native
 
     @final
     def is_exchange_step(self, itrb: int) -> bool:

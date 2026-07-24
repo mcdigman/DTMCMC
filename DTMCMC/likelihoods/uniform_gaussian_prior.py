@@ -6,7 +6,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.likelihood import NativeLoglikeCall, NativePriorDrawCall, NativePriorFactorCall, RectangularLikelihood
 
 
 @njit(inline='always')
@@ -67,10 +67,6 @@ def _prior_factor_native(params_in: NDArray[np.floating], inputs: UniformRectang
 class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGaussianInputs]):
     """Known Gaussian target produced by a constant likelihood and Gaussian prior."""
 
-    loglike_fn = staticmethod(_loglike_native)
-    prior_draw_fn = staticmethod(_prior_draw_native)
-    prior_factor_fn = staticmethod(_prior_factor_native)
-
     def __init__(self, n_par: int = 4, prior_mean: float = 0.0, prior_std: float = 1.0) -> None:
         if prior_std <= 0.0:
             msg = 'prior_std must be positive'
@@ -103,6 +99,20 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
     # def prior_factor(self, params_in: NDArray[np.floating]) -> float:
     #    """Return the Gaussian log prior density up to a constant."""
     #    return gaussian_prior_factor(params_in, self.prior_mean, self.prior_std)
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[UniformRectangularGaussianInputs]:
+        return _loglike_native
+
+    @property
+    @override
+    def prior_draw_fn(self) -> NativePriorDrawCall[UniformRectangularGaussianInputs]:
+        return _prior_draw_native
+
+    @property
+    @override
+    def prior_factor_fn(self) -> NativePriorFactorCall[UniformRectangularGaussianInputs]:
+        return _prior_factor_native
 
     @property
     @override

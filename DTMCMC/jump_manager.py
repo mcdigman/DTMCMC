@@ -19,6 +19,11 @@ if TYPE_CHECKING:
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
+type NativeJumpCall[ManagerType] = Callable[
+    [NDArray[np.floating], int, ManagerType], tuple[NDArray[np.floating], float, bool]
+]
+
+
 @runtime_checkable
 class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
     """An object that performs a single proposal from its __call__ method.
@@ -35,8 +40,14 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
     treated as zero.
     """
 
-    print_name: str
-    declared_internal_evals: int
+    @property
+    def declared_internal_evals(self) -> int: ...
+
+    @property
+    def handle(self) -> NativeJumpCall[Any]: ...
+
+    @property
+    def print_name(self) -> str: ...
 
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:
         """Generate the MCMC proposal.
@@ -53,11 +64,6 @@ class AbstractJump[LikelihoodType: AbstractLikelihood[Any]](Protocol):
 
 
 ManagerStateT_contra = TypeVar('ManagerStateT_contra', contravariant=True)
-
-
-type NativeJumpCall[ManagerType] = Callable[
-    [NDArray[np.floating], int, ManagerType], tuple[NDArray[np.floating], float, bool]
-]
 
 
 type NativePostStepCall[ManagerType] = Callable[[ManagerType, NDArray[np.floating]], None]
@@ -158,7 +164,7 @@ def _null_bind_post_step(_state: NamedTuple, _samples_row: NDArray[np.floating],
     return
 
 
-class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any]:
+class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
     """Extensions of this class dispatch MCMC proposals."""
 
     # deterministic likelihood-evaluation cost of constructing the manager;
@@ -349,17 +355,31 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any]:
 
 
 class AbstractNativeJump[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
-    declared_internal_evals: int
-    handle: NativeJumpCall[StateType]
-    manager: JumpManager[LikelihoodType, StateType]
-    print_name: str
-
     def __init__(
         self, handle: NativeJumpCall[StateType], manager: JumpManager[LikelihoodType, StateType], print_name: str
     ) -> None:
-        self.handle = handle
-        self.manager = manager
-        self.print_name = print_name
+        self._handle: NativeJumpCall[StateType] = handle
+        self._manager: JumpManager[LikelihoodType, StateType] = manager
+        self._print_name: str = print_name
+
+    @property
+    @abstractmethod
+    def declared_internal_evals(self) -> int: ...
+
+    @property
+    @final
+    def handle(self) -> NativeJumpCall[StateType]:
+        return self._handle
+
+    @property
+    @final
+    def print_name(self) -> str:
+        return self._print_name
+
+    @property
+    @final
+    def manager(self) -> JumpManager[LikelihoodType, StateType]:
+        return self._manager
 
     @final
     def __call__(self, sample_point: NDArray[np.floating], itrt: int) -> tuple[NDArray[np.floating], float, bool]:

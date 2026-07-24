@@ -7,6 +7,8 @@ temperature (hot-set, S5/E10 prerequisite) case, which documents that
 only slot -1 counts as the hot extreme today.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
@@ -20,12 +22,12 @@ from experiments.harness.spec import RunSpec
 from tests.test_harness import TINY_GAUSSIAN_SPEC
 
 
-def make_tracker(n_cold: int, n_chain: int, block_size: int) -> TrackerManager:
+def make_tracker(n_cold: int, n_chain: int, block_size: int) -> TrackerManager[Any]:
     """Build a TrackerManager with trivial jump bookkeeping for synthetic feeds."""
     return TrackerManager(n_cold, n_chain, block_size, 1, False, 1, 1)
 
 
-def feed_blocks(tracker: TrackerManager, blocks: list[np.ndarray]) -> None:
+def feed_blocks(tracker: TrackerManager[Any], blocks: list[np.ndarray]) -> None:
     """Feed synthetic chain_track blocks (each (block_size+1, n_chain)) in sequence."""
     itrn = 0
     for chain_track in blocks:
@@ -242,7 +244,7 @@ def test_esd_exchange_accumulation_direct() -> None:
 def test_trackers_on_real_run() -> None:
     """Integration: event log and counters agree on a real sampler run."""
     reset_seed_guard_for_tests()
-    spec = RunSpec.from_dict(TINY_GAUSSIAN_SPEC)
+    spec: RunSpec[Any] = RunSpec.from_dict(TINY_GAUSSIAN_SPEC)
     seed_run(spec.seed)
     sampler, _like_obj = build_sampler(spec)
     for _ in range(spec.n_blocks):

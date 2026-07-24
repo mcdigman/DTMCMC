@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.likelihood import NativeLoglikeCall, RectangularLikelihood
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -34,8 +34,6 @@ def _loglike_native(params_in: NDArray[np.floating], inputs: HawaiiInputs) -> fl
 
 class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
-
-    loglike_fn = staticmethod(_loglike_native)
 
     def __init__(self, rescale_like: float = 1.0, default_like: float = 5.0e-1, normalize_like: bool = True) -> None:
         """Create the class and store any object specific variables"""
@@ -82,6 +80,11 @@ class HawaiiLikelihood(RectangularLikelihood[HawaiiInputs]):
 
         self._inputs = HawaiiInputs(n_par, low_lims, high_lims, hawaii_interp)
         super().__init__(n_par, low_lims, high_lims)
+
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[HawaiiInputs]:
+        return _loglike_native
 
     @property
     @override
