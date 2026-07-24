@@ -78,7 +78,7 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
 
         # self.T_ladder = T_ladder
 
-        self._managers: tuple[JumpManager[LikelihoodType, NamedTuple], ...] = managers
+        self._managers: tuple[JumpManager[LikelihoodType, Any], ...] = managers
         self._n_managers: int = len(self._managers)
         self._n_jumps_managers: NDArray[np.int64] = np.zeros(self._n_managers, dtype=np.int64)
 

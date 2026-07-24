@@ -113,9 +113,7 @@ def _fisher_full_native(
     return fisher_full_jump_helper(sample_point, itrt, state.chol_fishers, state.gamma_mults)
 
 
-class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractNativeJump[LikelihoodType, FisherNativeState]
-):
+class SigmaFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, FisherNativeState]):
     """Standard Deviation Jump in Full Dimensions"""
 
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
@@ -129,7 +127,7 @@ class SigmaFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
         return 0
 
 
-class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+class SigmaRandomSubspaceJump[LikelihoodType: AbstractLikelihood[Any]](
     AbstractNativeJump[LikelihoodType, FisherNativeState]
 ):
     """Standard deviation jump in random subspaces"""
@@ -220,7 +218,7 @@ def set_fishers(
     sample_set: NDArray[np.floating],
     strategy_params: FisherStrategyParameters,
     n_chain: int,
-    like_obj: AbstractLikelihood[NamedTuple],
+    like_obj: AbstractLikelihood[Any],
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
     """Set up the fisher matrices"""
     use_chol_fishers = strategy_params.use_chol_fishers
@@ -508,9 +506,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
         self.strategy_params.record_config(config_in)
 
 
-class FisherFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractNativeJump[LikelihoodType, FisherNativeState]
-):
+class FisherFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, FisherNativeState]):
     def __init__(self, manager: FisherJumpManager[LikelihoodType]) -> None:
         print_name = 'Fisher All-D'
         super().__init__(_fisher_full_native, manager, print_name)

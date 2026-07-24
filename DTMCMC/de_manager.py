@@ -144,9 +144,7 @@ def _de_post_step_native(state: DENativeState, samples: NDArray[np.floating]) ->
     state.counters[1] = itrde_count
 
 
-class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractNativeJump[LikelihoodType, DENativeState]
-):
+class DEStandardFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, DENativeState]):
     """apply a jump with standard random size in all dimensions
     null proposals are marked as failures
     """
@@ -161,7 +159,7 @@ class DEStandardFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
         return 0
 
 
-class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[Any]](
     AbstractNativeJump[LikelihoodType, DENativeState]
 ):
     """apply a jump with standard random size in a random subspace
@@ -178,7 +176,7 @@ class DEStandardRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple
         return 0
 
 
-class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractNativeJump[LikelihoodType, DENativeState]):
+class DEBigFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, DENativeState]):
     """apply the full length differential evolution jump in all dimensions
     null proposals are marked as failures
     """
@@ -193,7 +191,7 @@ class DEBigFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](AbstractNati
         return 0
 
 
-class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
+class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[Any]](
     AbstractNativeJump[LikelihoodType, DENativeState]
 ):
     """apply the full length differential evolution jump in a random subspace
@@ -211,7 +209,7 @@ class DEBigRandomSubspaceJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
 
 
 def initialize_de_helper(
-    de_buffer: NDArray[np.floating], de_size: int, n_chain: int, like_obj: AbstractLikelihood[NamedTuple]
+    de_buffer: NDArray[np.floating], de_size: int, n_chain: int, like_obj: AbstractLikelihood[Any]
 ) -> None:
     """Helper to initialize the differential evolution buffer with prior draws"""
     for itrd in range(de_size):

@@ -1,28 +1,11 @@
 """Native (nopython) serial backend assembled from per-class jitted functions.
 
-Every component of a proposal graph — the likelihood, each jump, each
-component manager, and the exchange manager — may opt into native execution
-by exposing ``bind_native*`` hooks. A hook returns per-class jitted functions
-(the same function objects on every call); everything instance-specific
-travels in a small per-component runtime state bundle returned by
-``native_state()`` and re-read at every block entry, so configuration
-changes between blocks behave exactly like the Python path and nothing
-mutable is ever baked into compiled code (Numba treats closure-captured
-arrays as read-only non-aliasing constants, so baking mutable or rebindable
-state risks silently stale reads).
-
-Because the bound functions are per-class constants, the assembled block
-program depends only on the graph structure, not on which instances built
 it: programs are cached by the identity of the bound functions, so
 structurally identical samplers share one compiled kernel and Numba's own
 dispatcher handles any residual signature specialization. The assembly uses
 plain recursive closure factories (the Numba equivalent of
 ``functools.partial``): no strings, no ``exec``, and every line is visible
 to linters and type checkers.
-
-A bound native jump has the ``AbstractJump.__call__`` signature plus the
-owning manager's runtime state and the likelihood's runtime state.
-likelihood functions have the ``AbstractLikelihood`` method signatures.
 """
 
 from dataclasses import dataclass
@@ -598,7 +581,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         proposal_manager: AbstractProposalManager[LikelihoodType],
         like_obj: LikelihoodType,
         tracker_manager: TrackerManager[LikelihoodType],
-        eval_accounting: EvalAccounting[LikelihoodType],
+        eval_accounting: EvalAccounting,
         zero_loglike: bool,
     ) -> bool:
         """Run a native block when the graph is bindable, otherwise return False."""

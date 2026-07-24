@@ -58,9 +58,7 @@ def _make_prior_native(
     return got
 
 
-class PriorFullJump[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    AbstractNativeJump[LikelihoodType, PriorNativeState]
-):
+class PriorFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, PriorNativeState]):
     def __init__(self, manager: JumpManager[LikelihoodType, PriorNativeState]) -> None:
         print_name = 'Prior All-D'
 

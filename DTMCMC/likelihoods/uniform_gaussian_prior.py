@@ -88,17 +88,6 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
         )
         super().__init__(n_par, low_lims, high_lims)
 
-    # def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-    #    """Evaluate the constant likelihood."""
-    #    return get_loglike(params_in)
-
-    # def prior_draw(self) -> NDArray[np.floating]:
-    #    """Draw from the Gaussian prior."""
-    #    return gaussian_prior_draw(self.n_par, self.prior_mean, self.prior_std)
-
-    # def prior_factor(self, params_in: NDArray[np.floating]) -> float:
-    #    """Return the Gaussian log prior density up to a constant."""
-    #    return gaussian_prior_factor(params_in, self.prior_mean, self.prior_std)
     @property
     @override
     def loglike_fn(self) -> NativeLoglikeCall[UniformRectangularGaussianInputs]:
@@ -119,15 +108,3 @@ class UniformGaussianPriorLikelihood(RectangularLikelihood[UniformRectangularGau
     def inputs(self) -> UniformRectangularGaussianInputs:
         """Return the rectangular fields plus the Gaussian prior arrays."""
         return self._inputs_gauss
-
-    # def bind_native_loglike(self) -> NativeLoglikeCall[UniformRectangularGaussianInputs]:
-    #    """Return the per-class native log likelihood."""
-    #    return _loglike_native
-
-    # def bind_native_prior_draw(self) -> NativePriorDrawCall[UniformRectangularGaussianInputs]:
-    #    """Return the per-class native Gaussian prior draw."""
-    #    return _prior_draw_native
-
-    # def bind_native_prior_factor(self) -> NativePriorFactorCall[UniformRectangularGaussianInputs]:
-    #    """Return the per-class native Gaussian log prior density."""
-    #    return _prior_factor_native

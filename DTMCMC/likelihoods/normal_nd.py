@@ -46,15 +46,6 @@ class GaussianLikelihood(RectangularLikelihood[RectangularInputs]):
         return _loglike_native
 
 
-#    def get_loglike(self, params_in: NDArray[np.floating]) -> float:
-#        """Get the log likelihood given a set of parameters v"""
-#        return get_loglike(params_in)
-#
-#    def bind_native_loglike(self) -> NativeLoglikeCall[RectangularInputs]:
-#        """Return the per-class native log likelihood."""
-#        return _loglike_native
-
-
 @njit()
 def gen_draws(
     n_draws: int, n_par: int, low_lims: NDArray[np.floating], high_lims: NDArray[np.floating], attempt_lim: int = 10000

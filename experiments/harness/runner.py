@@ -16,7 +16,7 @@ the run as checkpoint-sized advance_N_blocks segments.
 
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast, override
 from warnings import warn
 
 import numpy as np
@@ -333,6 +333,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
         # Ts in place, so the copy must be taken before the first block runs
         self.initial_Ts = self.Ts.copy()
 
+    @override
     def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
 
@@ -356,6 +357,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
             exchange_manager_loc=exchange_manager,
         )
 
+    @override
     def postblock_operations(self) -> None:
         """Advance the adaptive controller's schedule at the block boundary."""
         if self.controller is not None:
@@ -384,6 +386,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
                 de_buffer_difference_spectrum(self.de_manager.de_buffer, DE_SPECTRUM_PAIRS, self.metrics_rng)
             )
 
+    @override
     def post_Nblock_teardown(self) -> None:
         """Checkpoint at the end of each advance_N_blocks segment.
 

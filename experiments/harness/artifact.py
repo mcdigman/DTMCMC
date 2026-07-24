@@ -202,7 +202,7 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
     path: Path,
     spec: RunSpec[LikelihoodType],
     sampler: DTMCMCSampler[LikelihoodType],
-    eval_accounting: EvalAccounting[LikelihoodType],
+    eval_accounting: EvalAccounting,
     provenance: RunProvenance,
     finalized: bool,
     wall_seconds: float,
