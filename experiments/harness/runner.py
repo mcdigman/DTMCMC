@@ -436,7 +436,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
                 corr_sum.final_prints(self, n_burnin)
 
 
-def build_sampler[LikelihoodType: AbstractLikelihood[NamedTuple]](
+def build_sampler[LikelihoodType: AbstractLikelihood[Any]](
     spec: RunSpec[LikelihoodType],
     config: configparser.ConfigParser | None = None,
     like_obj: LikelihoodType | None = None,

@@ -192,7 +192,7 @@ def _target_mode_centers(like_name: str, n_par: int):
 
 @pytest.mark.parametrize('name', sorted(TARGETS))
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_adaptive_convergence_recovers_posterior(name, tmp_path) -> None:
+def test_adaptive_convergence_recovers_posterior(name: str, tmp_path: str) -> None:
     """Adaptive run freezes with a T=1 readout and recovers the target posterior."""
     cfg = TARGETS[name]
     like_name = str(cfg.get('like_name', name))
@@ -210,7 +210,7 @@ def test_adaptive_convergence_recovers_posterior(name, tmp_path) -> None:
         mode=str(cfg.get('mode', 'entropy')),
         proposals_extra=cfg.get('proposals_extra'),
     )
-    spec = RunSpec.from_dict(data)
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
     artifact_path = run_from_spec(spec, tmp_path)
 
     run = load_post_freeze(artifact_path)
@@ -258,7 +258,7 @@ def test_adaptive_convergence_recovers_posterior(name, tmp_path) -> None:
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_rosenbrock_20d_structural(tmp_path) -> None:
+def test_rosenbrock_20d_structural(tmp_path: str) -> None:
     """20d rosenbrock: structural descent and freeze checks."""
     cfg: dict[str, Any] = {'params': {'n_par': 20}, 'n_chain': 40, 'block': 512, 'blocks': 448, 'budget': 352}
     data = adaptive_spec_data(
@@ -270,7 +270,7 @@ def test_rosenbrock_20d_structural(tmp_path) -> None:
         n_blocks=cfg['blocks'],
         budget_blocks=cfg['budget'],
     )
-    spec = RunSpec.from_dict(data)
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
     artifact_path = run_from_spec(spec, tmp_path)
 
     run = load_post_freeze(artifact_path)

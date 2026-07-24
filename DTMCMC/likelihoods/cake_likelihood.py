@@ -7,7 +7,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.likelihood import RectangularLikelihood
+from DTMCMC.likelihood import NativeLoglikeCall, RectangularLikelihood
 
 
 @njit()
@@ -113,8 +113,6 @@ def _loglike_native(params_in: NDArray[np.floating], inputs: CakeInputs) -> floa
 class CakeLikelihood(RectangularLikelihood[CakeInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
 
-    loglike_fn = staticmethod(_loglike_native)
-
     def __init__(
         self,
         n_par: int = 2,
@@ -172,6 +170,10 @@ class CakeLikelihood(RectangularLikelihood[CakeInputs]):
     #    #        res, self._tier_lognorms[itrm] + self._tier_coefs[itrm] * r2_got ** self._tier_powers[itrm]
     #    #    )
     #    return res
+    @property
+    @override
+    def loglike_fn(self) -> NativeLoglikeCall[CakeInputs]:
+        return _loglike_native
 
     @property
     @override

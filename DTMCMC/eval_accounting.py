@@ -17,7 +17,7 @@ declared costs equal observed calls.
 """
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class EvalAccounting[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class EvalAccounting[LikelihoodType: AbstractLikelihood[Any]]:
     """Likelihood-evaluation totals by source phase.
 
     ``complete`` is False when any component could not declare its cost
@@ -49,7 +49,7 @@ class EvalAccounting[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         return self.initialization + self.proposal_targets + self.proposal_internal + self.post_block
 
 
-class LoglikeCallSpy[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class LoglikeCallSpy[LikelihoodType: AbstractLikelihood[Any]]:
     """Independently count actual ``get_loglike`` calls on one likelihood.
 
     Context manager that wraps the instance's ``get_loglike`` with a

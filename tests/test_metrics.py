@@ -9,6 +9,8 @@ samplers are validated on analytic moments and NN-KL(self) ~ 0. All tests
 use fixed seeds and are deterministic.
 """
 
+from typing import Any
+
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
@@ -24,7 +26,7 @@ from DTMCMC.temperature_ladder_helpers import (
 )
 from DTMCMC.tracker_manager import RT_ARRIVED_COLD, RT_ARRIVED_HOT
 from experiments.harness.paths import resolve
-from experiments.harness.runner import build_sampler
+from experiments.harness.runner import HarnessSampler, build_sampler
 from experiments.harness.spec import RunSpec
 from experiments.metrics import (
     de_buffer_difference_spectrum,
@@ -81,7 +83,7 @@ GAUSSIAN_INVARIANT_SPEC: dict[str, object] = {
 def gaussian_invariant_run():
     """Run the Gaussian invariant spec once and return the sampler."""
     reset_seed_guard_for_tests()
-    spec = RunSpec.from_dict(dict(GAUSSIAN_INVARIANT_SPEC))
+    spec: RunSpec[Any] = RunSpec.from_dict(dict(GAUSSIAN_INVARIANT_SPEC))
     seed_run(spec.seed)
     sampler, _like_obj = build_sampler(spec)
     for _ in range(spec.n_blocks):
@@ -90,7 +92,7 @@ def gaussian_invariant_run():
     return sampler
 
 
-def measured_logL_vars(sampler, n_burn_blocks: int) -> np.ndarray:
+def measured_logL_vars(sampler: HarnessSampler[Any], n_burn_blocks: int) -> np.ndarray:
     """Stationary per-chain Var(logL) from the stored block moments."""
     logL_means = np.asarray(sampler.logL_means)[n_burn_blocks:]
     logL2_means = np.asarray(sampler.logL2_means)[n_burn_blocks:]
@@ -98,7 +100,7 @@ def measured_logL_vars(sampler, n_burn_blocks: int) -> np.ndarray:
     return res
 
 
-def test_gaussian_heat_capacity_invariant(gaussian_invariant_run) -> None:
+def test_gaussian_heat_capacity_invariant(gaussian_invariant_run: HarnessSampler[Any]) -> None:
     """C(T) = beta^2 Var(logL) = n_par/2 at every tested finite temperature."""
     sampler = gaussian_invariant_run
     n_par = 4
@@ -115,7 +117,7 @@ def test_gaussian_heat_capacity_invariant(gaussian_invariant_run) -> None:
     assert_allclose(heat_capacity, np.full(Ts.size, n_par / 2.0), rtol=0.2)
 
 
-def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) -> None:
+def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run: HarnessSampler[Any]) -> None:
     """Constant heat capacity: measured-variance entropy ladder == geometric ladder."""
     sampler = gaussian_invariant_run
     n_burn_blocks = sampler.itrn // sampler.block_size // 2
@@ -128,7 +130,7 @@ def test_entropy_ladder_matches_geometric_on_gaussian(gaussian_invariant_run) ->
     assert_allclose(np.log(entropy_ladder.Ts), np.log(geometric_ladder.Ts), atol=0.1)
 
 
-def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run) -> None:
+def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run: HarnessSampler[Any]) -> None:
     """A run on an acceptance ladder realizes ~equal NN exchange rates.
 
     The ladder family's own test checks equal PREDICTED acceptance; this
@@ -160,7 +162,7 @@ def test_acceptance_ladder_realizes_equal_exchange_rates(gaussian_invariant_run)
     data['seed'] = 271829
     data['ladder'] = {'kind': 'explicit', 'n_chain': 9, 'n_cold': 1, 'Ts': [float(T_loc) for T_loc in ladder.Ts]}
     data['run'] = {'n_steps': 16384, 'block_size': 512, 'store_thin': 16, 'checkpoint_every_blocks': 16}
-    spec = RunSpec.from_dict(data)
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
 
     reset_seed_guard_for_tests()
     seed_run(spec.seed)

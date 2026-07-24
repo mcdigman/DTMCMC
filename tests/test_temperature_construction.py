@@ -1,13 +1,20 @@
 """Try to replicate and test for a glitch in temperature ladder generation"""
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pytest
 from numpy.testing import assert_array_equal
 
 import DTMCMC.temperature_ladder_helpers as tlh
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-def T_prediction_sensibility_check(Ts, T_min=1.0, T_cold=1.0, n_cold=1) -> None:
+
+def T_prediction_sensibility_check(
+    Ts: NDArray[np.floating], T_min: float = 1.0, T_cold: float = 1.0, n_cold: int = 1
+) -> None:
     assert np.all(Ts >= 0.0)  # negative temperatures make no sense here
     assert np.all(Ts != 0.0)  # zero temperatures could be meaningful, but the code should not be generating them
     # assert Ts[0] == T_cold
@@ -205,7 +212,7 @@ def test_ignore_invalid3() -> None:
         (10000, True),
     ],
 )
-def test_interpolation_case(n_chain_need, correct_last) -> None:
+def test_interpolation_case(n_chain_need: int, correct_last: bool) -> None:
     """This is a test case encountered from a real run that broke the use of cubic spline interpolation"""
     vars_break = np.array(
         [
@@ -259,7 +266,7 @@ def test_interpolation_case(n_chain_need, correct_last) -> None:
         (100, 100),
     ],
 )
-def test_zero_T_handling(n_chain_in, n_chain_need) -> None:
+def test_zero_T_handling(n_chain_in: int, n_chain_need: int) -> None:
     """Test handling if there is a zero temperature chain included"""
     n_cold = 1
     T_cold = 1.0
@@ -502,7 +509,9 @@ combos_geo = gen_combos_geo()
 
 
 @pytest.mark.parametrize(('n_cold', 'n_chain_in', 'T_cold', 'T_min', 'T_max', 'n_inf_final_in'), combos_geo)
-def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_in) -> None:
+def test_random_data_geo(
+    n_cold: int, n_chain_in: int, T_cold: float, T_min: float, T_max: float, n_inf_final_in: int
+) -> None:
     """Test some random grids with power law variances"""
     if n_cold > n_chain_in:
         with pytest.raises(ValueError, match='n cold cannot be more than total number of chains'):
@@ -550,7 +559,16 @@ def test_random_data_geo(n_cold, n_chain_in, T_cold, T_min, T_max, n_inf_final_i
     combos_entropy,
 )
 def test_random_data_entropy(
-    n_cold, n_chain_in, n_chain_need, T_cold, T_min, T_max, power_law_exp, n_inf_final_in, correct_last, n_inf_final_out
+    n_cold: int,
+    n_chain_in: int,
+    n_chain_need: int,
+    T_cold: float,
+    T_min: float,
+    T_max: float,
+    power_law_exp: float,
+    n_inf_final_in: int,
+    correct_last: bool,
+    n_inf_final_out: int,
 ) -> None:
     """Test some random grids with power law variances"""
     if n_cold + n_inf_final_in >= n_chain_in and n_inf_final_in > 0:

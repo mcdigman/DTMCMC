@@ -208,9 +208,9 @@ def test_identical_ladder_update_keeps_record_history() -> None:
 
 def test_spec_arg_record_roundtrip_and_validation() -> None:
     """arg_record round-trips through TOML; bad entries fail loudly."""
-    spec = RunSpec.from_dict(dict(TINY_ARG_RECORD_SPEC))
+    spec: RunSpec[Any] = RunSpec.from_dict(dict(TINY_ARG_RECORD_SPEC))
     assert spec.arg_record == [0, 5]
-    round_tripped = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    round_tripped: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
     assert round_tripped == spec
 
     for bad_value in ([6], [-1], [1.5], [True], 3):
@@ -253,14 +253,14 @@ def test_spec_arg_record_defaults_empty() -> None:
     }
     data['run'] = dict(data['run'])
     del data['run']['arg_record']
-    spec = RunSpec.from_dict(data)
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
     assert spec.arg_record == []
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
-def test_artifact_records_indices_end_to_end(tmp_path) -> None:
+def test_artifact_records_indices_end_to_end(tmp_path: str) -> None:
     """A harness run stores the recorded columns and their chain map."""
-    spec = RunSpec.from_dict(dict(TINY_ARG_RECORD_SPEC))
+    spec: RunSpec[Any] = RunSpec.from_dict(dict(TINY_ARG_RECORD_SPEC))
     artifact_path = run_from_spec(spec, tmp_path)
     assert validate(artifact_path, mode='complete') == []
 

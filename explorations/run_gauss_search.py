@@ -72,7 +72,7 @@ if __name__ == '__main__':
         block_size,
         store_size,
         starting_samples=starting_samples,
-        arg_record=np.arange(n_cold, n_chain),
+        arg_record=np.arange(n_cold, n_chain).tolist(),
         proposal_manager=proposal_manager,
     )
 
