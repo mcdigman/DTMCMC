@@ -130,8 +130,8 @@ def _manager_divergence(manager: object) -> str | None:
     return None
 
 
-def find_native_divergences[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
+def find_native_divergences[LikelihoodType: AbstractLikelihood[Any]](
+    proposal_manager: AbstractProposalManager[LikelihoodType, Any], like_obj: LikelihoodType
 ) -> list[str]:
     """List Python-contract overrides that would diverge from the bound behavior.
 
@@ -167,8 +167,8 @@ def find_native_divergences[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return problems
 
 
-def _capability_gaps[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
+def _capability_gaps[LikelihoodType: AbstractLikelihood[Any]](
+    proposal_manager: AbstractProposalManager[LikelihoodType, Any], like_obj: LikelihoodType
 ) -> tuple[list[str], int]:
     """Describe what blocks the compiled program, and count compiled handles.
 
@@ -220,8 +220,8 @@ def _capability_gaps[LikelihoodType: AbstractLikelihood[NamedTuple]](
     return gaps, compiled
 
 
-def _check_flattening[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    proposal_manager: AbstractProposalManager[LikelihoodType],
+def _check_flattening[LikelihoodType: AbstractLikelihood[Any]](
+    proposal_manager: AbstractProposalManager[LikelihoodType, Any],
 ) -> None:
     """Require the aggregate jump list to be the ordered flattening of the managers'.
 
@@ -533,8 +533,8 @@ class NativeSerialProgram:
 _PROGRAM_CACHE: dict[tuple[object, ...], NativeSerialProgram] = {}
 
 
-def _graph_identity[LikelihoodType: AbstractLikelihood[NamedTuple]](
-    proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType
+def _graph_identity[LikelihoodType: AbstractLikelihood[Any]](
+    proposal_manager: AbstractProposalManager[LikelihoodType, Any], like_obj: LikelihoodType
 ) -> tuple[object, ...]:
     """Cheap per-block identity of the component object graph.
 
@@ -598,7 +598,7 @@ def _compile_for_args(kernel: SerialBlockKernel[Any], args: tuple[object, ...]) 
     dispatcher.compile(arg_types)
 
 
-class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
+class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
     """Bind, cache, and run the serial block programs for one sampler."""
 
     def __init__(self, mode: str) -> None:
@@ -616,7 +616,10 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         self._kernel_ready: bool = False
 
     def _bind_program(
-        self, proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType, flavor: KernelFlavor
+        self,
+        proposal_manager: AbstractProposalManager[LikelihoodType, Any],
+        like_obj: LikelihoodType,
+        flavor: KernelFlavor,
     ) -> NativeSerialProgram:
         """Bind every component and fetch or assemble one program flavor."""
         likelihood_natives = like_obj.bind_native
@@ -628,7 +631,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
             has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
             post_steps.append(manager.bind_native_post_step if has_post else None)
-        assert sum(len(calls) for calls in per_manager_calls) == proposal_manager.jump_probs.shape[1]
+        if sum(len(calls) for calls in per_manager_calls) != proposal_manager.jump_probs.shape[1]:
+            msg = 'Number of available jumps does not match number of jumps assigned a probability.'
+            raise ValueError(msg)
         exchange_natives = proposal_manager.exchange_manager.bind_native
 
         declared: list[int | None] = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
@@ -667,7 +672,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         _PROGRAM_CACHE[key] = program
         return program
 
-    def _resolve(self, proposal_manager: AbstractProposalManager[LikelihoodType], like_obj: LikelihoodType) -> None:
+    def _resolve(
+        self, proposal_manager: AbstractProposalManager[LikelihoodType, Any], like_obj: LikelihoodType
+    ) -> None:
         """Select and bind the program for the current graph, once per identity.
 
         ``'python'`` mode always binds the Python program. ``'numba'`` mode
@@ -719,7 +726,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         logLs: NDArray[np.floating],
         samples: NDArray[np.floating],
         chain_track: NDArray[np.int64],
-        proposal_manager: AbstractProposalManager[LikelihoodType],
+        proposal_manager: AbstractProposalManager[LikelihoodType, Any],
         like_obj: LikelihoodType,
         tracker_manager: TrackerManager[LikelihoodType],
         eval_accounting: EvalAccounting,
@@ -728,7 +735,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         """Advance one block through the resolved program; return the flavor that ran."""
         self._resolve(proposal_manager, like_obj)
         program = self.program
-        assert program is not None
+        if program is None:
+            msg = 'No program has been stored.'
+            raise TypeError(msg)
         # runtime state bundles are re-read at every block entry, so
         # configuration changes between blocks behave identically in both flavors
         manager_states = tuple(

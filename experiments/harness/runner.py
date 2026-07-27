@@ -334,7 +334,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
         self.initial_Ts = self.Ts.copy()
 
     @override
-    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType, Any] | None = None) -> None:
         """Build the spec-configured proposal manager around the base-drawn starting samples.
 
         Runs inside super().__init__ after initialize_state has filled
@@ -581,7 +581,7 @@ def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
         controller_temp = build_adaptive_controller(spec.adaptive)
         like_obj = cast('LikelihoodType', build_likelihood(spec))
         # prior-draw anchoring consumes run-stream draws and counted evals,
-        # deliberately: adaptive burn-in is charged in full (plan C3)
+        # deliberately: adaptive burn-in is charged in full
         initial_ladder = controller_temp.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
         controller = cast('AdaptiveLadderController[LikelihoodType]', controller_temp)
 

@@ -73,7 +73,7 @@ def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floatin
     if not success:
         # try to make the point in bounds and fail if unsuccesful
         new_point = correct_bounds(params_in, params_in.size)
-        success = check_bounds(params_in)
+        success = check_bounds(new_point)
     else:
         new_point = params_in
     return new_point, success

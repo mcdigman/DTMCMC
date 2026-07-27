@@ -58,8 +58,7 @@ class AbstractLikelihood[InputType](Protocol):
     """Structural interface the engine requires of a likelihood object.
 
     Likelihood objects are stateless: every attribute is fixed at
-    construction and no method mutates the object. Evaluation counting is
-    handled by the sampler's LikelihoodEvalTracker, not the likelihood.
+    construction and no method mutates the object.
     """
 
     @property
@@ -439,21 +438,6 @@ def check_bounds_rectangular(v: NDArray[np.floating], inputs: RectangularBoundsP
     return True
 
 
-# @njit()
-@register_jitable
-def validate_bounds_rectangular(
-    params_in: NDArray[np.floating], inputs: RectangularBoundsProtocol
-) -> tuple[NDArray[np.floating], bool]:
-    success: bool = check_bounds_rectangular(params_in, inputs)
-    if not success:
-        # try to make the point in bounds and fail if unsuccesful
-        new_point = correct_bounds_rectangular(params_in, inputs)
-        success = check_bounds_rectangular(params_in, inputs)
-    else:
-        new_point = params_in
-    return new_point, success
-
-
 # @njit(inline='always')
 @register_jitable
 def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
@@ -465,8 +449,25 @@ def prior_factor_rectangular(_params_in: NDArray[np.floating], _inputs: Rectangu
 @register_jitable
 def _unavailable_loglike_fn(_params_in: NDArray[np.floating], _inputs: RectangularBoundsProtocol) -> float:
     """Return the per-class jitted ``(params, inputs) -> float`` log likelihood."""
-    msg = 'No wired native log-likelihood binding for this path.'
+    msg = 'No user-specified likelihood function provided.'
     raise NativeBackendUnsupportedError(msg)
+
+
+def _validate_bounds_function[InputType](
+    check_bounds_fn: NativeCheckBoundsCall[InputType], correct_bounds_fn: NativeCorrectBoundsCall[InputType]
+) -> NativeValidateBoundsCall[InputType]:
+    @register_jitable
+    def validate_bounds_fn(params_in: NDArray[np.floating], inputs: InputType) -> tuple[NDArray[np.floating], bool]:
+        success: bool = check_bounds_fn(params_in, inputs)
+        if not success:
+            # try to make the point in bounds and fail if unsuccesful
+            new_point = correct_bounds_fn(params_in, inputs)
+            success = check_bounds_fn(new_point, inputs)
+        else:
+            new_point = params_in
+        return new_point, success
+
+    return cast('NativeValidateBoundsCall[InputType]', validate_bounds_fn)
 
 
 def _prior_proposal_function[InputType](
@@ -506,16 +507,6 @@ class AbstractNativeLikelihood[InputType](ABC):
         if failure is not None:
             failures.append(('prior_factor', failure))
 
-        validate_bounds_handle, failure = build_from_handle_params(
-            self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'
-        )
-        self._validate_bounds_fn_baked: ValidateBoundsFn = cast(
-            'ValidateBoundsFn',
-            validate_bounds_handle,
-        )
-        if failure is not None:
-            failures.append(('validate_bounds', failure))
-
         check_bounds_handle, failure = build_from_handle_params(
             self.check_bounds_fn, self.inputs, owner, 'check_bounds'
         )
@@ -532,6 +523,18 @@ class AbstractNativeLikelihood[InputType](ABC):
         )
         if failure is not None:
             failures.append(('correct_bounds', failure))
+
+        self._validate_bounds_fn = _validate_bounds_function(self.check_bounds_fn, self.correct_bounds_fn)
+
+        validate_bounds_handle, failure = build_from_handle_params(
+            self.validate_bounds_fn, self.inputs, owner, 'validate_bounds'
+        )
+        self._validate_bounds_fn_baked: ValidateBoundsFn = cast(
+            'ValidateBoundsFn',
+            validate_bounds_handle,
+        )
+        if failure is not None:
+            failures.append(('validate_bounds', failure))
 
         self._prior_proposal_fn = _prior_proposal_function(self.prior_draw_fn, self.prior_factor_fn)
         prior_proposal_handle, failure = build_from_handle_params(
@@ -716,7 +719,6 @@ class RectangularLikelihood[InputType: RectangularBoundsProtocol](AbstractNative
 
     _prior_draw_fn: NativePriorDrawCall[InputType] = staticmethod(prior_draw_rectangular)
     _prior_factor_fn: NativePriorFactorCall[InputType] = staticmethod(prior_factor_rectangular)
-    _validate_bounds_fn: NativeValidateBoundsCall[InputType] = staticmethod(validate_bounds_rectangular)
     _loglike_fn: NativeLoglikeCall[InputType] = staticmethod(_unavailable_loglike_fn)
     _correct_bounds_fn: NativeCorrectBoundsCall[InputType] = staticmethod(correct_bounds_rectangular)
     _check_bounds_fn: NativeCheckBoundsCall[InputType] = staticmethod(check_bounds_rectangular)
