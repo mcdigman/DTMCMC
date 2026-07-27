@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 
 @runtime_checkable
-class AbstractProposalManager[LikelihoodType: AbstractLikelihood[Any]](AbstractJumpManager[LikelihoodType], Protocol):
+class AbstractProposalManager[LikelihoodType: AbstractLikelihood[Any], StateType](
+    AbstractJumpManager[LikelihoodType, StateType], Protocol
+):
     """Structural aggregate proposal interface required by sampler kernels."""
 
     @property

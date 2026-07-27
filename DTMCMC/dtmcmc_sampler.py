@@ -74,7 +74,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         block_size: int,
         store_size: int,
         tracker_manager: TrackerManager[LikelihoodType] | None = None,
-        proposal_manager: AbstractProposalManager[LikelihoodType] | None = None,
+        proposal_manager: AbstractProposalManager[LikelihoodType, Any] | None = None,
         starting_samples: NDArray[np.floating] | None = None,
         store_thin: int = 1,
         arg_record: list[int] | None = None,
@@ -142,7 +142,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self._native_serial_backend: NativeSerialBackend[LikelihoodType] = NativeSerialBackend(kernel_backend)
         self.last_kernel_backend: KernelFlavor = 'python'
         self.tracker_manager: TrackerManager[LikelihoodType]
-        self.proposal_manager: AbstractProposalManager[LikelihoodType]
+        self.proposal_manager: AbstractProposalManager[LikelihoodType, Any]
         self.starting_samples = starting_samples
 
         self.T_ladder: TemperatureLadder = T_ladder_in
@@ -266,7 +266,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.samples_store = np.zeros((self.store_size, len(self.record_indices), self.n_par))
         self.logLs_store = np.zeros((self.store_size, len(self.record_indices)))
 
-    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType] | None = None) -> None:
+    def initialize_jumps(self, proposal_manager_in: AbstractProposalManager[LikelihoodType, Any] | None = None) -> None:
         """Anything that needs to be done to initialize the various jumps"""
         if proposal_manager_in is None:
             self.proposal_manager = get_default_proposal_manager(self.T_ladder, self.like_obj, self.samples[0, :, :])

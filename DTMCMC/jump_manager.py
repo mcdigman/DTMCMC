@@ -55,7 +55,7 @@ type NativePostStepCall[ManagerType] = Callable[[ManagerType, NDArray[np.floatin
 
 
 @runtime_checkable
-class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any]](Protocol):
+class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any], StateType](Protocol):
     """Structural component-manager interface used by aggregate dispatchers."""
 
     @property
@@ -126,6 +126,16 @@ class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any]](Protocol):
 
     def record_config(self, config_in: ConfigParser) -> None:
         """Record manager configuration."""
+        ...
+
+    @property
+    def bind_native_post_step(self) -> NativePostStepCall[StateType]:
+        """Return function binding for post step evaluations."""
+        ...
+
+    @property
+    def native_state(self) -> StateType:
+        """Return the state."""
         ...
 
 

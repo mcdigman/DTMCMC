@@ -2,7 +2,7 @@
 module to store various trackers about the state of chains
 """
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -300,7 +300,7 @@ class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         self,
         n_cold: int,
         Ts: NDArray[np.floating],
-        proposal_manager: AbstractProposalManager[LikelihoodType],
+        proposal_manager: AbstractProposalManager[LikelihoodType, Any],
         last_itrn: int = -1,
     ) -> None:
         """Print a summmary of results from this tracker object."""
