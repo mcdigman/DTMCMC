@@ -366,7 +366,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
                 '(correct_bounds and get_epsilons), which FisherJumpManager requires'
             )
             raise TypeError(msg)
-        self.strategy_params = FisherStrategyParameters(config)
+        self._strategy_params = FisherStrategyParameters(config)
 
         jumps: list[AbstractNativeJump[LikelihoodType, FisherNativeState]] = [
             FisherFullJump(self),
@@ -374,26 +374,59 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
             SigmaRandomSubspaceJump(self),
         ]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
-        self.sample_set = sample_set
-        self.sigma_diags: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
+        self._sample_set = sample_set
+        self._sigma_diags: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
         if self.strategy_params.use_chol_fishers:
-            self.fishers: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par, self.n_par))
-            self.chol_fishers: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par, self.n_par))
+            self._fishers: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par, self.n_par))
+            self._chol_fishers: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par, self.n_par))
         else:
-            self.fishers = np.zeros((0, 0, 0))
-            self.chol_fishers = np.zeros((0, 0, 0))
-        self.sigma_scales: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
-        self.gamma_mults: NDArray[np.floating] = np.zeros(self.n_chain)
-        # the construction-time stencil below is a declared deterministic
-        # cost read by the sampler's eval accounting
-        self.declared_construction_evals: int = self.declared_refresh_evals()
+            self._fishers = np.zeros((0, 0, 0))
+            self._chol_fishers = np.zeros((0, 0, 0))
+        self._sigma_scales: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
+        self._gamma_mults: NDArray[np.floating] = np.zeros(self.n_chain)
         self.reset_fishers_from_point(self.sample_set)
 
+    @property
+    def sigma_diags(self) -> NDArray[np.floating]:
+        return self._sigma_diags
+
+    @property
+    def sigma_scales(self) -> NDArray[np.floating]:
+        return self._sigma_scales
+
+    @property
+    def gamma_mults(self) -> NDArray[np.floating]:
+        return self._gamma_mults
+
+    @property
+    def fishers(self) -> NDArray[np.floating]:
+        return self._fishers
+
+    @property
+    def chol_fishers(self) -> NDArray[np.floating]:
+        return self._chol_fishers
+
+    @property
+    @override
+    def declared_construction_evals(self) -> int:
+        # the construction-time stencil below is a declared deterministic
+        # cost read by the sampler's eval accounting
+        return self.declared_refresh_evals
+
+    @property
     def declared_refresh_evals(self) -> int:
         """Deterministic likelihood-evaluation cost of one fisher refresh."""
         return declared_fisher_stencil_evals(self.n_chain, self.n_par, self.strategy_params.use_chol_fishers)
+
+    @property
+    def strategy_params(self) -> FisherStrategyParameters:
+        return self._strategy_params
+
+    @property
+    def sample_set(self) -> NDArray[np.floating]:
+        return self._sample_set
 
     @property
     @override
@@ -402,9 +435,9 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
         return FisherNativeState(
             self.n_par,
             self.strategy_params.fisher_subspace_frac,
-            self.sigma_scales,
-            self.chol_fishers,
-            self.gamma_mults,
+            self._sigma_scales,
+            self._chol_fishers,
+            self._gamma_mults,
         )
 
     @override
@@ -471,12 +504,12 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
     def reset_fishers_from_point(self, sample_set: NDArray[np.floating]) -> None:
         """Set the fisher matrix object at the specified point, updating in place"""
         sigma_diags, fishers, chol_fishers = set_fishers(sample_set, self.strategy_params, self.n_chain, self.like_obj)
-        self.sigma_diags[:] = sigma_diags
-        self.fishers[:] = fishers
-        self.chol_fishers[:] = chol_fishers
-        sigma_scales, gamma_mults = set_scales(self.n_par, self.T_ladder, self.sigma_diags)
-        self.sigma_scales[:] = sigma_scales
-        self.gamma_mults[:] = gamma_mults
+        self._sigma_diags[:] = sigma_diags
+        self._fishers[:] = fishers
+        self._chol_fishers[:] = chol_fishers
+        sigma_scales, gamma_mults = set_scales(self.n_par, self.T_ladder, self._sigma_diags)
+        self._sigma_scales[:] = sigma_scales
+        self._gamma_mults[:] = gamma_mults
 
     def reset_fishers(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
@@ -497,7 +530,7 @@ class FisherJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
             for itrt in range(self.n_chain):
                 samples_fisher[itrt] = samples[index_select]
             self.reset_fishers_from_point(samples_fisher)
-            return self.declared_refresh_evals()
+            return self.declared_refresh_evals
         return 0
 
     @override

@@ -308,7 +308,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
         # stay conditioned on prior-fill and adaptation-era states, which
         # is not a production configuration.
         if self.de_manager is not None:
-            memory_span = self.de_manager.de_size * self.de_manager.de_thin
+            memory_span = self.de_manager.de_span
             if spec.adaptive is not None:
                 window = int(_scalar(spec.adaptive.get('update_every_blocks', 8))) * spec.block_size
                 if memory_span < DE_MEMORY_MIN_WINDOWS * window:

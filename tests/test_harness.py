@@ -322,7 +322,7 @@ def test_batch_expansion(tmp_path: Path) -> None:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 def test_eggbox_end_to_end(tmp_path: Path) -> None:
-    """The eggbox jitclass runs through the full default proposal mixture.
+    """The eggbox run through the full default proposal mixture.
 
     Regression for a pre-existing engine bug found in the Phase 4 pilots:
     eggbox.prior_factor's del-based body raised a numba TypingError on

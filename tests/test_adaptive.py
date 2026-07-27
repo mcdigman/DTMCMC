@@ -242,11 +242,11 @@ def _copy_full_state(source: DTMCMCSampler[Any], target: DTMCMCSampler[Any]) -> 
 
     src_fisher = next(m for m in source.proposal_manager.managers if isinstance(m, FisherJumpManager))
     tgt_fisher = next(m for m in target.proposal_manager.managers if isinstance(m, FisherJumpManager))
-    tgt_fisher.sigma_diags = src_fisher.sigma_diags.copy()
-    tgt_fisher.fishers = src_fisher.fishers.copy()
-    tgt_fisher.chol_fishers = src_fisher.chol_fishers.copy()
-    tgt_fisher.sigma_scales = src_fisher.sigma_scales.copy()
-    tgt_fisher.gamma_mults = src_fisher.gamma_mults.copy()
+    tgt_fisher.sigma_diags[:] = src_fisher.sigma_diags.copy()
+    tgt_fisher.fishers[:] = src_fisher.fishers.copy()
+    tgt_fisher.chol_fishers[:] = src_fisher.chol_fishers.copy()
+    tgt_fisher.sigma_scales[:] = src_fisher.sigma_scales.copy()
+    tgt_fisher.gamma_mults[:] = src_fisher.gamma_mults.copy()
 
     target.proposal_manager.jump_weights = source.proposal_manager.jump_weights.copy()
     # target.proposal_manager.jump_probs = source.proposal_manager.jump_probs.copy()

@@ -65,8 +65,7 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[Any]](
         logLs_old: NDArray[np.floating],
         states_old: NDArray[np.floating],
     ) -> None:
-        """A blank"""
-        self.strategy_params: HistoryStrategyParameters = HistoryStrategyParameters(config)
+        self._strategy_params: HistoryStrategyParameters = HistoryStrategyParameters(config)
 
         jumps: list[AbstractNativeJump[LikelihoodType, HistoryNativeState[LikelihoodType]]] = [LadderHistoryJump(self)]
         self._native_state: HistoryNativeState[LikelihoodType] = HistoryNativeState(
@@ -74,6 +73,10 @@ class LadderHistoryJumpManager[LikelihoodType: AbstractLikelihood[Any]](
         )
 
         super().__init__(T_ladder, like_obj, jumps)
+
+    @property
+    def strategy_params(self) -> HistoryStrategyParameters:
+        return self._strategy_params
 
     @property
     @override

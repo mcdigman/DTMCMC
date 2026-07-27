@@ -107,7 +107,7 @@ class PriorManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likeliho
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
-        self.strategy_params = PriorStrategyParameters(config)
+        self._strategy_params = PriorStrategyParameters(config)
 
         self._like_obj = like_obj
 
@@ -116,6 +116,10 @@ class PriorManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likeliho
         self._state = PriorNativeState()
 
         super().__init__(T_ladder, like_obj, jumps)
+
+    @property
+    def strategy_params(self) -> PriorStrategyParameters:
+        return self._strategy_params
 
     @override
     def set_jump_weights(self) -> None:

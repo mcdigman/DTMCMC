@@ -68,10 +68,10 @@ class DENativeState(NamedTuple):
     is re-read at every block entry.
     """
 
-    de_buffer: NDArray[np.float64]
+    de_buffer: NDArray[np.floating]
     de_subspace_frac: float
     de_thin: int
-    counters: NDArray[np.int64]
+    counters: NDArray[np.integer]
 
 
 @njit(inline='always')
@@ -273,11 +273,11 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likelih
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """Create the manager object"""
-        self.strategy_params = DEStrategyParameters(config)
+        self._strategy_params = DEStrategyParameters(config)
 
-        self.de_thin: int = self.strategy_params.de_thin
-        self.de_size: int = self.strategy_params.de_size
-        self.de_subspace_frac: float = self.strategy_params.de_subspace_frac
+        self._de_thin: int = self._strategy_params.de_thin
+        self._de_size: int = self._strategy_params.de_size
+        self._de_subspace_frac: float = self._strategy_params.de_subspace_frac
 
         jumps: list[AbstractNativeJump[LikelihoodType, DENativeState]] = [
             DEStandardFullJump(self),
@@ -286,16 +286,36 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likelih
             DEBigRandomSubspaceJump(self),
         ]
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
 
-        self.de_buffer = np.zeros((self.de_size, self.n_chain, self.n_par))
-        initialize_de_helper(self.de_buffer, self.de_size, self.n_chain, self.like_obj)
+        self._de_buffer: NDArray[np.floating] = np.zeros((self._de_size, self.n_chain, self.n_par))
+        initialize_de_helper(self.de_buffer, self._de_size, self.n_chain, self.like_obj)
 
         # identity-stable counter storage as (write, count); the int-valued
         # itrde_write/itrde_count properties are views into this array
         self._de_counters: NDArray[np.int64] = np.zeros(2, dtype=np.int64)
+
+        # initialize _de_counters via the getter/setter
         self.itrde_write = 1
         self.itrde_count = 1
+
+    @property
+    def de_buffer(self) -> NDArray[np.floating]:
+        return self._de_buffer
+
+    @property
+    def strategy_params(self) -> DEStrategyParameters:
+        return self._strategy_params
+
+    @property
+    def de_size(self) -> int:
+        """Return the size of each row in the de buffer."""
+        return self._de_size
+
+    @property
+    def de_span(self) -> int:
+        """Return the total span of observations the de buffer covers."""
+        return self._de_thin * self._de_size
 
     @property
     def itrde_write(self) -> int:
@@ -319,7 +339,7 @@ class DEJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likelih
     @override
     def native_state(self) -> DENativeState:
         """Return the runtime state bundle shared by this manager's jumps and post-step."""
-        return DENativeState(self.de_buffer, self.de_subspace_frac, self.de_thin, self._de_counters)
+        return DENativeState(self.de_buffer, self._de_subspace_frac, self._de_thin, self._de_counters)
 
     @property
     @override
