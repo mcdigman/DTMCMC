@@ -109,7 +109,6 @@ def _loglike_native(params_in: NDArray[np.floating], inputs: CakeInputs) -> floa
 # https://statmodeling.stat.columbia.edu/2017/03/15/ensemble-methods-doomed-fail-high-dimensions/
 
 
-# @jitclass([('n_par',nb.int64),('epsilons',nb.float64[:])])
 class CakeLikelihood(RectangularLikelihood[CakeInputs]):
     """class to manage the likelihood-specific essential functions for the sampler"""
 

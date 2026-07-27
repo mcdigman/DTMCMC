@@ -73,13 +73,17 @@ class AuxilliaryJumpManager[LikelihoodType: AbstractLikelihood[Any]](
 
     def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """A blank proposal as a template"""
-        self.strategy_params = AuxilliaryStrategyParameters(config)
+        self._strategy_params: AuxilliaryStrategyParameters = AuxilliaryStrategyParameters(config)
 
         jumps: list[AbstractNativeJump[LikelihoodType, AuxilliaryNativeState]] = [BlankJump(self)]
 
-        self._native_state = AuxilliaryNativeState()
+        self._native_state: AuxilliaryNativeState = AuxilliaryNativeState()
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        super().__init__(T_ladder, like_obj, jumps)
+
+    @property
+    def strategy_params(self) -> AuxilliaryStrategyParameters:
+        return self._strategy_params
 
     @override
     def set_jump_weights(self) -> None:

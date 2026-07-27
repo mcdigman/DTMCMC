@@ -286,7 +286,7 @@ class GeometricTemperatureLadder(TemperatureLadder):
         _, Ts = geometric_spaced_betas(
             n_chain, n_cold, T_cold, T_min, T_max, n_inf_final=n_inf_final, sort_mode=sort_mode
         )
-        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
+        super().__init__(Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def _standardize_stats_core(
@@ -687,7 +687,7 @@ class EntropyTemperatureLadder(TemperatureLadder):
             sort_mode=sort_mode,
             snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
+        super().__init__(Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 class LengthTemperatureLadder(TemperatureLadder):
@@ -737,7 +737,7 @@ class LengthTemperatureLadder(TemperatureLadder):
             q=0.0,
             snap_mode=snap_mode,
         )
-        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
+        super().__init__(Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def standardize_input_stats(
@@ -976,7 +976,7 @@ class AcceptanceTemperatureLadder(TemperatureLadder):
             snap_mode=snap_mode,
         )
         self.achieved_acceptance: float = a_star
-        TemperatureLadder.__init__(self, Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
+        super().__init__(Ts, sort_mode=sort_mode, T_cold=T_cold, n_cold=n_cold)
 
 
 def remap_ladder_indices(

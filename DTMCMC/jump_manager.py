@@ -152,10 +152,6 @@ def _null_bind_post_step(_state: NamedTuple, _samples_row: NDArray[np.floating],
 class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
     """Extensions of this class dispatch MCMC proposals."""
 
-    # deterministic likelihood-evaluation cost of constructing the manager;
-    # subclasses that evaluate the likelihood at construction must override
-    declared_construction_evals: int = 0
-
     def __init__(
         self,
         T_ladder: TemperatureLadder,
@@ -165,8 +161,8 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
         """Default constructor that handles all the common actions we expect to need"""
         self._T_ladder: TemperatureLadder = T_ladder
         self._like_obj: LikelihoodType = like_obj
-        self.n_chain: int = T_ladder.n_chain
-        self.n_par: int = like_obj.n_par
+        self._n_chain: int = T_ladder.n_chain
+        self._n_par: int = like_obj.n_par
 
         # self.jump_names = jump_names
         self._jumps: list[AbstractNativeJump[LikelihoodType, StateType]] = jumps
@@ -178,11 +174,31 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
         # self.jump_labels_array = np.array([jump_labels_dict.get(name, name) for name in jump_names])
         self._jump_labels_array: list[str] = [jump.print_name for jump in self._jumps]
 
-        self.name_to_idx: dict[str, int] = {}
+        self._name_to_idx: dict[str, int] = {}
         for itrm, name in enumerate(self._jump_labels_array):
-            self.name_to_idx[name] = itrm
+            self._name_to_idx[name] = itrm
 
         self.set_jump_probs()
+
+    @property
+    def declared_construction_evals(self) -> int:
+        """Deterministic likelihood-evaluation cost of constructing the manager.
+
+        Subclasses that evaluate the likelihood at construction must override.
+        """
+        return 0
+
+    @property
+    def n_par(self) -> int:
+        return self._n_par
+
+    @property
+    def n_chain(self) -> int:
+        return self._n_chain
+
+    @property
+    def name_to_idx(self) -> dict[str, int]:
+        return self._name_to_idx
 
     @property
     @abstractmethod
