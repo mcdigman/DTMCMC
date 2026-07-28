@@ -187,12 +187,6 @@ class NativeBackendCompilationError(RuntimeError):
     """The requested object graph has no complete native binding."""
 
 
-# compiled-dispatcher store keyed by the underlying function object: a
-# memoized implementation function maps to one dispatcher, so equal-config
-# objects share one compiled handle (the key reference also keeps the
-# implementation alive, keeping its id stable)
-_COMPILED_MEMO: dict[Callable[..., object], Callable[..., object]] = {}
-
 # argument types used to force ahead-of-first-call compilation of a handle;
 # they mirror the hot-path call (a 1D C-contiguous float64 parameter
 # vector) but do not restrict the handle: the compiled dispatcher still
@@ -213,9 +207,6 @@ def compile_handle[
     returned unchanged with the compilation error; the owning likelihood
     aggregates all of its failed behavior handles into one warning.
     """
-    got = _COMPILED_MEMO.get(fn)
-    if got is not None:
-        return cast('F', got), None
     # numba's Dispatcher is untyped generically, so the boundary is Any-typed
     handle = cast('Callable[..., object]', fn)
     dispatcher: Any = handle if is_jitted(handle) else njit(inline='always')(handle)
@@ -223,7 +214,6 @@ def compile_handle[
         dispatcher.compile(probe_args)
     except NumbaError as exc:
         return fn, str(exc)
-    _COMPILED_MEMO[fn] = dispatcher
     return cast('F', dispatcher), None
 
 
