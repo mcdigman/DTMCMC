@@ -67,7 +67,7 @@ def _defining_class(cls: type, name: str) -> type:
         if name in vars(klass):
             return klass
 
-    msg = f'{name} not found in class'
+    msg = f'{name} not found in class {cls.__qualname__}'
     raise TypeError(msg)
 
 
@@ -78,9 +78,7 @@ def _stale_native_override(cls: type, method_name: str, hook_names: tuple[str, .
     overrides a paired Python method without also overriding a hook would
     have its override silently ignored — the inherited binding would run
     the ancestor's behavior. Absent members are protocol-conformance
-    problems, and hooks held as instance attributes are invisible to class
-    introspection and assumed consistent; only the provable case — the
-    method defined strictly below every hook — is reported.
+    problems.
     """
     py_cls = _defining_class(cls, method_name)
     native_cls: type | None = None
@@ -355,7 +353,7 @@ def _build_manager_dispatch(wrap: _WrapCall, per_manager_calls: ManagerJumpCalls
 def _build_post_chain(wrap: _WrapCall, post_steps: ManagerPostSteps) -> NativePostStepCall[tuple[object, ...]]:
     """Chain the managers' bound per-step updates in manager order.
 
-    ``post_steps`` has one entry per manager (None when idle) so the chain
+    ``post_steps`` has one entry per manager so the chain
     peels the ``manager_states`` tuple in step with the dispatch chain.
     """
     head = post_steps[0]
