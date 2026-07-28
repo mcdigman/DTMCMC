@@ -56,19 +56,19 @@ type KernelFlavor = Literal['numba', 'python']
 
 _VALID_MODES: tuple[KernelBackendMode, ...] = ('auto', 'numba', 'python')
 
-# Heterogeneous per-manager rows: Callable parameters are contravariant, so
-# no common state parameter type can express "each row takes exactly its own
-# manager's state"; Any is the deliberate element type here.
+# Heterogeneous per-manager rows: Callable parameters are contravariant.
 type ManagerJumpCalls = tuple[tuple[NativeJumpCall[Any], ...], ...]
-type ManagerPostSteps = tuple[NativePostStepCall[Any] | None, ...]
+type ManagerPostSteps = tuple[NativePostStepCall[Any], ...]
 
 
-def _defining_class(cls: type, name: str) -> type | None:
+def _defining_class(cls: type, name: str) -> type:
     """Return the most-derived class in the MRO that defines ``name``."""
     for klass in cls.__mro__:
         if name in vars(klass):
             return klass
-    return None
+
+    msg = f'{name} not found in class'
+    raise TypeError(msg)
 
 
 def _stale_native_override(cls: type, method_name: str, hook_names: tuple[str, ...]) -> str | None:
@@ -83,14 +83,15 @@ def _stale_native_override(cls: type, method_name: str, hook_names: tuple[str, .
     method defined strictly below every hook — is reported.
     """
     py_cls = _defining_class(cls, method_name)
-    if py_cls is None:
-        return None
     native_cls: type | None = None
     for hook_name in hook_names:
         hook_cls = _defining_class(cls, hook_name)
-        if hook_cls is not None and (native_cls is None or issubclass(hook_cls, native_cls)):
+        if native_cls is None or issubclass(hook_cls, native_cls):
             native_cls = hook_cls
-    if native_cls is not None and py_cls is not native_cls and issubclass(py_cls, native_cls):
+    if native_cls is None:
+        msg = f'Never found {method_name} in class'
+        raise TypeError(msg)
+    if py_cls is not native_cls and issubclass(py_cls, native_cls):
         return f'{cls.__qualname__} overrides {method_name} without overriding {" or ".join(hook_names)}'
     return None
 
@@ -119,13 +120,9 @@ def _manager_divergence(manager: object) -> str | None:
     method override would be silently skipped.
     """
     cls = type(manager)
-    hook_cls = _defining_class(cls, 'bind_native_post_step')
+    hook_cls: type = _defining_class(cls, 'bind_native_post_step')
     py_cls = _defining_class(cls, 'post_step_update')
-    if hook_cls is None:
-        if py_cls is not None:
-            return f'{cls.__qualname__} defines post_step_update without defining bind_native_post_step'
-        return None
-    if py_cls is not None and py_cls is not hook_cls and issubclass(py_cls, hook_cls):
+    if py_cls is not hook_cls and issubclass(py_cls, hook_cls):
         return f'{cls.__qualname__} overrides post_step_update without overriding bind_native_post_step'
     return None
 
@@ -212,10 +209,8 @@ def _capability_gaps[LikelihoodType: AbstractLikelihood[Any]](
         manager_name = type(manager).__qualname__
         for jump in manager.jumps:
             check_handle(f'proposal manager {idx} {manager_name} jump {type(jump).__qualname__} handle', jump.handle)
-        if _defining_class(type(manager), 'bind_native_post_step') is not None:
-            check_handle(f'proposal manager {idx} {manager_name} post-step binding', manager.bind_native_post_step)
-        if _defining_class(type(manager), 'native_state') is not None:
-            check_typable(f'proposal manager {idx} {manager_name} native state', manager.native_state)
+        check_handle(f'proposal manager {idx} {manager_name} post-step binding', manager.bind_native_post_step)
+        check_typable(f'proposal manager {idx} {manager_name} native state', manager.native_state)
 
     return gaps, compiled
 
@@ -357,30 +352,14 @@ def _build_manager_dispatch(wrap: _WrapCall, per_manager_calls: ManagerJumpCalls
     return wrap(dispatch)
 
 
-def _post_step_noop(_states: tuple[object, ...], _samples_row: NDArray[np.floating]) -> None:
-    """Per-step update for managers with no native per-step work."""
-    return
-
-
 def _build_post_chain(wrap: _WrapCall, post_steps: ManagerPostSteps) -> NativePostStepCall[tuple[object, ...]]:
     """Chain the managers' bound per-step updates in manager order.
 
     ``post_steps`` has one entry per manager (None when idle) so the chain
     peels the ``manager_states`` tuple in step with the dispatch chain.
     """
-    if not post_steps:
-        return wrap(_post_step_noop)
     head = post_steps[0]
     rest = _build_post_chain(wrap, post_steps[1:]) if len(post_steps) > 1 else None
-    if head is None:
-        if rest is None:
-            return wrap(_post_step_noop)
-        rest_after_skip = rest
-
-        def post_skip(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
-            rest_after_skip(states[1:], samples_row)
-
-        return wrap(post_skip)
     if rest is None:
 
         def post_leaf(states: tuple[object, ...], samples_row: NDArray[np.floating]) -> None:
@@ -576,7 +555,7 @@ def _structural_key(
             id(likelihood_natives.correct_bounds),
         ),
         tuple(
-            (None if post is None else id(post), tuple(id(call) for call in calls))
+            (id(post), tuple(id(call) for call in calls))
             for post, calls in zip(post_steps, per_manager_calls, strict=True)
         ),
         (id(exchange_natives.is_exchange_step), id(exchange_natives.exchange)),
@@ -608,9 +587,8 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         # membership in the Literal-typed tuple narrows mode for the checkers
         self.mode: KernelBackendMode = mode
         self.graph_identity: tuple[object, ...] | None = None
-        self.program: NativeSerialProgram | None = None
+        self.program: NativeSerialProgram
         self.warned_identities: set[tuple[object, ...]] = set()
-        self._manager_has_state: tuple[bool, ...] = ()
         self._jump_internal_evals: NDArray[np.int64] = np.zeros(0, dtype=np.int64)
         self._kernel_ready: bool = False
 
@@ -623,13 +601,10 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         """Bind every component and fetch or assemble one program flavor."""
         likelihood_natives = like_obj.bind_native
         per_manager_calls: list[tuple[NativeJumpCall[Any], ...]] = []
-        post_steps: list[NativePostStepCall[Any] | None] = []
-        manager_has_state: list[bool] = []
+        post_steps: list[NativePostStepCall[Any]] = []
         for manager in proposal_manager.managers:
             per_manager_calls.append(tuple(jump.handle for jump in manager.jumps))
-            manager_has_state.append(_defining_class(type(manager), 'native_state') is not None)
-            has_post = _defining_class(type(manager), 'bind_native_post_step') is not None
-            post_steps.append(manager.bind_native_post_step if has_post else None)
+            post_steps.append(manager.bind_native_post_step)
         if sum(len(calls) for calls in per_manager_calls) != proposal_manager.jump_probs.shape[1]:
             msg = 'Number of available jumps does not match number of jumps assigned a probability.'
             raise ValueError(msg)
@@ -637,7 +612,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
 
         declared: list[int] = [jump.declared_internal_evals for jump in proposal_manager.jumps]
         self._jump_internal_evals = np.array(declared, dtype=np.int64)
-        self._manager_has_state = tuple(manager_has_state)
 
         if flavor == 'python':
             # nothing is compiled, so there is nothing to share through the cache
@@ -693,11 +667,7 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         gaps, compiled = _capability_gaps(proposal_manager, like_obj)
         program: NativeSerialProgram | None = None
         if not gaps:
-            try:
-                program = self._bind_program(proposal_manager, like_obj, 'numba')
-            except NativeBackendUnsupportedError as exc:
-                # a hook declined at bind time
-                gaps = [str(exc)]
+            program = self._bind_program(proposal_manager, like_obj, 'numba')
         if program is None:
             detail = '; '.join(gaps)
             if self.mode == 'numba':
@@ -733,15 +703,9 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         """Advance one block through the resolved program; return the flavor that ran."""
         self._resolve(proposal_manager, like_obj)
         program = self.program
-        if program is None:
-            msg = 'No program has been stored.'
-            raise TypeError(msg)
         # runtime state bundles are re-read at every block entry, so
         # configuration changes between blocks behave identically in both flavors
-        manager_states = tuple(
-            manager.native_state if has_state else None
-            for manager, has_state in zip(proposal_manager.managers, self._manager_has_state, strict=True)
-        )
+        manager_states = tuple(manager.native_state for manager in proposal_manager.managers)
         exchange_inputs = proposal_manager.exchange_manager.inputs
         args = (
             samples,
