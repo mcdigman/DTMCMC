@@ -115,12 +115,11 @@ class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any], StateType](Pr
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> int | None:
+    ) -> int:
         """Update manager state after one completed block.
 
         Returns the deterministic number of target-likelihood evaluations
-        the update performed, or None when the cost cannot be declared
-        (which makes the sampler's evaluation accounting incomplete).
+        the update performed.
         """
         ...
 
@@ -136,6 +135,14 @@ class AbstractJumpManager[LikelihoodType: AbstractLikelihood[Any], StateType](Pr
     @property
     def native_state(self) -> StateType:
         """Return the state."""
+        ...
+
+    @property
+    def declared_construction_evals(self) -> int:
+        """Deterministic likelihood-evaluation cost of constructing the manager.
+
+        Subclasses that evaluate the likelihood at construction must override.
+        """
         ...
 
 
@@ -342,7 +349,7 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
 
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> int | None:
+    ) -> int:
         """Do any needed internal processing after an individual block of size block_size:
         ie, fisher matrix updates
         inputs:
@@ -352,8 +359,7 @@ class JumpManager[LikelihoodType: AbstractLikelihood[Any], StateType: Any](ABC):
             logLs: 2D float array of likelihoods
         output:
             the deterministic number of target-likelihood evaluations the
-            update performed (0 for the base no-op), or None when the cost
-            cannot be declared
+            update performed (0 for the base no-op).
         """
         del itrn
         del block_size

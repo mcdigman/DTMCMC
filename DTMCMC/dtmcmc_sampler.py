@@ -180,11 +180,8 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         the accounting incomplete rather than silently contributing zero.
         """
         for manager in self.proposal_manager.managers:
-            declared = getattr(manager, 'declared_construction_evals', None)
-            if declared is None:
-                self.eval_accounting.complete = False
-            else:
-                self.eval_accounting.initialization += declared
+            declared: int = manager.declared_construction_evals
+            self.eval_accounting.initialization += declared
 
     def validate_protocol_conformance(self) -> None:
         """Fail fast when a component is missing structural protocol members
@@ -383,11 +380,10 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.record_history.append(self.record_indices.copy())
 
         self.store_samples()
-        post_block_evals = self.proposal_manager.post_block_update(self.itrn, self.block_size, self.samples, self.logLs)
-        if post_block_evals is None:
-            self.eval_accounting.complete = False
-        else:
-            self.eval_accounting.post_block += post_block_evals
+        post_block_evals: int = self.proposal_manager.post_block_update(
+            self.itrn, self.block_size, self.samples, self.logLs
+        )
+        self.eval_accounting.post_block += post_block_evals
         self.tracker_manager.post_block_update(self.itrn, self.chain_track)
         # track the block mean and std of the likelihoods by chain
         self.logL_means.append(self.logLs[1:].mean(axis=0))

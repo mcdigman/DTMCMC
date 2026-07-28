@@ -7,8 +7,7 @@ counters: the orchestration loop counts proposal-target evaluations exactly
 short-circuit), jumps declare a fixed per-dispatch internal cost via the
 ``declared_internal_evals`` attribute, and managers report scheduled
 maintenance costs from ``declared_construction_evals`` and the return value
-of ``post_block_update``. A component that cannot declare its cost yields an
-incomplete total — never a silent zero.
+of ``post_block_update``.
 
 ``LoglikeCallSpy`` is the conformance helper for verifying declarations:
 it independently counts actual calls through one likelihood instance's
@@ -30,18 +29,12 @@ if TYPE_CHECKING:
 
 @dataclass
 class EvalAccounting:
-    """Likelihood-evaluation totals by source phase.
-
-    ``complete`` is False when any component could not declare its cost
-    (an unknown is never silently treated as zero); consumers must not
-    present an incomplete total as an exact evaluation count.
-    """
+    """Likelihood-evaluation totals by source phase."""
 
     initialization: int = 0
     proposal_targets: int = 0
     proposal_internal: int = 0
     post_block: int = 0
-    complete: bool = True
 
     @property
     def total(self) -> int:
