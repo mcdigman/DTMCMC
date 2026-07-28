@@ -140,10 +140,9 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.kernel_backend: str = kernel_backend
         # the backend validates kernel_backend, raising ValueError
         self._native_serial_backend: NativeSerialBackend[LikelihoodType] = NativeSerialBackend(kernel_backend)
-        self.last_kernel_backend: KernelFlavor = 'python'
+        self._last_kernel_backend: KernelFlavor | None = None
         self.tracker_manager: TrackerManager[LikelihoodType]
         self.proposal_manager: AbstractProposalManager[LikelihoodType, Any]
-        self.starting_samples = starting_samples
 
         self.T_ladder: TemperatureLadder = T_ladder_in
 
@@ -151,6 +150,11 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.Ts = self.T_ladder.Ts
         self.n_chain: int = self.T_ladder.n_chain
         self.n_cold: int = self.T_ladder.n_cold
+
+        if starting_samples is None:
+            self.starting_samples: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
+        else:
+            self.starting_samples = starting_samples
 
         # recorded chains: the ladder's readout (cold) chains first — their
         # indices are recomputed at every ladder update — then the extras
@@ -172,6 +176,13 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.validate_protocol_conformance()
         self.count_construction_evals()
         self.initialize_trackers(tracker_manager)
+
+    @property
+    def last_kernel_backend(self) -> KernelFlavor:
+        if self._last_kernel_backend is None:
+            msg = 'Cannot get last backend because kernel has never run'
+            raise ValueError(msg)
+        return self._last_kernel_backend
 
     def count_construction_evals(self) -> None:
         """Fold the managers' declared construction costs into the accounting.
@@ -272,10 +283,8 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
 
     def initialize_state(self) -> None:
         """Initialize the samples"""
-        if self.starting_samples is None:
-            self.starting_samples = np.zeros((self.n_chain, self.n_par))
-            for itrt in range(self.n_chain):
-                self.starting_samples[itrt, :] = self.like_obj.prior_draw()
+        for itrt in range(self.n_chain):
+            self.starting_samples[itrt, :] = self.like_obj.prior_draw()
 
         self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
@@ -360,7 +369,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
 
     def block_main(self) -> None:
         """The main body of the block with the mcmc step"""
-        self.last_kernel_backend = self._native_serial_backend.advance_block(
+        self._last_kernel_backend = self._native_serial_backend.advance_block(
             self.T_ladder,
             self.logLs,
             self.samples,
