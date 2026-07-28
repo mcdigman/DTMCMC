@@ -7,10 +7,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 
-from DTMCMC.correction_helpers import reflect_into_range
 from DTMCMC.likelihood import NativeLoglikeCall, RectangularInputs, RectangularLikelihood
-
-tmax: float = 5.0 * np.pi
 
 Tp: float = 2.0e-1
 betap: float = 1.0 / Tp
@@ -36,47 +33,6 @@ def get_loglike(x: NDArray[np.floating], n_par: int) -> float:
 def _loglike_native(params_in: NDArray[np.floating], inputs: RectangularInputs) -> float:
     """Per-class native log likelihood."""
     return get_loglike(params_in, inputs.n_par)
-
-
-@njit()
-def prior_draw(n_par: int) -> NDArray[np.floating]:
-    """Get a prior draw"""
-    return np.random.uniform(low_lim, high_lim, n_par)
-
-
-@njit()
-def prior_factor(_v: NDArray[np.floating], _n_par: int) -> float:
-    """Get the denstiy factor for prior draws."""
-    return 0.0
-
-
-@njit()
-def correct_bounds(v: NDArray[np.floating], n_par: int) -> NDArray[np.floating]:
-    """Correct parameters to be in boundaries"""
-    for itrp in range(n_par):
-        v[itrp] = reflect_into_range(v[itrp], low_lim, high_lim)
-    return v
-
-
-@njit()
-def check_bounds(v: NDArray[np.floating]) -> bool:
-    """Check if a sample is within the prior range"""
-    for itrp in range(v.size):
-        if not low_lim < v[itrp] < high_lim:
-            return False
-    return True
-
-
-@njit()
-def validate_bounds(params_in: NDArray[np.floating]) -> tuple[NDArray[np.floating], bool]:
-    success: bool = check_bounds(params_in)
-    if not success:
-        # try to make the point in bounds and fail if unsuccesful
-        new_point = correct_bounds(params_in, params_in.size)
-        success = check_bounds(new_point)
-    else:
-        new_point = params_in
-    return new_point, success
 
 
 class EggboxLikelihood(RectangularLikelihood[RectangularInputs]):

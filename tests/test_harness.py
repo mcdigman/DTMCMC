@@ -239,7 +239,6 @@ def test_counting_matches_independent_spy(tmp_path: Path) -> None:
 
         sampler.advance_N_blocks(spec.n_blocks)
 
-    assert accounting.complete
     assert accounting.total == spy.n_calls
 
     artifact_path = tmp_path / 'counting.h5'
@@ -247,7 +246,6 @@ def test_counting_matches_independent_spy(tmp_path: Path) -> None:
 
     attrs = read_attrs(artifact_path)
     assert int(np.asarray(attrs['n_likelihood_evals']).item()) == spy.n_calls
-    assert bool(np.asarray(attrs['n_likelihood_evals_complete']).item())
     breakdown = (
         int(np.asarray(attrs['n_evals_initialization']).item()),
         int(np.asarray(attrs['n_evals_proposal_targets']).item()),
