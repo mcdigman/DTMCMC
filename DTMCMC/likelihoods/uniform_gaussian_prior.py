@@ -10,12 +10,6 @@ from DTMCMC.likelihood import NativeLoglikeCall, NativePriorDrawCall, NativePrio
 
 
 @njit(inline='always')
-def get_loglike(_params: NDArray[np.floating]) -> float:
-    """Return a constant log likelihood over the whole parameter space."""
-    return 0.0
-
-
-@njit(inline='always')
 def gaussian_prior_draw(
     n_par: int,
     prior_mean: NDArray[np.floating],
@@ -47,9 +41,9 @@ class UniformRectangularGaussianInputs(NamedTuple):
 
 
 @njit(inline='always')
-def _loglike_native(params_in: NDArray[np.floating], _inputs: UniformRectangularGaussianInputs) -> float:
+def _loglike_native(_params_in: NDArray[np.floating], _inputs: UniformRectangularGaussianInputs) -> float:
     """Per-class native log likelihood."""
-    return get_loglike(params_in)
+    return 0.0
 
 
 @njit(inline='always')

@@ -612,7 +612,6 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         self.warned_identities: set[tuple[object, ...]] = set()
         self._manager_has_state: tuple[bool, ...] = ()
         self._jump_internal_evals: NDArray[np.int64] = np.zeros(0, dtype=np.int64)
-        self._jump_internal_known: bool = True
         self._kernel_ready: bool = False
 
     def _bind_program(
@@ -636,9 +635,8 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
             raise ValueError(msg)
         exchange_natives = proposal_manager.exchange_manager.bind_native
 
-        declared: list[int | None] = [getattr(jump, 'declared_internal_evals', None) for jump in proposal_manager.jumps]
-        self._jump_internal_known = all(value is not None for value in declared)
-        self._jump_internal_evals = np.array([0 if value is None else value for value in declared], dtype=np.int64)
+        declared: list[int] = [jump.declared_internal_evals for jump in proposal_manager.jumps]
+        self._jump_internal_evals = np.array(declared, dtype=np.int64)
         self._manager_has_state = tuple(manager_has_state)
 
         if flavor == 'python':
@@ -787,6 +785,4 @@ class NativeSerialBackend[LikelihoodType: AbstractLikelihood[Any]]:
         n_target_evals, n_internal_evals = program.kernel(*args)
         eval_accounting.proposal_targets += n_target_evals
         eval_accounting.proposal_internal += n_internal_evals
-        if not self._jump_internal_known:
-            eval_accounting.complete = False
         return program.flavor

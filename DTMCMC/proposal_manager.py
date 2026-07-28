@@ -162,20 +162,16 @@ class ProposalManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Likel
     @override
     def post_block_update(
         self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> int | None:
+    ) -> int:
         """Do any needed internal processing after an individual block of size block_size.
 
         E.g. fisher matrix updates. Returns the summed deterministic
-        likelihood-evaluation cost, or None when any component manager
-        cannot declare its cost (every manager is still updated).
+        likelihood-evaluation cost.
         """
-        n_evals: int | None = 0
+        n_evals: int = 0
         for itrm in range(self._n_managers):
             got = self._managers[itrm].post_block_update(itrn, block_size, samples, logLs)
-            if got is None or n_evals is None:
-                n_evals = None
-            else:
-                n_evals += got
+            n_evals += got
         return n_evals
 
     @override
