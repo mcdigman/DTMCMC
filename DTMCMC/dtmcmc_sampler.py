@@ -151,10 +151,8 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         self.n_chain: int = self.T_ladder.n_chain
         self.n_cold: int = self.T_ladder.n_cold
 
-        if starting_samples is None:
-            self.starting_samples: NDArray[np.floating] = np.zeros((self.n_chain, self.n_par))
-        else:
-            self.starting_samples = starting_samples
+        self.starting_samples_in: NDArray[np.floating] | None = starting_samples
+        self.starting_samples: NDArray[np.floating]
 
         # recorded chains: the ladder's readout (cold) chains first — their
         # indices are recomputed at every ladder update — then the extras
@@ -185,11 +183,7 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
         return self._last_kernel_backend
 
     def count_construction_evals(self) -> None:
-        """Fold the managers' declared construction costs into the accounting.
-
-        A manager without a ``declared_construction_evals`` attribute makes
-        the accounting incomplete rather than silently contributing zero.
-        """
+        """Fold the managers' declared construction costs into the accounting."""
         for manager in self.proposal_manager.managers:
             declared: int = manager.declared_construction_evals
             self.eval_accounting.initialization += declared
@@ -283,8 +277,12 @@ class DTMCMCSampler[LikelihoodType: AbstractLikelihood[Any]]:
 
     def initialize_state(self) -> None:
         """Initialize the samples"""
-        for itrt in range(self.n_chain):
-            self.starting_samples[itrt, :] = self.like_obj.prior_draw()
+        if self.starting_samples_in is None:
+            self.starting_samples = np.zeros((self.n_chain, self.n_par))
+            for itrt in range(self.n_chain):
+                self.starting_samples[itrt, :] = self.like_obj.prior_draw()
+        else:
+            self.starting_samples = self.starting_samples_in
 
         self.starting_logLs = np.zeros(self.n_chain)
         for itrt in range(self.n_chain):
