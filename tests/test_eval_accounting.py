@@ -174,17 +174,6 @@ class _ExtensionManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[Lik
         return _UndeclaredNativeState()
 
 
-class _UndeclaredPostBlockManager[LikelihoodType: AbstractLikelihood[Any]](_ExtensionManager[LikelihoodType]):
-    """Extension manager whose post-block cost cannot be declared."""
-
-    @override
-    def post_block_update(
-        self, itrn: int, block_size: int, samples: NDArray[np.floating], logLs: NDArray[np.floating]
-    ) -> int:
-        del itrn, block_size, samples, logLs
-        return 0
-
-
 def _run_tiny_sampler(
     manager: JumpManager[GaussianLikelihood, Any], like_obj: GaussianLikelihood, ladder: TemperatureLadder
 ) -> EvalAccounting:
