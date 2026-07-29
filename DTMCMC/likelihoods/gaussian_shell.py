@@ -23,7 +23,7 @@ const: float = np.log(1.0 / np.sqrt(2.0 * np.pi * w**2))  # normalization consta
 @njit()
 def logcirc(theta: NDArray[np.floating], c: NDArray[np.floating]) -> float:
     """Helper function for log likelihood of a single shell"""
-    d: float = np.sqrt(np.sum((theta - c) ** 2, axis=-1))
+    d: float = np.sqrt(np.sum((theta - c) ** 2))
     res: float = const - (d - r) ** 2 / (2.0 * w**2)
     return res
 

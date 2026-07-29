@@ -238,7 +238,7 @@ class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
 
     def get_exchange_rate_summary(
         self, itrt_start: int = 0, itrt_end: int = -1, last_itrn: int = -1
-    ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]:
+    ) -> tuple[NDArray[np.floating], NDArray[np.floating], float]:
         """Get nn exchange rate summary."""
         if last_itrn == -1 and len(self.itrn_archive) >= 2:
             exchange_tracker_loc = self.exchange_tracker - self.exchange_archive[-2]
@@ -277,7 +277,7 @@ class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             a_no_nn_sym = a_no_nn_right + a_no_nn_left
 
             exchange_vec_nn_sym: NDArray[np.floating] = a_yes_nn_sym / (a_yes_nn_sym + a_no_nn_sym)
-            exchange_tot_nn: NDArray[np.floating] = a_yes.sum() / (a_yes.sum() + a_no.sum())
+            exchange_tot_nn: float = a_yes.sum() / (a_yes.sum() + a_no.sum())
             exchange_full: NDArray[np.floating] = a_yes / (a_yes + a_no)
 
         else:
@@ -293,7 +293,7 @@ class TrackerManager[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     @property
     def n_cycles(self) -> NDArray[np.int64]:
         """Get number of complete hot to cold to hot (or vice versa) cycles each chain has undergone."""
-        res: NDArray[np.int64] = np.min([self.cycle_tracker[3], self.cycle_tracker[2]], axis=0)
+        res: NDArray[np.int64] = np.min(self.cycle_tracker[2:4], axis=0)
         return res
 
     def print_tracker_summary(
