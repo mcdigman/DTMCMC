@@ -206,6 +206,9 @@ class AdaptiveLadderController[LikelihoodType: AbstractLikelihood[NamedTuple]]:
 
     frozen: bool = field(default=False, init=False)
     frozen_by: str = field(default='', init=False)
+    # get_loglike calls initial_ladder performed before the sampler (and its
+    # EvalAccounting) existed; the harness folds them into the run counter
+    prior_draw_evals: int = field(default=0, init=False)
     _updates_at_target: int = field(default=0, init=False)
     _pending_discard: int = field(default=0, init=False)
     history: list[LadderUpdateRecord] = field(default_factory=list, init=False)
@@ -292,6 +295,7 @@ class AdaptiveLadderController[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         schedule extends it as data accumulates.
         """
         prior_logLs = np.array([like_obj.get_loglike(like_obj.prior_draw()) for _ in range(self.n_prior_draws)])
+        self.prior_draw_evals += int(prior_logLs.size)
         prior_mean = float(prior_logLs.mean())
         prior_var = float(prior_logLs.var())
 

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
     from .spec import RunSpec
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # root attrs written at flush time rather than carried by RunProvenance
 _FLUSH_ATTRS: tuple[str, ...] = (
@@ -51,6 +51,7 @@ _FLUSH_ATTRS: tuple[str, ...] = (
     'n_chain_steps',
     'n_likelihood_evals',
     'block_size',
+    'kernel_backend_executed',
 )
 
 REQUIRED_DATASETS: tuple[str, ...] = (
@@ -238,6 +239,10 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
         # readers convert freeze blocks to iterations without reparsing the
         # embedded spec (schema v4)
         hf.attrs['block_size'] = sampler.block_size
+        # the program flavor that actually ran ('' before any block): the
+        # embedded spec records only the request, and 'auto' resolves at
+        # run time, so wall_seconds needs the executed flavor (schema v5)
+        hf.attrs['kernel_backend_executed'] = sampler.last_kernel_backend if sampler.itrn > 0 else ''
 
         ladder_grp = hf.create_group('ladder')
         ladder_grp.attrs['n_cold'] = sampler.n_cold
