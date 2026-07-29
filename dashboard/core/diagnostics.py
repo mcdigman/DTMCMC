@@ -20,6 +20,8 @@ import numpy as np
 from DTMCMC.temperature_ladder_helpers import Ts_to_betas, get_spacing_integrated, standardize_input_vars
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from dashboard.core.reader import RunSnapshot
 
 
@@ -684,25 +686,20 @@ def logl_cross_correlation(
         return None
     series_a = snapshot.logLs[start:, chain_a] - snapshot.logLs[start:, chain_a].mean()
     series_b = snapshot.logLs[start:, chain_b] - snapshot.logLs[start:, chain_b].mean()
-    n_samples = series_a.size
+    n_samples: int = series_a.size
     if n_samples < 2:
         return None
     norm = np.sqrt((series_a**2).sum() * (series_b**2).sum())
     if norm <= 0.0:
         return None
-    lags_keep = min(int(max_lag), n_samples - 1)
-    lags = np.arange(-lags_keep, lags_keep + 1)
-    cross = (
-        np.asarray(
-            [
-                np.dot(
-                    series_a[max(0, -lag) : n_samples - max(0, lag)], series_b[max(0, lag) : n_samples - max(0, -lag)]
-                )
-                for lag in lags
-            ]
+    lags_keep: int = min(int(max_lag), n_samples - 1)
+    lags: NDArray[np.int64] = np.arange(-lags_keep, lags_keep + 1)
+    cross = np.zeros(lags.size)
+    for itrl, lag in enumerate(lags):
+        cross[itrl] = (
+            np.dot(series_a[max(0, -lag) : n_samples - max(0, lag)], series_b[max(0, lag) : n_samples - max(0, -lag)])
+            / norm
         )
-        / norm
-    )
     return AcfResult(
         f'logL {store_column_label(snapshot, chain_a)} vs {store_column_label(snapshot, chain_b)}',
         lags,
