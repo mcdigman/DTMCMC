@@ -40,6 +40,7 @@ from DTMCMC.prior_manager import PriorFullJump
 from DTMCMC.proposal_manager import ProposalManager
 from DTMCMC.rng_helpers import reset_seed_guard_for_tests, seed_run
 from DTMCMC.temperature_ladder_helpers import GeometricTemperatureLadder, TemperatureLadder
+from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.runner import build_sampler
 from experiments.harness.spec import RunSpec
 
@@ -1227,6 +1228,46 @@ def test_auto_partial_graph_warning_is_memoized_per_graph() -> None:
             sampler._native_serial_backend.graph_identity = None
             sampler.advance_block()
         assert sampler.last_kernel_backend == 'python'
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_auto_fallback_artifact_distinguishes_requested_and_executed_backend(tmp_path: Any) -> None:
+    """Artifact provenance distinguishes an auto request from Python fallback."""
+    reset_seed_guard_for_tests()
+    try:
+        spec = _make_spec(n_par=2, n_steps=5, block_size=5, n_chain=4).with_kernel_backend('auto')
+        child_seed_python, child_seed_numba = seed_run(spec.seed)
+        sampler = _build_standalone_sampler(
+            GaussianLikelihood(2), manager_cls=_UncompiledJumpManager, kernel_backend=spec.kernel_backend
+        )
+        with pytest.warns(RuntimeWarning, match='partially compiled graph'):
+            sampler.advance_block()
+        assert sampler.last_kernel_backend == 'python'
+
+        provenance = collect_provenance(
+            spec.seed,
+            child_seed_python,
+            child_seed_numba,
+            spec_toml=spec.to_toml_text(),
+            proposal_config_ini=spec.resolved_config_text(),
+        )
+        artifact_path = tmp_path / 'auto_fallback.h5'
+        write_artifact(
+            artifact_path,
+            spec,
+            sampler,
+            sampler.eval_accounting,
+            provenance,
+            finalized=True,
+            wall_seconds=0.0,
+        )
+
+        assert validate(artifact_path, mode='complete') == []
+        attrs = read_attrs(artifact_path)
+        assert str(attrs['spec_toml']) == spec.to_toml_text()
+        assert spec.kernel_backend == 'auto'
+        assert str(attrs['kernel_backend_executed']) == 'python'
     finally:
         reset_seed_guard_for_tests()
 
