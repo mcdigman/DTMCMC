@@ -17,6 +17,7 @@ import pytest
 
 import DTMCMC.rng_helpers as rng_helpers
 from DTMCMC.eval_accounting import LoglikeCallSpy
+from DTMCMC.numba_backend import _VALID_MODES
 from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.batch import write_batch
@@ -29,7 +30,7 @@ from experiments.harness.runner import (
     build_sampler,
     run_from_spec,
 )
-from experiments.harness.spec import LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
+from experiments.harness.spec import KERNEL_BACKENDS, LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,6 +109,18 @@ def test_zero_loglike_spec_toml_roundtrip() -> None:
     assert not round_tripped.with_zero_loglike(False).zero_loglike
 
 
+def test_kernel_backend_spec_toml_roundtrip() -> None:
+    """run.kernel_backend defaults to 'auto', round-trips, and pins the backend modes."""
+    assert make_tiny_spec().kernel_backend == 'auto'
+    spec = make_tiny_spec(kernel_backend='numba')
+    round_tripped: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    assert round_tripped == spec
+    assert round_tripped.kernel_backend == 'numba'
+    assert round_tripped.with_kernel_backend('python').kernel_backend == 'python'
+    # the spec-layer value set stays in sync with the backend's modes
+    assert set(_VALID_MODES) == KERNEL_BACKENDS
+
+
 def test_dumps_toml_roundtrip_tricky_values() -> None:
     """The minimal TOML emitter round-trips awkward scalars through tomllib."""
     data: dict[str, object] = {
@@ -133,6 +146,7 @@ def test_dumps_toml_roundtrip_tricky_values() -> None:
         (('ladder', 'n_cold'), 0, 'n_cold must be'),
         (('run', 'n_steps'), 100, 'multiple of'),
         (('run', 'zero_loglike'), 'yes', 'zero_loglike must be a boolean'),
+        (('run', 'kernel_backend'), 'cuda', 'unknown run.kernel_backend'),
         (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
         (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
         (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),
@@ -265,6 +279,23 @@ def test_counting_matches_independent_spy(tmp_path: Path) -> None:
     n_chain_steps = spec.n_steps * spec.n_chain
     assert evals_after_init < accounting.total < n_chain_steps
     assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_records_executed_kernel_backend(tmp_path: Path) -> None:
+    """The artifact records the program flavor that actually ran.
+
+    The embedded spec carries only the request; 'auto' resolves at run
+    time, so the executed flavor is a separate required attr.
+    """
+    spec = make_tiny_spec(kernel_backend='python')
+    artifact_path = run_from_spec(spec, tmp_path)
+
+    assert validate(artifact_path, mode='complete') == []
+    attrs = read_attrs(artifact_path)
+    assert str(attrs['kernel_backend_executed']) == 'python'
+    embedded: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
+    assert embedded.kernel_backend == 'python'
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')

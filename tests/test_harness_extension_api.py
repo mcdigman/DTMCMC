@@ -121,6 +121,7 @@ class _RecordingController:
     """Adaptive-controller stub that records post_block invocations."""
 
     def __init__(self) -> None:
+        self.prior_draw_evals = 0
         self.post_block_samplers: list[object] = []
 
     def post_block(self, sampler: object) -> None:
@@ -248,6 +249,7 @@ class _FrozenController:
     """Minimal controller exposing a fixed freeze block for the burn-in helper."""
 
     def __init__(self, frozen_block_index: int | None) -> None:
+        self.prior_draw_evals = 0
         self.frozen_block_index = frozen_block_index
 
 
@@ -294,3 +296,22 @@ def test_run_cli_forwards_verbosity_and_zero_mode(
     assert run_mod.main([str(spec_path), '--out', str(tmp_path), '--sampler-verbosity', '2', cli_flag]) == 0
     assert captured['sampler_verbosity'] == 2
     assert captured['zero_loglike'] is expected_zero_loglike
+
+
+def test_run_cli_forwards_kernel_backend(monkeypatch: Any, tmp_path: Path) -> None:
+    """The run CLI overrides run.kernel_backend before dispatching the run."""
+    spec_path = tmp_path / 'spec.toml'
+    spec_path.write_text(dumps_toml(make_spec().to_dict()))
+
+    captured: dict[str, object] = {}
+
+    def fake_run(_spec: RunSpec[Any], _out: Any, _artifact_name: None = None, sampler_verbosity: int = 0):
+        del sampler_verbosity
+        captured['kernel_backend'] = _spec.kernel_backend
+        return tmp_path / 'artifact.h5'
+
+    monkeypatch.setattr(run_mod, 'run_from_spec', fake_run)
+    monkeypatch.setattr(run_mod, 'validate', lambda *_args, **_kwargs: [])
+
+    assert run_mod.main([str(spec_path), '--out', str(tmp_path), '--kernel-backend', 'python']) == 0
+    assert captured['kernel_backend'] == 'python'

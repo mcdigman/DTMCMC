@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 import experiments.adaptive as adaptive_module
 from DTMCMC.de_manager import DEJumpManager
+from DTMCMC.eval_accounting import LoglikeCallSpy
 from DTMCMC.fisher_manager import FisherJumpManager
 from DTMCMC.likelihoods.cake_likelihood import CakeLikelihood
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
@@ -675,6 +676,34 @@ def test_budget_freeze_records_reason() -> None:
     # and the remaining blocks took the post-freeze fixed-ladder path
     assert len(sampler.tracker_manager.rt_segment_itrns) == 0
     assert controller.history == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_prior_anchor_evals_are_charged_to_accounting() -> None:
+    """initial_ladder's prior-draw evals reach the run's eval accounting.
+
+    The anchor's get_loglike calls happen before the sampler (and its
+    EvalAccounting) exists, so the harness must fold the controller's
+    recorded count in; the spy-verified total keeps the artifact's
+    n_likelihood_evals exact for adaptive runs (C3 charges adaptive
+    burn-in fully).
+    """
+    spec = make_tiny_spec(n_steps=64 * 2, block_size=64)
+    seed_run(spec.seed)
+    controller: AdaptiveLadderController[Any] = AdaptiveLadderController(
+        mode='entropy', update_every_blocks=2, budget_blocks=10**6, n_prior_draws=32
+    )
+    like_obj = build_likelihood(spec)
+    with LoglikeCallSpy(like_obj) as spy:
+        initial_ladder = controller.initial_ladder(like_obj, spec.n_chain, spec.n_cold)
+        assert controller.prior_draw_evals == 32
+        assert spy.n_calls == 32
+        sampler, _ = build_sampler(
+            spec, like_obj=like_obj, T_ladder=initial_ladder, controller=controller, kernel_backend='python'
+        )
+        sampler.advance_N_blocks(spec.n_blocks)
+    assert sampler.eval_accounting.initialization >= 32 + spec.n_chain
+    assert sampler.eval_accounting.total == spy.n_calls
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')

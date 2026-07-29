@@ -802,7 +802,7 @@ def test_fisher_manager_requires_fisher_support_likelihood() -> None:
 def _build_standalone_sampler(
     like_obj: Any,
     *,
-    manager_cls: type[_CustomManager[Any]] = _CustomManager,
+    manager_cls: Callable[[TemperatureLadder, Any], JumpManager[Any, Any]] = _CustomManager,
     exchange: ExchangeManager | None = None,
     kernel_backend: str = 'python',
 ) -> DTMCMCSampler[Any]:
@@ -1020,6 +1020,251 @@ def test_runtime_numba_error_is_never_replayed() -> None:
         # the jump steps completed before the failing post-step (itrb 1 and 3
         # of the 5-step block; even steps are exchanges) stay single-counted
         assert int(sampler.tracker_manager.accept_record[:2].sum()) == 8
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def _uncompiled_jump_call(
+    sample_point: NDArray[np.floating], _itrt: int, state: _CustomNativeState
+) -> tuple[NDArray[np.floating], float, bool]:
+    """Jump handle deliberately left as plain Python."""
+    return sample_point + state.scale, 0.0, True
+
+
+class _UncompiledJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, _CustomNativeState]):
+    """Jump whose handle is uncompiled: a jump-level capability gap."""
+
+    def __init__(self, manager: _UncompiledJumpManager[LikelihoodType]) -> None:
+        super().__init__(_uncompiled_jump_call, manager, 'Uncompiled Jump')
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
+
+
+class _UncompiledJumpManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, _CustomNativeState]):
+    """Manager whose only jump handle is uncompiled; everything else compiles."""
+
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, scale: float = 0.2) -> None:
+        self._state = _CustomNativeState(scale=scale)
+        super().__init__(T_ladder, like_obj, [_UncompiledJump(self)])
+
+    @override
+    def set_jump_weights(self) -> None:
+        self.jump_weights = np.ones((self.n_chain, self.n_jump_types))
+
+    @override
+    def record_config(self, config_in: configparser.ConfigParser) -> None:
+        del config_in
+
+    @property
+    @override
+    def native_state(self) -> _CustomNativeState:
+        return self._state
+
+
+class _UntypableState(NamedTuple):
+    scale: float
+    blob: object
+
+
+def _untypable_state_jump_call(
+    sample_point: NDArray[np.floating], _itrt: int, state: _UntypableState
+) -> tuple[NDArray[np.floating], float, bool]:
+    return sample_point + state.scale, 0.0, True
+
+
+def _untypable_state_post_step(_state: _UntypableState, _samples_row: NDArray[np.floating]) -> None:
+    return
+
+
+class _UntypableStateJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, _UntypableState]):
+    def __init__(self, manager: _UntypableStateManager[LikelihoodType]) -> None:
+        super().__init__(_untypable_state_jump_call, manager, 'Untypable State Jump')
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
+
+
+class _UntypableStateManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, _UntypableState]):
+    """Manager whose runtime state bundle numba cannot type.
+
+    Its handles are plain Python so the fallback program can still run the
+    graph; the state itself is the targeted capability gap.
+    """
+
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, scale: float = 0.2) -> None:
+        self._state = _UntypableState(scale=scale, blob=object())
+        super().__init__(T_ladder, like_obj, [_UntypableStateJump(self)])
+
+    @override
+    def set_jump_weights(self) -> None:
+        self.jump_weights = np.ones((self.n_chain, self.n_jump_types))
+
+    @override
+    def record_config(self, config_in: configparser.ConfigParser) -> None:
+        del config_in
+
+    @property
+    @override
+    def native_state(self) -> _UntypableState:
+        return self._state
+
+    @property
+    @override
+    def bind_native_post_step(self) -> Any:
+        return _untypable_state_post_step
+
+
+def _uncompiled_exchange_step(itrb: int, _inputs: ExchangeNativeInputs) -> bool:
+    return itrb % 2 == 0
+
+
+def _uncompiled_exchange(
+    itrb: int,
+    samples: NDArray[np.floating],
+    logLs: NDArray[np.floating],
+    n_chain: int,
+    betas: NDArray[np.floating],
+    exchange_tracker: NDArray[np.int64],
+    esd_exchange: NDArray[np.floating],
+    chain_track: NDArray[np.int64],
+    inputs: ExchangeNativeInputs,
+) -> None:
+    do_ptmcmc_exchange(
+        itrb - 1,
+        samples,
+        logLs,
+        n_chain,
+        betas,
+        exchange_tracker,
+        esd_exchange,
+        chain_track,
+        NULL_TARGETS,
+        inputs.track_full_exchanges,
+    )
+
+
+class _UncompiledExchange(ExchangeManager):
+    """Exchange manager whose native bindings are plain Python."""
+
+    @property
+    @override
+    def is_exchange_step_native(self) -> NativeExchangeStepCall[ExchangeNativeInputs]:
+        return _uncompiled_exchange_step
+
+    @property
+    @override
+    def exchange_native(self) -> NativeExchangeCall[ExchangeNativeInputs]:
+        return _uncompiled_exchange
+
+
+@pytest.mark.parametrize(
+    ('manager_cls', 'use_uncompiled_exchange', 'gap_match'),
+    [
+        (_UncompiledJumpManager, False, '_UncompiledJump handle'),
+        (_UntypableStateManager, False, 'native state is not numba-typable'),
+        (_CustomManager, True, 'is_exchange_step handle'),
+    ],
+    ids=['jump-handle', 'manager-state', 'exchange-binding'],
+)
+def test_component_capability_gaps_fall_back_in_auto_and_raise_in_numba(
+    manager_cls: Any, use_uncompiled_exchange: bool, gap_match: str
+) -> None:
+    """Jump-, manager-state-, and exchange-level gaps drive the backend policy.
+
+    Capability detection is component-scoped, not likelihood-scoped: each
+    gap makes auto mode warn and run the Python program on the partially
+    compiled graph, and makes strict numba mode raise.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260728)
+        exchange = _UncompiledExchange(NULL_TARGETS, False) if use_uncompiled_exchange else None
+        sampler = _build_standalone_sampler(
+            GaussianLikelihood(2), manager_cls=manager_cls, exchange=exchange, kernel_backend='auto'
+        )
+        with pytest.warns(RuntimeWarning, match=gap_match):
+            sampler.advance_block()
+        assert sampler.last_kernel_backend == 'python'
+        assert sampler.itrn == 5
+
+        reset_seed_guard_for_tests()
+        seed_run(20260728)
+        exchange = _UncompiledExchange(NULL_TARGETS, False) if use_uncompiled_exchange else None
+        strict_sampler = _build_standalone_sampler(
+            GaussianLikelihood(2), manager_cls=manager_cls, exchange=exchange, kernel_backend='numba'
+        )
+        with pytest.raises(NativeBackendCompilationError, match=gap_match):
+            strict_sampler.advance_block()
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_auto_partial_graph_warning_is_memoized_per_graph() -> None:
+    """The auto fallback warns exactly once per graph identity.
+
+    Later blocks on the unchanged graph resolve silently through the
+    identity short-circuit, and a forced re-resolve of the same identity
+    is silenced by the warned-identities memo.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260729)
+        sampler = _build_standalone_sampler(
+            GaussianLikelihood(2), manager_cls=_UncompiledJumpManager, kernel_backend='auto'
+        )
+        with pytest.warns(RuntimeWarning, match='partially compiled graph') as warning_records:
+            sampler.advance_block()
+        assert sum('partially compiled graph' in str(record.message) for record in warning_records) == 1
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', RuntimeWarning)
+            sampler.advance_block()
+            sampler._native_serial_backend.graph_identity = None
+            sampler.advance_block()
+        assert sampler.last_kernel_backend == 'python'
+    finally:
+        reset_seed_guard_for_tests()
+
+
+def test_explicit_starting_samples_initialize_state() -> None:
+    """Supplied starting_samples seed samples[0] and the starting logLs exactly.
+
+    starting_samples=None draws fresh points from the prior instead, so an
+    explicit input must be adopted verbatim: the stored starting array, the
+    block's row 0, and the per-chain starting logLs all reflect the
+    supplied points.
+    """
+    reset_seed_guard_for_tests()
+    try:
+        seed_run(20260730)
+        like_obj: Any = GaussianLikelihood(2)
+        ladder = GeometricTemperatureLadder(4, n_cold=1, T_max=20.0, n_inf_final=1)
+        config = configparser.ConfigParser()
+        config.read('default_config.ini')
+        config['ProposalManager']['only_prior_hot'] = 'False'
+        manager = _CustomManager(ladder, like_obj)
+        proposal = ProposalManager(ladder, like_obj, (manager,), ExchangeManager(NULL_TARGETS, False), config)
+        starting = 0.125 * np.arange(ladder.n_chain * like_obj.n_par, dtype=np.float64).reshape(
+            ladder.n_chain, like_obj.n_par
+        )
+        sampler = DTMCMCSampler(
+            ladder,
+            like_obj,
+            block_size=5,
+            store_size=5,
+            proposal_manager=proposal,
+            starting_samples=starting.copy(),
+            kernel_backend='python',
+        )
+        np.testing.assert_array_equal(sampler.starting_samples, starting)
+        np.testing.assert_array_equal(sampler.samples[0], starting)
+        for itrt in range(ladder.n_chain):
+            assert sampler.logLs[0, itrt] == like_obj.get_loglike(starting[itrt])
     finally:
         reset_seed_guard_for_tests()
 

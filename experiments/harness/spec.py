@@ -74,8 +74,13 @@ RUN_KEYS: frozenset[str] = frozenset(
         'arg_record',
         'checkpoint_every_blocks',
         'zero_loglike',
+        'kernel_backend',
     }
 )
+
+# kernel program flavor selection; a test pins this to DTMCMC.numba_backend's
+# _VALID_MODES (spec stays a pure-data layer, so no runtime import)
+KERNEL_BACKENDS: frozenset[str] = frozenset({'auto', 'numba', 'python'})
 
 # the ConfigParser sections the proposal mixture maps onto
 PROPOSAL_SECTIONS: frozenset[str] = frozenset(
@@ -313,6 +318,10 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
         Whether sampler target log-likelihood values are forced to zero.
         Proposal-internal calculations continue to use the configured
         likelihood. Embedded in artifacts as run provenance.
+    kernel_backend: str
+        Requested kernel program flavor, one of KERNEL_BACKENDS (default
+        'auto'). The flavor that actually ran is recorded separately in
+        the artifact as kernel_backend_executed.
     exchange_strategy: str
         One of EXCHANGE_STRATEGY_CODES
     track_full_exchanges: bool
@@ -333,6 +342,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     arg_record: list[int] = field(default_factory=list)
     checkpoint_every_blocks: int = 8
     zero_loglike: bool = False
+    kernel_backend: str = 'auto'
     exchange_strategy: str = 'sequential'
     track_full_exchanges: bool = False
     proposal_overrides: dict[str, dict[str, TomlValue]] = field(default_factory=dict)
@@ -399,6 +409,9 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
                 raise SpecError(msg)
         if self.checkpoint_every_blocks < 1:
             msg = 'run.checkpoint_every_blocks must be >= 1'
+            raise SpecError(msg)
+        if self.kernel_backend not in KERNEL_BACKENDS:
+            msg = f'unknown run.kernel_backend {self.kernel_backend!r}; known: {sorted(KERNEL_BACKENDS)}'
             raise SpecError(msg)
 
         if self.exchange_strategy not in EXCHANGE_STRATEGY_CODES:
@@ -530,6 +543,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
             arg_record=_opt_int_list(run, 'arg_record', 'run'),
             checkpoint_every_blocks=_opt_int(run, 'checkpoint_every_blocks', 'run', 8),
             zero_loglike=_opt_bool(run, 'zero_loglike', 'run', False),
+            kernel_backend=_require_str(run, 'kernel_backend', 'run') if 'kernel_backend' in run else 'auto',
             exchange_strategy=_require_str(exchange, 'strategy', 'exchange')
             if 'strategy' in exchange
             else 'sequential',
@@ -560,6 +574,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
                 'arg_record': list(self.arg_record),
                 'checkpoint_every_blocks': self.checkpoint_every_blocks,
                 'zero_loglike': self.zero_loglike,
+                'kernel_backend': self.kernel_backend,
             },
             'exchange': {
                 'strategy': self.exchange_strategy,
@@ -584,6 +599,10 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     def with_zero_loglike(self, enabled: bool) -> RunSpec[LikelihoodType]:
         """Get a copy of this spec with zero-log-likelihood mode set explicitly."""
         return replace(self, zero_loglike=enabled)
+
+    def with_kernel_backend(self, kernel_backend: str) -> RunSpec[LikelihoodType]:
+        """Get a copy of this spec with the requested kernel backend set explicitly."""
+        return replace(self, kernel_backend=kernel_backend)
 
     def build_proposal_config(self) -> configparser.ConfigParser:
         """Build the proposal-manager ConfigParser: defaults plus spec overrides.
