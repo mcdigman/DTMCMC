@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 
 # artifact schema this reader understands (experiments/harness/artifact.py)
-SUPPORTED_SCHEMA_VERSION = 4
+SUPPORTED_SCHEMA_VERSION = 5
 
 
 @dataclass(frozen=True)

@@ -30,6 +30,9 @@ def run_benchmark(spec_path: str) -> float:
 
     for _ in range(WARMUP_BLOCKS):
         sampler.advance_block()
+    # the executed flavor, not the request: a silent fallback to the Python
+    # program would otherwise be indistinguishable in the timings
+    print(f'kernel backend: {sampler.last_kernel_backend} (requested {spec.kernel_backend!r})')
 
     blocks_per_segment = (spec.n_blocks - WARMUP_BLOCKS) // SEGMENTS
     best_rate = 0.0

@@ -262,7 +262,7 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
         provenance: RunProvenance | None = None,
         start_monotonic: float | None = None,
         sampler_verbosity: int = 0,
-        kernel_backend: str = 'auto',
+        kernel_backend: str | None = None,
     ) -> None:
         if artifact_path is not None and provenance is None:
             msg = 'artifact_path requires provenance'
@@ -295,9 +295,13 @@ class HarnessSampler[LikelihoodType: AbstractLikelihood[NamedTuple]](DTMCMCSampl
             spec.store_size,
             store_thin=spec.store_thin,
             arg_record=spec.arg_record,
-            kernel_backend=kernel_backend,
+            kernel_backend=spec.kernel_backend if kernel_backend is None else kernel_backend,
             zero_loglike=spec.zero_loglike,
         )
+        if controller is not None:
+            # the controller's prior-anchor evals ran before this counter
+            # existed; fold them in so the artifact total stays exact
+            self.eval_accounting.initialization += controller.prior_draw_evals
         self.de_manager = next(
             (manager for manager in self.proposal_manager.managers if isinstance(manager, DEJumpManager)), None
         )
@@ -450,7 +454,7 @@ def build_sampler[LikelihoodType: AbstractLikelihood[Any]](
     provenance: RunProvenance | None = None,
     start_monotonic: float | None = None,
     sampler_verbosity: int = 0,
-    kernel_backend: str = 'auto',
+    kernel_backend: str | None = None,
 ) -> tuple[HarnessSampler[LikelihoodType], LikelihoodType]:
     """Build the harness sampler and counting-proxy likelihood for a spec.
 
@@ -462,7 +466,9 @@ def build_sampler[LikelihoodType: AbstractLikelihood[Any]](
     path supplies its prior-anchored initial ladder). The keyword-only
     arguments configure the extension hooks: without an artifact_path the
     teardown records checkpoint metrics but writes nothing. Scientific run
-    modes, including zero_loglike, come from the serializable RunSpec.
+    modes, including zero_loglike, come from the serializable RunSpec;
+    kernel_backend=None (the default) likewise resolves from
+    spec.kernel_backend, and an explicit value overrides the spec.
     """
     if like_obj is None:
         like_obj = cast('LikelihoodType', build_likelihood(spec))

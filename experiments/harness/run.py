@@ -24,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help='override run.zero_loglike (also supports --no-zero-loglike)',
     )
+    parser.add_argument(
+        '--kernel-backend',
+        choices=('auto', 'numba', 'python'),
+        default=None,
+        help='override run.kernel_backend (kernel program flavor selection)',
+    )
     parser.add_argument('--out', default='artifacts', help='output directory for the artifact (default: artifacts/)')
     parser.add_argument(
         '--sampler-verbosity',
@@ -39,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         spec = spec.with_seed(args.seed)
     if args.zero_loglike is not None:
         spec = spec.with_zero_loglike(args.zero_loglike)
+    if args.kernel_backend is not None:
+        spec = spec.with_kernel_backend(args.kernel_backend)
 
     artifact_path = run_from_spec(spec, args.out, sampler_verbosity=args.sampler_verbosity)
 
