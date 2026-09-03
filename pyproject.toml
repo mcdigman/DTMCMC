@@ -122,4 +122,4 @@ build-backend = "setuptools.build_meta"
 # so setuptools' flat-layout auto-discovery doesn't error on multiple top-level
 # packages.
 [tool.setuptools.packages.find]
-include = ["DTMCMC*", "dashboard*"]
+include = ["DTMCMC*", "dashboard*", "default_config.ini"]
