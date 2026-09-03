@@ -255,7 +255,7 @@ class _FrozenController:
 
 @pytest.mark.usefixtures('fresh_seed_guard')
 @pytest.mark.parametrize(('frozen_block', 'expected_factor'), [(None, 0), (0, 0), (5, 5)])
-def test_adaptive_burnin_iterations_from_freeze(frozen_block: None | int, expected_factor: int) -> None:
+def test_adaptive_burnin_iterations_from_freeze(frozen_block: int | None, expected_factor: int) -> None:
     """adaptive_burnin_iterations is the freeze block times the block size (0 while adapting)."""
     seed_run(TINY_SPEC['seed'])
     controller = _FrozenController(frozen_block)
