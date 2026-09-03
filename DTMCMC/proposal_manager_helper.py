@@ -2,10 +2,8 @@
 get a default proposal manager object
 """
 
-from __future__ import annotations
-
 import configparser
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -18,22 +16,26 @@ from DTMCMC.prior_manager import PriorManager
 from DTMCMC.proposal_manager import ProposalManager
 
 if TYPE_CHECKING:
+    from configparser import ConfigParser
+
+    from numpy.typing import NDArray
+
     from DTMCMC.jump_manager import JumpManager
     from DTMCMC.likelihood import AbstractLikelihood
     from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
-def get_default_proposal_manager(
+def get_default_proposal_manager[LikelihoodType: AbstractLikelihood[Any]](
     T_ladder: TemperatureLadder,
-    like_obj: AbstractLikelihood,
-    starting_samples=None,
-    config=None,
-    fisher_manager_loc: FisherJumpManager | None = None,
-    de_manager_loc: DEJumpManager | None = None,
-    auxilliary_manager_loc: AuxilliaryJumpManager | None = None,
-    prior_manager_loc: PriorManager | None = None,
+    like_obj: LikelihoodType,
+    starting_samples: NDArray[np.floating] | None = None,
+    config: ConfigParser | None = None,
+    fisher_manager_loc: FisherJumpManager[LikelihoodType] | None = None,
+    de_manager_loc: DEJumpManager[LikelihoodType] | None = None,
+    auxilliary_manager_loc: AuxilliaryJumpManager[LikelihoodType] | None = None,
+    prior_manager_loc: PriorManager[LikelihoodType] | None = None,
     exchange_manager_loc: ExchangeManager | None = None,
-) -> ProposalManager:
+) -> ProposalManager[LikelihoodType]:
     """Get a default proposal manager object, or allow any individual part
     of the default fisher_manager_loc, de_manager_loc, prior_manager_loc to be replaced separately
     auxilliary_manager_loc is a blank template manager to make it easy to substitute in a new manager type
@@ -62,5 +64,10 @@ def get_default_proposal_manager(
     if exchange_manager_loc is None:
         exchange_manager_loc = ExchangeManager(em.SEQUENTIAL_TARGETS, track_full_exchanges=False)
 
-    managers: tuple[JumpManager, ...] = (fisher_manager_loc, de_manager_loc, auxilliary_manager_loc, prior_manager_loc)
+    managers: tuple[JumpManager[LikelihoodType, Any], ...] = (
+        fisher_manager_loc,
+        de_manager_loc,
+        auxilliary_manager_loc,
+        prior_manager_loc,
+    )
     return ProposalManager(T_ladder, like_obj, managers, exchange_manager_loc, config)

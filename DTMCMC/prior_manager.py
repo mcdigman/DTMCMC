@@ -2,43 +2,97 @@
 manager to manage prior-draw based jumps
 """
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, NamedTuple, override
+from warnings import warn
+
+import numba.core.types as nb_types
 import numpy as np
+from numba import typeof
+from numpy.typing import NDArray  # noqa: TC002
 
-from DTMCMC.jump_manager import AbstractJump, JumpManager
-from DTMCMC.likelihood import AbstractLikelihood
-from DTMCMC.temperature_ladder_helpers import TemperatureLadder
+from DTMCMC.jump_manager import AbstractNativeJump, JumpManager, NativeJumpCall
+from DTMCMC.likelihood import CompilationFallbackWarning, compile_handle
 
+if TYPE_CHECKING:
+    from configparser import ConfigParser
 
-class PriorFullJump(AbstractJump):
-
-    def __init__(self, manager: JumpManager) -> None:
-        self.manager: JumpManager = manager
-        AbstractJump.__init__(self, 'Prior All-D')
-
-    def __call__(self, sample_point, itrt: int):
-        del itrt
-        new_point = self.manager.like_obj.prior_draw()
-        density_fac = self.manager.like_obj.prior_factor(sample_point) - self.manager.like_obj.prior_factor(new_point)
-        return new_point, density_fac, True
+    from DTMCMC.likelihood import AbstractLikelihood, PriorProposalFn
+    from DTMCMC.temperature_ladder_helpers import TemperatureLadder
 
 
+class PriorNativeState(NamedTuple):
+    """Runtime state bundle for the prior proposal jumps."""
+
+
+# composition memo keyed on the likelihood's per-class functions: repeated
+# binds return the same jitted function, so structurally identical samplers
+# share one compiled program (holding the keys alive keeps ids stable)
+_PRIOR_NATIVE_MEMO: dict[tuple[object], tuple[NativeJumpCall[PriorNativeState], str | None]] = {}
+
+_JUMP_ARGS: tuple[nb_types.Type, ...] = (
+    nb_types.Array(nb_types.float64, 1, 'C'),  # type: ignore[no-untyped-call]
+    nb_types.int64,
+    typeof(PriorNativeState()),  # type: ignore[no-untyped-call]
+)
+
+
+def _make_prior_native(
+    prior_proposal: PriorProposalFn,
+) -> tuple[NativeJumpCall[PriorNativeState], str | None]:
+    """Compose the likelihood's native prior draw and density into a jump."""
+    key = (prior_proposal,)
+    got = _PRIOR_NATIVE_MEMO.get(key)
+    if got is not None:
+        return got
+
+    # @njit(inline='always')
+    def prior_native(
+        sample_point: NDArray[np.floating], _itrt: int, _manager_state: PriorNativeState, /
+    ) -> tuple[NDArray[np.floating], float, bool]:
+        return prior_proposal(sample_point)
+
+    got = compile_handle(prior_native, _JUMP_ARGS)
+
+    _PRIOR_NATIVE_MEMO[key] = got
+    return got
+
+
+class PriorFullJump[LikelihoodType: AbstractLikelihood[Any]](AbstractNativeJump[LikelihoodType, PriorNativeState]):
+    def __init__(self, manager: JumpManager[LikelihoodType, PriorNativeState]) -> None:
+        print_name = 'Prior All-D'
+
+        handle, failure = _make_prior_native(manager.like_obj.prior_proposal_fn_baked)
+        if failure is not None:
+            warn(
+                f'{print_name} failed nopython compilation and will run as plain Python:\n{failure}',
+                CompilationFallbackWarning,
+                stacklevel=2,
+            )
+        super().__init__(handle, manager, print_name)
+
+    @property
+    @override
+    def declared_internal_evals(self) -> int:
+        return 0
+
+
+@dataclass(init=False)
 class PriorStrategyParameters:
     """container to store some parameters related to the strategy of proposal generation"""
 
-    def __init__(self, config) -> None:
+    cold_prior_weight: float
+    hot_prior_target_weight: float
+
+    def __init__(self, config: ConfigParser) -> None:
         """Initialize the object with the prescribed parameters"""
-        self.config = config
         config_p = config['PriorManager']
         # how often to do prior draws in the cold chains
         self.cold_prior_weight = config_p.getfloat('cold_prior_weight', 0.333)
         # how often to do prior draws in the hottest finite temperature chain
         self.hot_prior_target_weight = config_p.getfloat('hot_prior_target_weight', 0.333)
 
-    def copy(self):
-        """Copy the object"""
-        return PriorStrategyParameters(self.config)
-
-    def record_config(self, config_in) -> None:
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to the requested configuration object
         inputs:
             config_in: ConfigParser object
@@ -48,17 +102,26 @@ class PriorStrategyParameters:
         config_prior['hot_prior_target_weight'] = str(self.hot_prior_target_weight)
 
 
-class PriorManager(JumpManager):
+class PriorManager[LikelihoodType: AbstractLikelihood[Any]](JumpManager[LikelihoodType, PriorNativeState]):
     """manage prior draw-based jumps, subclass of DTMCMC.jump_manager.JumpManager"""
 
-    def __init__(self, T_ladder: TemperatureLadder, like_obj: AbstractLikelihood, config) -> None:
+    def __init__(self, T_ladder: TemperatureLadder, like_obj: LikelihoodType, config: ConfigParser) -> None:
         """Take a likelihood object and create an object that can propose prior draws"""
-        self.strategy_params = PriorStrategyParameters(config)
+        self._strategy_params = PriorStrategyParameters(config)
 
-        jumps: list[AbstractJump] = [PriorFullJump(self)]
+        self._like_obj = like_obj
 
-        JumpManager.__init__(self, T_ladder, like_obj, jumps)
+        jumps: list[AbstractNativeJump[LikelihoodType, PriorNativeState]] = [PriorFullJump(self)]
 
+        self._state = PriorNativeState()
+
+        super().__init__(T_ladder, like_obj, jumps)
+
+    @property
+    def strategy_params(self) -> PriorStrategyParameters:
+        return self._strategy_params
+
+    @override
     def set_jump_weights(self) -> None:
         """Set the relative probabilities of the different jump types"""
         n_cold = self.T_ladder.n_cold
@@ -77,14 +140,22 @@ class PriorManager(JumpManager):
 
         assert idx_prior_full >= -1
 
-        jump_weights[n_chain - 1, :] = 0.
-        jump_weights[n_chain - 1, idx_prior_full] = 1.
-        jump_weights[n_cold:n_chain - 1, idx_prior_full] = np.linspace(cold_prior_weight, hot_prior_weight, n_chain - n_cold)[1:]
+        jump_weights[n_chain - 1, :] = 0.0
+        jump_weights[n_chain - 1, idx_prior_full] = 1.0
+        jump_weights[n_cold : n_chain - 1, idx_prior_full] = np.linspace(
+            cold_prior_weight, hot_prior_weight, n_chain - n_cold
+        )[1:]
         jump_weights[:n_cold, idx_prior_full] = cold_prior_weight
 
-        self.jump_weights = jump_weights
-        assert np.all(self.jump_weights >= 0.)
+        self._jump_weights = jump_weights
+        assert np.all(self._jump_weights >= 0.0)
 
-    def record_config(self, config_in) -> None:
+    @override
+    def record_config(self, config_in: ConfigParser) -> None:
         """Record the current configuration to an input ConfigParser object config_in"""
         self.strategy_params.record_config(config_in)
+
+    @property
+    @override
+    def native_state(self) -> PriorNativeState:
+        return self._state

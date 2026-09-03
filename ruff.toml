@@ -28,11 +28,11 @@ exclude = [
     "venv",
 ]
 
-line-length = 500
+line-length = 120
 indent-width = 4
 
-# Assume Python 3.9
-target-version = "py39"
+# Assume Python 3.14
+target-version = "py314"
 
 [lint]
 # Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
@@ -40,7 +40,7 @@ target-version = "py39"
 # McCabe complexity (`C901`) by default.
 select = ["E", "F", "W", "PERF", "FLY", "TC", "C4", "DTZ", "T10", "DJ", "EM", "FA", "INT", "ISC", "ICN", "LOG", "G", "INP", "PIE", "RSE", "SLOT", "TID", "ARG", "PTH", "I", "W", "D210", "D403", "D202", "D209", "PGH", "PLC", "PLE", "PLW", "FURB", "RUF", "TRY", "A", "B", "BLE", "ASYNC", "YTT", "FAST", "AIR", "S", "PT", "SIM", "PD", "Q", "SLF", "RET", "COM"]
 # FBT NPY
-ignore = ["S101", "SIM108", "DOC202", "COM812", "RET504", "SIM110", "PT030"]
+ignore = ["S101", "SIM108", "DOC202", "COM812", "RET504", "SIM110", "PT030", "N802", "N803", "N806", "T201", "PLR2004", "E501", "TD"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -48,6 +48,34 @@ unfixable = []
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[lint.flake8-tidy-imports.banned-api]
+# RNG-stream discipline (methods-paper plan D5): reproducibility requires that
+# both RNG streams are seeded exactly once per run via rng_helpers.seed_run,
+# and that no code creates side streams the run seed does not control.
+# Verified on this ruff version to flag attribute usage (np.random.seed(...)),
+# not just imports. numba.prange guards the per-thread numba streams; the
+# parallel=True decorator kwarg is not an API path TID251 can match, so a
+# prek grep hook covers it (.pre-commit-config.yaml).
+"numpy.random.seed".msg = 'seed via DTMCMC.rng_helpers.seed_run (D1: once per run, both streams)'
+"numpy.random.default_rng".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
+"numpy.random.RandomState".msg = 'analysis code must use DTMCMC.rng_helpers.get_rng with a recorded seed'
+"numba.prange".msg = 'prange breaks the single-threaded RNG-stream guarantee (D5)'
+# the jitted seeder cannot consult the once-per-run guard (numba cannot type
+# the guard dict), so guard enforcement lives in seed_run and direct calls to
+# the private helper are banned here instead (PR #9 review)
+"DTMCMC.rng_helpers._seed_numba".msg = 'call DTMCMC.rng_helpers.seed_run; the raw numba seeder bypasses the D1 once-per-run guard'
+
+[lint.flake8-type-checking]
+# numba resolves annotations at runtime (via inspect/PEP 649 __annotate__), so
+# imports used in @njit/@jitclass signatures must NOT be gated behind
+# `if TYPE_CHECKING` or the first call raises NameError on Python 3.14.
+runtime-evaluated-decorators = ["numba.njit", "numba.jit", "numba.experimental.jitclass"]
+# the native-binding callback protocols are part of the runtime extension
+# API: typing.get_type_hints on bind_native* hooks must resolve in the
+# defining module's namespace (PR #40 review F005), so these imports stay
+# out of TYPE_CHECKING blocks. typing/typing_extensions restate the default.
+exempt-modules = ["typing", "typing_extensions", "DTMCMC.numba_backend"]
 
 [lint.flake8-quotes]
 inline-quotes="single"
@@ -57,8 +85,15 @@ author = "Matthew C. Digman"
 min-file-size = 1024
 
 [lint.per-file-ignores]
-"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114"]
+# TID251 whitelists per plan D5: rng_helpers is the one place seeding APIs are
+# allowed; entropy_process retains its (currently serial) prange import; tests
+# legitimately reseed (golden/determinism/freeze tests).
+"DTMCMC/rng_helpers.py" = ["TID251"]
+"entropy_process.py" = ["TID251"]
+"tests/*" = ["C90", "FBT", "PLR", "SIM102", "SIM114", "TID251", "SLF001", "ANN", "PERF401"]
 "speed_tests/*" = ["C90", "FBT", "ANN", "PLR"]
+"notebooks/*" = ["ARG001", "PERF401", "B007", "ANN"]
+"explorations/*" = ["B007", "F821", "E402"]
 
 [lint.pydocstyle]
 convention = "numpy"

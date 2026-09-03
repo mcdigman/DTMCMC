@@ -8,15 +8,118 @@ authors = [
 ]
 license = { file = "LICENSE" }
 dependencies = [
-    "numpy>2.0.0",
-    "scipy",
-    "numba",
-    "pytest",
-    "h5py"
+    "numpy>=2.4",
+    # scipy 1.16.1 is the first release with cp314 wheels (1.16.0 has none)
+    "scipy>=1.16.1",
+    # numba 0.64.0 is the first release that supports numpy 2.4 (0.62-0.63 cap at <2.4)
+    "numba>=0.64.0",
+    # h5py 3.15.0 is the first release with cp314 wheels (3.14 has none)
+    "h5py>=3.15",
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
+project-excludes = [
+    "notebooks/**",
+    "explorations/**",
+]
+# plotly/dash (dashboard/ front-end) ship no usable type info and are not
+# installed in the pyrefly hook's isolated environment; mypy/pyright cover
+# these modules in the typecheck CI instead. setuptools is likewise absent
+# from the hook env (used only by the packaging regression test).
+ignore-missing-imports = [
+    "plotly",
+    "plotly.*",
+    "dash",
+    "dash.*",
+    "setuptools",
+]
+
+[tool.pyright]
+# Settings for the pyright job in .github/workflows/typecheck.yml. pyright
+pythonVersion = "3.14"
+reportMissingImports = "none"
+# Exclude dot-directories (e.g. the CI job's .venv) from analysis; otherwise
+# pyright would try to type-check the installed dependencies' source. "build" is
+# the copy of the source that `uv pip install .` creates during the wheel build
+# (CI installs the project); excluding it avoids double-reporting every finding.
+exclude = ["**/node_modules", "**/__pycache__", "**/.*", "build", "notebooks", "explorations"]
+
+[tool.mypy]
+# The mypy job in .github/workflows/typecheck.yml installs the project with its
+# typed extras (.[dev,dashboard]) and runs mypy against that venv, so third-party
+# virtualenv and the wheel-build copy of the package (build/lib) so mypy does not
+# type-check installed dependencies or report the build tree as a duplicate
+# module; a clean CI checkout has neither, so build/.venv only matter locally.
+exclude = [
+    "^notebooks/",
+    "^explorations/",
+    "^build/",
+    "^\\.venv/",
+]
+
+# Strict except in tests
+strict = true
+
+[[tool.mypy.overrides]]
+# Needed to follow plotly imports
+module = ["_plotly_utils", "_plotly_utils.*"]
+follow_untyped_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests", "tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+# Only tests/ holds real unit tests. Without this, pytest's default collection
+# would also pick up scripts under explorations/ whose names match test_*.py /
+# *_test.py (e.g. integ_box_test.py, test_entropy_spacing.py) and execute their
+# plotting / sys.exit() bodies.
+testpaths = ["tests"]
+markers = [
+    "slow: heavy convergence batteries; the per-push CI job runs -m 'not slow'",
+]
+
+[project.optional-dependencies]
+# Development / test tooling: pytest, type stubs for the typed checks, and the
+# linters/type-checkers installed in DTMCMC-dev (also wired up via .pre-commit-config.yaml).
+dev = [
+    "pytest>=9.0",
+    "h5py-stubs",
+    "scipy-stubs",
+    "types-setuptools",
+    "plotly-stubs==0.1.3",
+    "PyYAML>=6.0.3",
+    "types-PyYAML>=6.0",
+    "jsonschema>=4.18",
+    "ruff",
+    "mypy",
+    "pyright",
+    "pre-commit",
+]
+# Plotting / diagnostic scripts (diagnostic_commentary_helpers.py, run_*_search.py).
+# matplotlib 3.11.0 is the first release with cp314 wheels; 3.8 also caps numpy<2.
+plots = ["matplotlib>=3.11", "corner"]
+# Telemetry dashboard (dashboard/): plotly draws the figures, dash serves the
+# front-end. dashboard.core and dashboard.themes run without either installed.
+dashboard = ["plotly>=6", "dash>=4"]
 
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# The DTMCMC library and the dashboard viewer are the installable packages
+# (`python -m dashboard` must work from a wheel installed with the [dashboard]
+# extra); data/, notebooks/, explorations/, experiments/, scripts/, and tests/
+# each carry an __init__.py but are not part of the distribution. Pin discovery
+# so setuptools' flat-layout auto-discovery doesn't error on multiple top-level
+# packages.
+[tool.setuptools.packages.find]
+include = ["DTMCMC*", "dashboard*", "default_config.ini"]

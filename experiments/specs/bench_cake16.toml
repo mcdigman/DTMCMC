@@ -1,0 +1,32 @@
+name = 'bench_cake16'
+seed = 977
+
+[likelihood]
+name = 'cake'
+n_par = 5
+cutoff = 10
+
+[ladder]
+kind = 'geometric'
+n_chain = 16
+n_cold = 1
+T_cold = 1.0
+T_min = 1.0
+T_max = 1000.0
+n_inf_final = 1
+
+[run]
+n_steps = 32768
+block_size = 1024
+store_thin = 8
+checkpoint_every_blocks = 32
+
+[exchange]
+strategy = 'sequential'
+track_full_exchanges = false
+
+[proposals.FisherJumpManager]
+verbose_fisher = false
+
+[proposals.DEJumpManager]
+de_size = 10000

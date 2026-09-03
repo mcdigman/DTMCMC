@@ -2,6 +2,7 @@
 
 Various jit compatible interfaces to cython lapack functions.
 """
+
 # ruff: noqa: N806, RUF100, SIM108, RUF052, FBT002, FBT001
 import ctypes
 
@@ -37,23 +38,26 @@ _ptr_int = _PTR(_int)
 # )  # noqa: ERA001
 # bind to the real space variant of the function
 addr = get_cython_function_address('scipy.linalg.cython_lapack', 'dtrtrs')
-functype = ctypes.CFUNCTYPE(None,
-                            _ptr_int,   # UPLO
-                            _ptr_int,   # TRANS
-                            _ptr_int,   # DIAG
-                            _ptr_int,   # N
-                            _ptr_int,   # NRHS
-                            _ptr_dble,  # A
-                            _ptr_int,   # LDA
-                            _ptr_dble,  # B
-                            _ptr_int,   # LDB
-                            _ptr_int,   # INFO
-                            )
+functype = ctypes.CFUNCTYPE(
+    None,
+    _ptr_int,  # UPLO
+    _ptr_int,  # TRANS
+    _ptr_int,  # DIAG
+    _ptr_int,  # N
+    _ptr_int,  # NRHS
+    _ptr_dble,  # A
+    _ptr_int,  # LDA
+    _ptr_dble,  # B
+    _ptr_int,  # LDB
+    _ptr_int,  # INFO
+)
 dtrtrs_fn = functype(addr)
 
 
 @njit()
-def solve_triangular(x: NDArray[np.floating], y: NDArray[np.floating], lower_a: bool = True, trans_a: bool = True, unitdiag: bool = False) -> NDArray[np.floating]:
+def solve_triangular(
+    x: NDArray[np.floating], y: NDArray[np.floating], lower_a: bool = True, trans_a: bool = True, unitdiag: bool = False
+) -> NDArray[np.floating]:
     """
     Solve x*B=y where x is a triangular matrix.
 
@@ -67,7 +71,7 @@ def solve_triangular(x: NDArray[np.floating], y: NDArray[np.floating], lower_a: 
         lower_a = not lower_a
         A = x.T
     else:
-        A = x     # in & out
+        A = x  # in & out
 
     if trans_a:
         TRANS = np.array([ord('T')], np.int32)
@@ -113,15 +117,17 @@ def solve_triangular(x: NDArray[np.floating], y: NDArray[np.floating], lower_a: 
             msg = f'INFO {info}indicates problem with dtrtrs'
             raise RuntimeError(msg)
 
-    dtrtrs_fn(UPLO.ctypes,
-              TRANS.ctypes,
-              DIAG.ctypes,
-              N.ctypes,
-              NRHS.ctypes,
-              A.ctypes,
-              LDA.ctypes,
-              B.ctypes,
-              LDB.ctypes,
-              INFO.ctypes)
+    dtrtrs_fn(
+        UPLO.ctypes,
+        TRANS.ctypes,
+        DIAG.ctypes,
+        N.ctypes,
+        NRHS.ctypes,
+        A.ctypes,
+        LDA.ctypes,
+        B.ctypes,
+        LDB.ctypes,
+        INFO.ctypes,
+    )
     check_info(INFO)
     return B

@@ -1,0 +1,566 @@
+"""Phase 1 acceptance tests for the experiment harness (methods-paper plan §4).
+
+Covers: end-to-end tiny Gaussian run with validating artifact; bit-exact
+same-seed determinism and different-seed divergence; the once-per-run seed
+guard (D1); artifact provenance completeness (D2); spec TOML round-trip;
+counting-proxy eval accounting; and batch sweep expansion.
+"""
+
+import shlex
+import tomllib
+import warnings as warnings_module
+from typing import TYPE_CHECKING, Any
+
+import h5py
+import numpy as np
+import pytest
+
+import DTMCMC.rng_helpers as rng_helpers
+from DTMCMC.eval_accounting import LoglikeCallSpy
+from DTMCMC.numba_backend import _VALID_MODES
+from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
+from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
+from experiments.harness.batch import write_batch
+from experiments.harness.paths import default_config_path, repo_root
+from experiments.harness.runner import (
+    LADDER_BUILDERS,
+    LIKELIHOOD_BUILDERS,
+    build_ladder,
+    build_likelihood,
+    build_sampler,
+    run_from_spec,
+)
+from experiments.harness.spec import KERNEL_BACKENDS, LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+TINY_GAUSSIAN_SPEC: dict[str, Any] = {
+    'name': 'tiny_gaussian_test',
+    'seed': 42,
+    'likelihood': {'name': 'gaussian', 'n_par': 3, 'cutoff': 5},
+    'ladder': {
+        'kind': 'geometric',
+        'n_chain': 6,
+        'n_cold': 1,
+        'T_cold': 1.0,
+        'T_min': 1.0,
+        'T_max': 100.0,
+        'n_inf_final': 1,
+    },
+    'run': {'n_steps': 256, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2},
+    'exchange': {'strategy': 'sequential', 'track_full_exchanges': False},
+    'proposals': {
+        'FisherJumpManager': {'verbose_fisher': False},
+        'DEJumpManager': {'de_size': 256},
+    },
+}
+
+
+@pytest.fixture
+def fresh_seed_guard():
+    """Allow one seed_run call in a test that legitimately reseeds."""
+    reset_seed_guard_for_tests()
+    yield
+    reset_seed_guard_for_tests()
+
+
+def make_tiny_spec(**run_overrides: Any) -> RunSpec[Any]:
+    """Build the tiny Gaussian test spec, optionally overriding [run] entries."""
+    data = dict(TINY_GAUSSIAN_SPEC)
+    run_table = dict(TINY_GAUSSIAN_SPEC['run'])
+    run_table.update(run_overrides)
+    data['run'] = run_table
+    return RunSpec.from_dict(data)
+
+
+def test_rng_child_seeds_deterministic() -> None:
+    """Child-seed derivation is a pure function of the run seed."""
+    assert derive_child_seeds(1234) == derive_child_seeds(1234)
+    assert derive_child_seeds(1234) != derive_child_seeds(1235)
+    rng = get_rng(7)
+    assert isinstance(rng, np.random.Generator)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_seed_run_guard() -> None:
+    """A second seed_run call within one run raises (plan D1)."""
+    children = seed_run(1234)
+    assert children == derive_child_seeds(1234)
+    with pytest.raises(RuntimeError, match='once per run'):
+        seed_run(1234)
+
+
+def test_spec_toml_roundtrip_example_file() -> None:
+    """The checked-in example spec parses, and its TOML round-trip is exact."""
+    spec: RunSpec[Any] = RunSpec.from_toml(repo_root() / 'experiments' / 'specs' / 'tiny_gaussian.toml')
+    assert spec.likelihood_name == 'gaussian'
+    assert not spec.zero_loglike
+    round_tripped: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    assert round_tripped == spec
+
+
+def test_zero_loglike_spec_toml_roundtrip() -> None:
+    """The scientific zero-mode flag is validated and preserved in resolved specs."""
+    spec = make_tiny_spec(zero_loglike=True)
+    round_tripped: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    assert round_tripped == spec
+    assert round_tripped.zero_loglike
+    assert not round_tripped.with_zero_loglike(False).zero_loglike
+
+
+def test_kernel_backend_spec_toml_roundtrip() -> None:
+    """run.kernel_backend defaults to 'auto', round-trips, and pins the backend modes."""
+    assert make_tiny_spec().kernel_backend == 'auto'
+    spec = make_tiny_spec(kernel_backend='numba')
+    round_tripped: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(spec.to_toml_text()))
+    assert round_tripped == spec
+    assert round_tripped.kernel_backend == 'numba'
+    assert round_tripped.with_kernel_backend('python').kernel_backend == 'python'
+    # the spec-layer value set stays in sync with the backend's modes
+    assert set(_VALID_MODES) == KERNEL_BACKENDS
+
+
+def test_dumps_toml_roundtrip_tricky_values() -> None:
+    """The minimal TOML emitter round-trips awkward scalars through tomllib."""
+    data: dict[str, object] = {
+        'a_str': "it's got 'quotes' and \\slashes\\ and \"doubles\"",
+        'big_float': 1.0e15,
+        'small_float': 1.2345678901234567e-8,
+        'plain_float': 4.0,
+        'neg_inf': float('-inf'),
+        'pos_inf': float('inf'),
+        'truthy': True,
+        'ints': [1, 2, 3],
+        'floats': [1.5, 2.5],
+        'nested': {'deeper': {'value': 12, 'weird key': 'ok'}},
+    }
+    assert tomllib.loads(dumps_toml(data)) == data
+
+
+@pytest.mark.parametrize(
+    ('field_path', 'bad_value', 'match'),
+    [
+        (('likelihood', 'name'), 'nonsense', 'unknown likelihood'),
+        (('ladder', 'kind'), 'nonsense', 'unknown ladder kind'),
+        (('ladder', 'n_cold'), 0, 'n_cold must be'),
+        (('run', 'n_steps'), 100, 'multiple of'),
+        (('run', 'zero_loglike'), 'yes', 'zero_loglike must be a boolean'),
+        (('run', 'kernel_backend'), 'cuda', 'unknown run.kernel_backend'),
+        (('exchange', 'strategy'), 'nonsense', 'unknown exchange strategy'),
+        (('proposals', 'NoSuchManager'), {'x': 1}, 'unknown proposal section'),
+        (('ladder', 'kind'), 'explicit', 'non-empty numeric ladder.Ts list'),
+    ],
+)
+def test_spec_validation_errors(field_path: tuple[str, str], bad_value: str | int | dict[str, int], match: str) -> None:
+    """Malformed specs raise SpecError with a pointed message."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    table: dict[str, Any] = data
+    for key in field_path[:-1]:
+        table = table[key]
+    table[field_path[-1]] = bad_value
+    with pytest.raises(SpecError, match=match):
+        RunSpec.from_dict(data)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_end_to_end_tiny_gaussian(tmp_path: Path) -> None:
+    """Acceptance 1+3: tiny spec runs end to end and produces a validating artifact."""
+    spec = make_tiny_spec()
+    artifact_path = run_from_spec(spec, tmp_path)
+
+    assert artifact_path.is_file()
+    assert validate(artifact_path, mode='complete') == []
+    assert validate(artifact_path, mode='partial') == []
+
+    attrs = read_attrs(artifact_path)
+    assert int(np.asarray(attrs['run_seed']).item()) == spec.seed
+    child_python, child_numba = derive_child_seeds(spec.seed)
+    assert int(np.asarray(attrs['child_seed_python']).item()) == child_python
+    assert int(np.asarray(attrs['child_seed_numba']).item()) == child_numba
+    assert int(np.asarray(attrs['n_iterations']).item()) == spec.n_steps
+    assert int(np.asarray(attrs['n_chain_steps']).item()) == spec.n_steps * spec.n_chain
+
+    # the embedded spec text reproduces the resolved spec exactly
+    embedded: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
+    assert embedded == spec
+
+    with h5py.File(str(artifact_path), 'r') as hf:
+        logLs_ds = hf['store/logLs']
+        assert isinstance(logLs_ds, h5py.Dataset)
+        assert logLs_ds.shape == (spec.store_size, spec.n_cold)
+        moments_ds = hf['moments/logL_means']
+        assert isinstance(moments_ds, h5py.Dataset)
+        assert moments_ds.shape == (spec.n_blocks, spec.n_chain)
+
+
+def test_determinism_same_seed(tmp_path: Path) -> None:
+    """Acceptance 2: same spec + seed twice is bit-exact; different seed differs."""
+    spec = make_tiny_spec()
+
+    reset_seed_guard_for_tests()
+    path_a = run_from_spec(spec, tmp_path / 'a')
+    reset_seed_guard_for_tests()
+    path_b = run_from_spec(spec, tmp_path / 'b')
+    reset_seed_guard_for_tests()
+    path_c = run_from_spec(spec.with_seed(43), tmp_path / 'c')
+    reset_seed_guard_for_tests()
+
+    def load(path: Path):
+        with h5py.File(str(path), 'r') as hf:
+            logLs_ds = hf['store/logLs']
+            samples_ds = hf['store/samples']
+            assert isinstance(logLs_ds, h5py.Dataset)
+            assert isinstance(samples_ds, h5py.Dataset)
+            return logLs_ds[...], samples_ds[...]
+
+    logLs_a, samples_a = load(path_a)
+    logLs_b, samples_b = load(path_b)
+    logLs_c, _samples_c = load(path_c)
+
+    assert np.array_equal(logLs_a, logLs_b)
+    assert np.array_equal(samples_a, samples_b)
+    assert not np.array_equal(logLs_a, logLs_c)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_counting_matches_independent_spy(tmp_path: Path) -> None:
+    """Acceptance 6: the artifact eval accounting equals an independent call spy.
+
+    The tiny run exercises every accounting phase: initialization draws,
+    the Fisher construction and refresh stencils (the first four blocks
+    always refresh), and the Python block loop. The spy wraps get_loglike
+    before the sampler is built, so the comparison is independent of the
+    declared costs it verifies.
+    """
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
+
+    like_obj = build_likelihood(spec)
+    with LoglikeCallSpy(like_obj) as spy:
+        sampler, _like_obj = build_sampler(spec, like_obj=like_obj, kernel_backend='python')
+        accounting = sampler.eval_accounting
+        evals_after_init = accounting.initialization
+        # initialization evaluates each starting sample once plus the Fisher
+        # construction stencil: n_chain * (1 + 1 + 2 * n_par) evaluations
+        assert evals_after_init >= spec.n_chain * (1 + 1 + 2 * 3)
+        assert spy.n_calls == evals_after_init
+
+        sampler.advance_N_blocks(spec.n_blocks)
+
+    assert accounting.total == spy.n_calls
+
+    artifact_path = tmp_path / 'counting.h5'
+    write_artifact(artifact_path, spec, sampler, accounting, provenance, finalized=True, wall_seconds=0.0)
+
+    attrs = read_attrs(artifact_path)
+    assert int(np.asarray(attrs['n_likelihood_evals']).item()) == spy.n_calls
+    breakdown = (
+        int(np.asarray(attrs['n_evals_initialization']).item()),
+        int(np.asarray(attrs['n_evals_proposal_targets']).item()),
+        int(np.asarray(attrs['n_evals_proposal_internal']).item()),
+        int(np.asarray(attrs['n_evals_post_block']).item()),
+    )
+    assert breakdown == (
+        accounting.initialization,
+        accounting.proposal_targets,
+        accounting.proposal_internal,
+        accounting.post_block,
+    )
+    assert sum(breakdown) == spy.n_calls
+
+    # exchange iterations evaluate nothing, so evals stay strictly below
+    # chain-steps even after adding initialization and Fisher refreshes
+    n_chain_steps = spec.n_steps * spec.n_chain
+    assert evals_after_init < accounting.total < n_chain_steps
+    assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_records_executed_kernel_backend(tmp_path: Path) -> None:
+    """The artifact records the program flavor that actually ran.
+
+    The embedded spec carries only the request; 'auto' resolves at run
+    time, so the executed flavor is a separate required attr.
+    """
+    spec = make_tiny_spec(kernel_backend='python')
+    artifact_path = run_from_spec(spec, tmp_path)
+
+    assert validate(artifact_path, mode='complete') == []
+    attrs = read_attrs(artifact_path)
+    assert str(attrs['kernel_backend_executed']) == 'python'
+    embedded: RunSpec[Any] = RunSpec.from_dict(tomllib.loads(str(attrs['spec_toml'])))
+    assert embedded.kernel_backend == 'python'
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_partial_artifact_validates_as_partial_only(tmp_path: Path) -> None:
+    """A non-finalized artifact passes partial validation but not complete."""
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
+
+    sampler, _like_obj = build_sampler(spec)
+    sampler.advance_block()
+
+    artifact_path = tmp_path / 'partial.h5'
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
+
+    assert validate(artifact_path, mode='partial') == []
+    problems = validate(artifact_path, mode='complete')
+    assert any('not finalized' in problem for problem in problems)
+
+
+def test_batch_expansion(tmp_path: Path) -> None:
+    """Sweep expansion writes one valid spec per grid point x seed plus a manifest."""
+    base_path = tmp_path / 'base.toml'
+    base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
+
+    sweep_path = tmp_path / 'sweep.toml'
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'test_sweep',
+                'base_spec': str(base_path),
+                'out': str(tmp_path / 'out'),
+                'seeds': [101, 102, 103],
+                'grid': {'ladder.n_chain': [6, 8], 'run.n_steps': [128]},
+            }
+        )
+    )
+
+    manifest_path = write_batch(sweep_path)
+    manifest_lines = manifest_path.read_text().strip().splitlines()
+    assert len(manifest_lines) == 2 * 1 * 3
+
+    seen: set[tuple[int, int]] = set()
+    for line in manifest_lines:
+        spec_file = shlex.split(line)[3]
+        spec: RunSpec[Any] = RunSpec.from_toml(spec_file)
+        assert spec.n_steps == 128
+        seen.add((spec.n_chain, spec.seed))
+    assert seen == {(n_chain, seed) for n_chain in (6, 8) for seed in (101, 102, 103)}
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_eggbox_end_to_end(tmp_path: Path) -> None:
+    """The eggbox run through the full default proposal mixture.
+
+    Regression for a pre-existing engine bug found in the Phase 4 pilots:
+    eggbox.prior_factor's del-based body raised a numba TypingError on
+    every call, so eggbox had never run end-to-end (prior jumps evaluate
+    prior_factor on each proposal).
+    """
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = 'tiny_eggbox_test'
+    data['likelihood'] = {'name': 'eggbox', 'n_par': 3}
+    data['ladder'] = {'kind': 'geometric', 'n_chain': 4, 'n_cold': 1, 'T_max': 50.0}
+    data['run'] = {'n_steps': 128, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 2}
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
+
+    artifact_path = run_from_spec(spec, tmp_path)
+    assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_finite_fisher_weights_run_end_to_end(tmp_path: Path) -> None:
+    """Finite cold/hot Fisher weights run through the full stack.
+
+    This smoke keeps the finite-weight code path exercised in the fast
+    suite.
+    """
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = 'tiny_fisher_weights'
+    data['proposals'] = {
+        'FisherJumpManager': {'verbose_fisher': False, 'cold_fisher_weight': 0.333, 'hot_fisher_weight': 0.333},
+        'DEJumpManager': {'de_size': 256},
+    }
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
+    artifact_path = run_from_spec(spec, tmp_path)
+    assert validate(artifact_path, mode='complete') == []
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_de_buffer_memory_warnings() -> None:
+    """The DE buffer-memory warnings key on the adaptation timescale, not the run.
+
+    Fixed ladders: warn only below the block-scale floor; a ring buffer
+    shorter than the run is the normal production configuration and must
+    stay silent. Adaptive runs: warn below the rebuild-bridging floor, and
+    warn when the buffer spans the whole run (proposal support never
+    forgets burn-in).
+    """
+    # fixed ladder, buffer at the 4-block floor: silent for any run length
+    seed_run(4321)
+    with warnings_module.catch_warnings():
+        warnings_module.simplefilter('error', UserWarning)
+        build_sampler(make_tiny_spec(n_steps=64 * 8))
+
+    # fixed ladder below the floor warns
+    reset_seed_guard_for_tests()
+    seed_run(4322)
+    short_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    short_data['name'] = 'tiny_short_de'
+    short_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    with pytest.warns(UserWarning, match='DE buffer memory.*short DE buffers'):
+        build_sampler(RunSpec.from_dict(short_data))
+
+    # adaptive run whose buffer cannot bridge rebuilds warns
+    reset_seed_guard_for_tests()
+    seed_run(4323)
+    narrow_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    narrow_data['name'] = 'tiny_narrow_de'
+    narrow_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 128}}
+    narrow_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='too short to bridge ladder rebuilds'):
+        build_sampler(RunSpec.from_dict(narrow_data))
+
+    # adaptive run with a whole-run buffer warns that burn-in is never forgotten
+    reset_seed_guard_for_tests()
+    seed_run(4324)
+    whole_data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    whole_data['name'] = 'tiny_whole_de'
+    whole_data['proposals'] = {'FisherJumpManager': {'verbose_fisher': False}, 'DEJumpManager': {'de_size': 64 * 8}}
+    whole_data['adaptive'] = {'mode': 'entropy', 'budget_blocks': 8, 'update_every_blocks': 2}
+    with pytest.warns(UserWarning, match='never forgets burn-in'):
+        build_sampler(RunSpec.from_dict(whole_data))
+
+
+def test_paths_anchored_to_repo_root() -> None:
+    """Path resolution is CWD-independent and finds the shipped config."""
+    assert default_config_path().is_file()
+    assert (repo_root() / 'DTMCMC').is_dir()
+
+
+def test_numba_seeder_is_private() -> None:
+    """PR #9 review: the raw numba seeder must not be a public entry point.
+
+    The once-per-run guard cannot live inside the jitted body (numba
+    cannot type the guard dict), so seed_run must be the only public
+    seeding API; the helper is private and TID251-banned elsewhere.
+    """
+    public_names = {name for name in dir(rng_helpers) if not name.startswith('_')}
+    assert 'seed_numba' not in public_names
+    assert hasattr(rng_helpers, '_seed_numba')
+
+
+def test_builder_registries_match_spec_names() -> None:
+    """PR #9 review: runner builder registries stay in sync with spec constants."""
+    assert set(LIKELIHOOD_BUILDERS) == set(LIKELIHOOD_NAMES)
+    assert set(LADDER_BUILDERS) == set(LADDER_KINDS)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_uniform_likelihood_gaussian_prior_has_known_harness_target() -> None:
+    """The harness can exercise a non-uniform prior with analytic moments."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = 'uniform_gaussian_prior_moments'
+    data['seed'] = 20260715
+    data['likelihood'] = {
+        'name': 'uniform_gaussian_prior',
+        'n_par': 3,
+        'prior_mean': 1.5,
+        'prior_std': 0.75,
+    }
+    data['run'] = {'n_steps': 2048, 'block_size': 64, 'store_thin': 1, 'checkpoint_every_blocks': 4}
+    data['proposals'] = {
+        'FisherJumpManager': {'verbose_fisher': False},
+        'DEJumpManager': {'de_size': 256},
+    }
+    spec: RunSpec[Any] = RunSpec.from_dict(data)
+
+    seed_run(spec.seed)
+    sampler, like_obj = build_sampler(spec, kernel_backend='numba')
+    for _ in range(spec.n_blocks):
+        sampler.advance_block()
+
+    assert like_obj.prior_factor(np.full(3, 1.5)) > like_obj.prior_factor(np.zeros(3))
+    cold_samples = sampler.samples_store[:, 0, :]
+    np.testing.assert_allclose(cold_samples.mean(axis=0), 1.5, atol=0.08)
+    np.testing.assert_allclose(cold_samples.var(axis=0), 0.75**2, atol=0.12)
+
+
+def _explicit_ladder_data(n_chain: int, Ts: list[float]) -> dict[str, Any]:
+    """Copy the tiny spec with an explicit ladder of the given geometry."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['ladder'] = {'kind': 'explicit', 'n_chain': n_chain, 'n_cold': 1, 'Ts': Ts}
+    return data
+
+
+def test_explicit_ladder_length_mismatch_raises() -> None:
+    """PR #9 review: a Ts list contradicting ladder.n_chain fails at spec time."""
+    with pytest.raises(SpecError, match=r'3 entries but ladder\.n_chain is 6'):
+        RunSpec.from_dict(_explicit_ladder_data(6, [1.0, 2.0, 10.0]))
+
+
+def test_explicit_ladder_matching_length_builds() -> None:
+    """An explicit ladder with consistent geometry builds the declared chain count."""
+    spec: RunSpec[Any] = RunSpec.from_dict(_explicit_ladder_data(3, [1.0, 2.0, 10.0]))
+    ladder = build_ladder(spec)
+    assert ladder.n_chain == spec.n_chain == 3
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_schema_version_mismatch_reported_alone(tmp_path: Path) -> None:
+    """PR #10 review: a schema mismatch yields one clear message, not a dataset flood."""
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
+    sampler, _like_obj = build_sampler(spec)
+
+    artifact_path = tmp_path / 'old_schema.h5'
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
+
+    with h5py.File(str(artifact_path), 'a') as hf:
+        hf.attrs['schema_version'] = 1
+
+    problems = validate(artifact_path, mode='partial')
+    assert len(problems) == 1
+    assert 'schema version 1' in problems[0]
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_ladder_mismatch_detected(tmp_path: Path) -> None:
+    """PR #9 review: validate() flags a ladder that contradicts the embedded spec."""
+    spec = make_tiny_spec()
+    seed_children = seed_run(spec.seed)
+    provenance = collect_provenance(
+        spec.seed, *seed_children, spec_toml=spec.to_toml_text(), proposal_config_ini=spec.resolved_config_text()
+    )
+    sampler, _like_obj = build_sampler(spec)
+
+    artifact_path = tmp_path / 'tampered.h5'
+    write_artifact(artifact_path, spec, sampler, sampler.eval_accounting, provenance, finalized=False, wall_seconds=0.0)
+    assert validate(artifact_path, mode='partial') == []
+
+    with h5py.File(str(artifact_path), 'a') as hf:
+        ladder_grp = hf['ladder']
+        assert isinstance(ladder_grp, h5py.Group)
+        del ladder_grp['Ts']
+        ladder_grp.create_dataset('Ts', data=np.array([1.0, 2.0, 10.0]))
+
+    problems = validate(artifact_path, mode='partial')
+    assert any('ladder.n_chain' in problem for problem in problems)

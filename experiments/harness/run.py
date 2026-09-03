@@ -1,0 +1,64 @@
+"""CLI entry point for a single run: python -m experiments.harness.run spec.toml --seed N --out dir/."""
+
+import argparse
+import sys
+from typing import TYPE_CHECKING, NamedTuple
+
+from .artifact import validate
+from .paths import resolve
+from .runner import run_from_spec
+from .spec import RunSpec
+
+if TYPE_CHECKING:
+    from DTMCMC.likelihood import AbstractLikelihood
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run a single spec end to end and validate the resulting artifact."""
+    parser = argparse.ArgumentParser(description='Execute a single DTMCMC run from a TOML spec')
+    parser.add_argument('spec', help='path to the run spec TOML (repo-root relative or absolute)')
+    parser.add_argument('--seed', type=int, default=None, help='override the run seed in the spec')
+    parser.add_argument(
+        '--zero-loglike',
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help='override run.zero_loglike (also supports --no-zero-loglike)',
+    )
+    parser.add_argument(
+        '--kernel-backend',
+        choices=('auto', 'numba', 'python'),
+        default=None,
+        help='override run.kernel_backend (kernel program flavor selection)',
+    )
+    parser.add_argument('--out', default='artifacts', help='output directory for the artifact (default: artifacts/)')
+    parser.add_argument(
+        '--sampler-verbosity',
+        type=int,
+        default=0,
+        choices=(0, 1, 2),
+        help='tracker-summary printing: 0 = silent (default), 1 = at each major-report boundary only, 2 = every checkpoint',
+    )
+    args = parser.parse_args(argv)
+
+    spec: RunSpec[AbstractLikelihood[NamedTuple]] = RunSpec.from_toml(resolve(args.spec))
+    if args.seed is not None:
+        spec = spec.with_seed(args.seed)
+    if args.zero_loglike is not None:
+        spec = spec.with_zero_loglike(args.zero_loglike)
+    if args.kernel_backend is not None:
+        spec = spec.with_kernel_backend(args.kernel_backend)
+
+    artifact_path = run_from_spec(spec, args.out, sampler_verbosity=args.sampler_verbosity)
+
+    problems = validate(artifact_path, mode='complete')
+    if problems:
+        for problem in problems:
+            print(f'artifact validation problem: {problem}', file=sys.stderr)
+        return 1
+
+    print(f'wrote {artifact_path}')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

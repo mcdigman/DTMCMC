@@ -1,0 +1,47 @@
+name: Test (slow)
+
+# Runs ONLY the heavy convergence batteries carrying the `slow` marker. The
+# per-push Test workflow excludes these with -m "not slow"; this job is their
+# counterpart. Manual-only: a maintainer starts it from the Actions tab or via
+# `gh workflow run test-slow.yml --ref <branch>` when a change warrants the
+# heavy suite. It never runs on its own.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: test-slow-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
+
+jobs:
+  pytest-slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Match the per-push Test workflow's extras so the slow suite installs the
+      # same environment (pytest via [dev], plotting via [plots], plotly/dash via
+      # [dashboard]) -- a slow-marked test that touches the dashboard then resolves.
+      - name: Install project with test extras
+        run: |
+          uv venv
+          uv pip install ".[dev,plots,dashboard]"
+
+      - name: Run slow tests
+        run: .venv/bin/python -m pytest -m slow

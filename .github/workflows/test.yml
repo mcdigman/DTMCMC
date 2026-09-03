@@ -1,0 +1,58 @@
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly (Mon 06:17 UTC): re-run the suite even when no code changed, so a
+    # newly released numpy/scipy/numba/h5py that breaks the floating "latest"
+    # dependencies is caught. DTMCMC pins nothing to old versions, so latest is
+    # the only thing it is ever tested against -- this guards that assumption.
+    # Minute 17, not 0: GitHub delays or drops on-the-hour schedules under the
+    # load spike at the top of each hour.
+    - cron: "17 6 * * 1"
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.14"
+
+# All jobs only read the repo; none need a writable GITHUB_TOKEN, so pin the
+# default token to read-only.
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7.6.0
+        with:
+          enable-cache: true
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache-dependency-glob: "**/pyproject.toml"
+
+      # Install the project with its typed/plotting/dashboard extras into a venv
+      # so the tests run against the real installed package (the runner's system
+      # Python is externally managed, so --system installs are rejected). The
+      # core numpy/scipy/numba/h5py deps come in via the project's own
+      # dependencies; pytest comes from the [dev] extra; the [dashboard] extra
+      # supplies plotly/dash for tests/test_dashboard.py.
+      - name: Install project with test extras
+        run: |
+          uv venv
+          uv pip install ".[dev,plots,dashboard]"
+
+      # Heavy convergence batteries carry the slow marker and are excluded
+      # per-push; an occasional/scheduled job can run them with -m slow.
+      - name: Run tests
+        run: .venv/bin/python -m pytest -m "not slow"
