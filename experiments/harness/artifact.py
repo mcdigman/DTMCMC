@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, NamedTuple, SupportsInt, cast
 import h5py
 import numpy as np
 
-from .paths import replaced_atomically, repo_root
+from .paths import repo_root, staged_replacement
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
@@ -219,9 +219,9 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
     # never wraps mid-run, so the written rows are a prefix of the buffer
     rows_written = min(-(-sampler.itrn // sampler.store_thin), sampler.store_size)
 
-    # an unpredictable, already-created temporary sibling: h5py opens by name,
-    # so a guessable one could be pre-empted by a symlink in a shared out dir
-    with replaced_atomically(path) as tmp_path, h5py.File(str(tmp_path), 'w') as hf:
+    # h5py opens by name, so the flush is staged inside a private directory
+    # that no other user can reach in to swap for a symlink
+    with staged_replacement(path) as tmp_path, h5py.File(str(tmp_path), 'w') as hf:
         for prov_field in fields(provenance):
             hf.attrs[prov_field.name] = getattr(provenance, prov_field.name)
         hf.attrs['schema_version'] = SCHEMA_VERSION

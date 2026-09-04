@@ -28,6 +28,7 @@ from experiments.harness.paths import (
     default_config_path,
     read_regular_file_bytes,
     repo_root,
+    staged_replacement,
 )
 from experiments.harness.runner import (
     LADDER_BUILDERS,
@@ -172,7 +173,22 @@ def test_spec_validation_errors(field_path: tuple[str, str], bad_value: str | in
         RunSpec.from_dict(data)
 
 
-@pytest.mark.parametrize('name', ['', '.', '..', '../escape', r'..\\escape', 'line\nbreak', 'tab\tname', 'nul\x00name'])
+@pytest.mark.parametrize(
+    'name',
+    [
+        '',
+        '.',
+        '..',
+        '../escape',
+        r'..\\escape',
+        'line\nbreak',
+        'tab\tname',
+        'nul\x00name',
+        'CON',
+        'has:stream',
+        'trailing.',
+    ],
+)
 def test_spec_name_must_be_one_filename_component(name: str) -> None:
     """Spec-derived artifact names cannot escape the selected output directory."""
     data: dict[str, Any] = {
@@ -208,7 +224,7 @@ def test_artifact_flush_ignores_a_planted_temp_symlink(tmp_path: Path) -> None:
     assert canary.read_text() == 'untouched'
     assert artifact_path.is_file()
     assert not artifact_path.is_symlink()
-    assert not list(out_dir.glob('.dtmcmc-*.tmp'))
+    assert not list(out_dir.glob('.dtmcmc-*'))
 
 
 def test_toml_reader_rejects_non_regular_and_oversized_inputs(tmp_path: Path) -> None:
@@ -255,6 +271,35 @@ def test_atomic_write_does_not_narrow_permissions(tmp_path: Path) -> None:
     atomic_write_text(shared, 'second')
     assert stat.S_IMODE(shared.stat().st_mode) == 0o664
     assert shared.read_text() == 'second'
+
+
+def test_staged_replacement_is_private_and_leaves_nothing_behind(tmp_path: Path) -> None:
+    """Staging is unreachable by other users, and neither failure path litters."""
+    destination = tmp_path / 'artifact.bin'
+    with staged_replacement(destination) as staging_path:
+        assert stat.S_IMODE(staging_path.parent.stat().st_mode) == 0o700
+        staging_path.write_bytes(b'payload')
+    assert destination.read_bytes() == b'payload'
+    assert not list(tmp_path.glob('.dtmcmc-*'))
+
+    def fail_after_staging() -> None:
+        with staged_replacement(destination) as failing_path:
+            failing_path.write_bytes(b'never landed')
+            msg = 'body failed'
+            raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match='body failed'):
+        fail_after_staging()
+    assert destination.read_bytes() == b'payload'
+    assert not list(tmp_path.glob('.dtmcmc-*'))
+
+    # a destination that cannot be replaced must not strand the staged file
+    occupied = tmp_path / 'occupied'
+    occupied.mkdir()
+    (occupied / 'child').write_text('keeps the directory non-empty')
+    with pytest.raises(OSError, match='irectory'):
+        atomic_write_text(occupied, 'payload')
+    assert not list(tmp_path.glob('.dtmcmc-*'))
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')

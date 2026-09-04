@@ -8,10 +8,11 @@ resolves everything against the repo root: the runner chdirs there at startup
 an explicit, resolved ConfigParser.
 """
 
+import ntpath
 import os
 import stat
+import tempfile
 import tomllib
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,9 +21,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 MAX_TOML_FILE_BYTES = 1024 * 1024
-
-# unused-name attempts before an unpredictable temporary sibling is given up on
-TEMP_SIBLING_ATTEMPTS = 8
 
 
 def repo_root() -> Path:
@@ -63,8 +61,22 @@ def is_printable_line(value: str) -> bool:
 
 
 def is_filename_component(value: str) -> bool:
-    """Return whether *value* is one portable, non-special path component."""
-    return is_printable_line(value) and value not in {'.', '..'} and '/' not in value and '\\' not in value
+    """Return whether *value* is one portable, non-special path component.
+
+    ntpath.isreserved carries the Windows half of "portable": device names
+    (CON, NUL, COM1), alternate data streams (name:stream), wildcards, and
+    trailing dots or spaces, none of which name a plain file there.  It reads
+    a leading 'x:' as a drive instead, so the colon is rejected here as well;
+    'a:b' names a file on another drive rather than a component of this path.
+    """
+    return (
+        is_printable_line(value)
+        and value not in {'.', '..'}
+        and '/' not in value
+        and '\\' not in value
+        and ':' not in value
+        and not ntpath.isreserved(value)
+    )
 
 
 def read_regular_file_bytes(path_in: str | Path, *, max_bytes: int) -> bytes:
@@ -125,92 +137,54 @@ def load_toml(path_in: str | Path) -> dict[str, object]:
     return tomllib.loads(payload.decode())
 
 
-def _carry_destination_mode(descriptor: int, destination: Path) -> None:
-    """Give the open replacement the permissions of the regular file it replaces.
+def _carry_destination_mode(replacement: Path, destination: Path) -> None:
+    """Give the staged replacement the permissions of the regular file it replaces.
 
-    Without this a replacement would keep the mode it was created with and
-    silently narrow (or widen) a destination whose permissions were set
+    Without this a replacement keeps whatever mode it was created with and
+    silently narrows (or widens) a destination whose permissions were set
     deliberately.  A symlink or special-file destination is left alone: this
     module never follows one, so its mode is not the mode being replaced.
     """
-    if not hasattr(os, 'fchmod'):  # pragma: no cover - POSIX-only permission model
-        return
     try:
         existing = destination.lstat()
     except OSError:
         return
     if stat.S_ISREG(existing.st_mode):
-        os.fchmod(descriptor, stat.S_IMODE(existing.st_mode))
+        replacement.chmod(stat.S_IMODE(existing.st_mode))
 
 
-def create_temp_sibling(destination: Path) -> tuple[int, Path]:
-    """Exclusively create an unpredictable temporary file beside *destination*.
+@contextmanager
+def staged_replacement(destination: str | Path) -> Iterator[Path]:
+    """Yield a staging path that atomically replaces *destination* once the body succeeds.
 
-    The name is unguessable so a writer that must open by name cannot be
-    redirected through a symlink planted at a predictable temporary path, and
-    O_EXCL means an existing name is never opened.  The file is created 0o666
-    so the process umask picks the permissions exactly as a plain
-    ``open(path, 'wb')`` would; tempfile.mkstemp would hard-code 0o600 and
-    silently narrow every file this module replaces.
+    The staging file lives in a fresh 0o700 directory beside the destination,
+    so no other user can substitute a symlink for it between its creation and a
+    writer opening it by name -- the window a bare temporary filename leaves
+    open for writers that take a path rather than a descriptor (h5py).  An
+    ordinary open() inside that directory lets the umask pick the permissions
+    exactly as writing the destination directly would, unless there is already
+    a regular file there whose mode should be carried over instead.  The
+    directory and anything still in it are removed on every exit, so a failed
+    body or a failed replace never leaves a partial file behind.
     """
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_CLOEXEC', 0)
-    for _ in range(TEMP_SIBLING_ATTEMPTS):
-        candidate = destination.parent / f'.dtmcmc-{uuid.uuid4().hex}.tmp'
-        try:
-            descriptor = os.open(candidate, flags, 0o666)
-        except FileExistsError:
-            continue
-        return descriptor, candidate
-    msg = f'could not create a unique temporary file beside {destination}'
-    raise OSError(msg)
+    destination_path = Path(destination)
+    with tempfile.TemporaryDirectory(
+        prefix='.dtmcmc-', dir=destination_path.parent, ignore_cleanup_errors=True
+    ) as staging_dir:
+        # a fixed name is fine inside a directory nobody else can enter, and the
+        # .tmp suffix keeps an in-flight artifact out of the dashboard's *.h5 scan
+        staging_path = Path(staging_dir) / 'staged.tmp'
+        yield staging_path
+        _carry_destination_mode(staging_path, destination_path)
+        staging_path.replace(destination_path)
 
 
 def atomic_write_bytes(path_in: str | Path, payload: bytes) -> None:
     """Atomically replace a file without following an existing destination symlink."""
-    destination = Path(path_in)
-    descriptor, temporary_path = create_temp_sibling(destination)
-    temporary_exists = True
-    try:
-        _carry_destination_mode(descriptor, destination)
-        with os.fdopen(descriptor, 'wb') as handle:
-            descriptor = -1
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        temporary_path.replace(destination)
-        temporary_exists = False
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-        if temporary_exists:
-            temporary_path.unlink(missing_ok=True)
-
-
-@contextmanager
-def replaced_atomically(destination: str | Path) -> Iterator[Path]:
-    """Yield a temporary sibling path that replaces *destination* once the body succeeds.
-
-    For writers that insist on a filename (h5py).  The yielded path already
-    exists as a regular file owned by this process, carries the permissions of
-    the destination it will replace, and is unlinked if the body raises.
-    """
-    destination_path = Path(destination)
-    descriptor, temporary_path = create_temp_sibling(destination_path)
-    reserved = False
-    try:
-        _carry_destination_mode(descriptor, destination_path)
-        reserved = True
-    finally:
-        os.close(descriptor)
-        if not reserved:
-            temporary_path.unlink(missing_ok=True)
-
-    try:
-        yield temporary_path
-    except BaseException:
-        temporary_path.unlink(missing_ok=True)
-        raise
-    temporary_path.replace(destination_path)
+    with staged_replacement(path_in) as staging_path, staging_path.open('wb') as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def atomic_write_text(path_in: str | Path, text: str) -> None:
