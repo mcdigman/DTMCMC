@@ -69,7 +69,7 @@ repos:
       - pytest>=9.1.1
       - scipy-stubs
       - types-setuptools
-      - plotly-stubs==0.1.4
+      - plotly-stubs==0.1.3
       - h5py-stubs
       - pandas-stubs
       - types-PyYAML
