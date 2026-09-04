@@ -171,7 +171,7 @@ def test_spec_validation_errors(field_path: tuple[str, str], bad_value: str | in
         RunSpec.from_dict(data)
 
 
-@pytest.mark.parametrize('name', ['', '.', '..', '../escape', r'..\\escape'])
+@pytest.mark.parametrize('name', ['', '.', '..', '../escape', r'..\\escape', 'line\nbreak', 'tab\tname', 'nul\x00name'])
 def test_spec_name_must_be_one_filename_component(name: str) -> None:
     """Spec-derived artifact names cannot escape the selected output directory."""
     data: dict[str, Any] = {
@@ -403,6 +403,29 @@ def test_batch_expansion(tmp_path: Path) -> None:
         assert spec.n_steps == 128
         seen.add((spec.n_chain, spec.seed))
     assert seen == {(n_chain, seed) for n_chain in (6, 8) for seed in (101, 102, 103)}
+
+
+def test_batch_rejects_multiline_name_before_writing_manifest(tmp_path: Path) -> None:
+    """A sweep name cannot split the line-oriented shell manifest."""
+    base_path = tmp_path / 'base.toml'
+    base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
+
+    out_path = tmp_path / 'out'
+    sweep_path = tmp_path / 'sweep.toml'
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'safe\ntouch PWNED #',
+                'base_spec': str(base_path),
+                'out': str(out_path),
+                'seeds': [101],
+            }
+        )
+    )
+
+    with pytest.raises(SpecError, match='filename component'):
+        write_batch(sweep_path)
+    assert not out_path.exists()
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')

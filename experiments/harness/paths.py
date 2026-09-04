@@ -46,7 +46,7 @@ def resolve(path_in: str | Path) -> Path:
 
 def is_filename_component(value: str) -> bool:
     """Return whether *value* is one portable, non-special path component."""
-    return bool(value) and value not in {'.', '..'} and '\x00' not in value and '/' not in value and '\\' not in value
+    return bool(value) and value not in {'.', '..'} and value.isprintable() and '/' not in value and '\\' not in value
 
 
 def read_regular_file_bytes(path_in: str | Path, *, max_bytes: int) -> bytes:
