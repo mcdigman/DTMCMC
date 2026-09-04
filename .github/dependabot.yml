@@ -1,13 +1,22 @@
 # Dependabot version updates. GitHub's Dependabot *security* updates are
 # already enabled for this repository; those only fire on advisories for
 # vulnerable dependencies. This file covers routine bumps, which matters most
-# for the workflows: every action is pinned to a full commit SHA, so nothing
-# else moves those pins. Dependabot rewrites the SHA and keeps the trailing
+# for the pinned third-party code: every workflow action is pinned to a full
+# commit SHA and every prek/pre-commit hook to a `rev:` tag, so nothing else
+# moves those pins. Dependabot rewrites the SHA and keeps the trailing
 # `# vX.Y.Z` comment in step.
 #
 # The Python dependencies in pyproject.toml are mostly declared as floors
 # (`>=`) with no upper caps, so there is little for the pip ecosystem to raise;
 # it is listed anyway to catch the plotly-stubs pin and any future pin or cap.
+#
+# Every ecosystem sets a cooldown: a newly published release is not proposed
+# until it has been out for the given number of days. Supply-chain compromises
+# of a package or action are typically caught and yanked within that window,
+# so waiting costs a few days of freshness and avoids adopting a bad release
+# on the day it lands. `default-days` is the only cooldown key the
+# github-actions and pre-commit ecosystems support; pip also supports per-bump
+# values, so major bumps -- the riskiest to take unread -- wait longer.
 version: 2
 
 updates:
@@ -18,9 +27,28 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
+    cooldown:
+      default-days: 7
     groups:
       # One PR per month for routine action bumps rather than one per action.
       actions:
+        patterns:
+          - "*"
+
+  # Hook revisions in .pre-commit-config.yaml. The hooks run under prek, but
+  # the config file is the one this ecosystem reads. Each `rev:` pins a
+  # third-party repository whose code executes locally and in CI, so these
+  # pins need the same routine maintenance as the workflow action SHAs.
+  - package-ecosystem: pre-commit
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    cooldown:
+      default-days: 7
+    groups:
+      hooks:
         patterns:
           - "*"
 
@@ -31,6 +59,18 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     groups:
-      dev-dependencies:
-        dependency-type: development
+      # Everything in one PR, matched by pattern rather than split on
+      # `dependency-type`. Dependabot's pip parser tags each requirement with
+      # its pyproject section: `[project.dependencies]` gets the literal
+      # "dependencies" (the only value pip's production check accepts), while
+      # every `[project.optional-dependencies]` entry gets its own extra name
+      # -- so dev, plots and dashboard all count as development. Splitting on
+      # that would group the three extras together and leave the four runtime
+      # dependencies to open one PR each.
+      python-dependencies:
+        patterns:
+          - "*"
