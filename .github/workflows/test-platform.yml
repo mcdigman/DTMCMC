@@ -31,6 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+    # skylos: ignore[SKY-D295] matrix values are fixed GitHub-hosted runners
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
     # bash is present on all three hosted runners (including Windows), so every
