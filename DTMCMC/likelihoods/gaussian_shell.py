@@ -95,7 +95,7 @@ def gen_draws(n_draws: int, n_par: int, attempt_lim: int = 10000) -> NDArray[np.
             if check_bounds_rectangular(draw_loc, inputs):
                 break
             itra += 1
-            if itra == attempt_lim:
+            if itra >= attempt_lim:
                 msg = 'Failed to find valid posterior point.'
                 raise RuntimeError(msg)
         draws[itrk] = draw_loc

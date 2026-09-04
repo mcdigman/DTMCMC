@@ -227,10 +227,19 @@ LIKELIHOOD_HANDLE_ROLES: tuple[tuple[str, str], ...] = (
     ('correct_bounds_fn', 'correct_bounds'),
 )
 
-# value-keyed store of shared handles: two objects constructed with equal
-# baked constants reuse one compiled handle (and can therefore share one
-# compiled kernel program downstream). Entries live for the process, which
-# also keeps the baked arrays alive.
+# value-keyed store of shared handles: two objects of the same class constructed
+# with equal baked constants reuse one compiled handle (and can therefore share
+# one compiled kernel program downstream). The owner half of the key is the class
+# object itself, not its name, so classes that share a __qualname__ across
+# modules never alias one another. Entries live for the process, so they keep the
+# baked arrays alive, and the owner classes with their defining module globals.
+#
+# The key does not include the bound function, so the memo depends on the same
+# per-class stability contract as _PROGRAM_CACHE in numba_backend: a class whose
+# *_fn properties vary between instances without a matching change in inputs is
+# handed the first instance's handle. Unlike the program cache, which only pays a
+# duplicate entry when that contract is broken, the memo would return the wrong
+# handle — so bind the native functions per class, not per instance.
 _HANDLE_MEMO_NO_PARAMS: dict[tuple[object, ...], tuple[PriorDrawFn, str | None]] = {}
 _HANDLE_MEMO_PARAMS: dict[
     tuple[object, ...],

@@ -126,10 +126,10 @@ class TemperatureLadder:
     def get_arg_cold(self) -> NDArray[np.int64]:
         """Get the indices of the n_cold readout chains in this ladder.
 
-        With T_cold set, the readout chains are the n_cold rungs pinned at
-        exactly T_cold (every ladder family pins them there by
-        construction) — not necessarily the coldest rungs, since a ladder
-        may extend below T_cold (T_min < T_cold, sort_mode=1).
+        The readout chains are the n_cold rungs pinned at exactly T_cold
+        (every ladder family pins them there by construction) — not
+        necessarily the coldest rungs, since a ladder may extend below
+        T_cold (T_min < T_cold, sort_mode=1).
         """
         matches = np.flatnonzero(self.Ts == self.T_cold)
         # every ladder family pins exactly n_cold rungs at T_cold; a spaced
