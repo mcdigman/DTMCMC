@@ -29,7 +29,7 @@ from dashboard.figures.registry import LAYOUTS, PLOTS, build_figure
 from dashboard.themes import THEMES, get_theme
 from DTMCMC.rng_helpers import get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance
-from experiments.harness.paths import repo_root
+from experiments.harness.paths import atomic_write_bytes, read_regular_file_bytes, repo_root
 from experiments.harness.runner import build_sampler, run_from_spec
 from experiments.harness.spec import RunSpec, config_to_text
 
@@ -178,7 +178,7 @@ def test_watcher_tolerates_missing_file(tmp_path: Path) -> None:
 def test_list_artifacts_skips_tmp(tmp_path: Path, fixed_artifact: Path) -> None:
     """Directory listing finds .h5 files but never in-flight .tmp files."""
     target = tmp_path / 'run.h5'
-    target.write_bytes(fixed_artifact.read_bytes())
+    atomic_write_bytes(target, read_regular_file_bytes(fixed_artifact, max_bytes=64 * 1024 * 1024))
     (tmp_path / 'run.h5.tmp').write_bytes(b'partial')
     found = list_artifacts(tmp_path)
     assert found == [target]
@@ -371,7 +371,7 @@ def test_artifact_selection_allowlist(tmp_path: Path, fixed_artifact: Path) -> N
     from dashboard.app.dash_app import DashboardConfig, _allowed_artifact  # noqa: PLC0415
 
     served = tmp_path / 'served.h5'
-    served.write_bytes(fixed_artifact.read_bytes())
+    atomic_write_bytes(served, read_regular_file_bytes(fixed_artifact, max_bytes=64 * 1024 * 1024))
     config = DashboardConfig(artifact=tmp_path)
     assert _allowed_artifact(config, str(served)) == str(served)
     assert _allowed_artifact(config, str(fixed_artifact)) is None

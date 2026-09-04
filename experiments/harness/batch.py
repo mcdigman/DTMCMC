@@ -20,11 +20,10 @@ Example sweep file::
 import argparse
 import itertools
 import shlex
-import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from .paths import resolve
+from .paths import atomic_write_text, load_toml, resolve
 from .spec import RunSpec, dumps_toml
 
 if TYPE_CHECKING:
@@ -56,8 +55,7 @@ def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec[Abstra
     specs: list[RunSpec]
         One spec per (grid point x seed), each with a unique name and seed
     """
-    with Path(resolve(sweep_path)).open('rb') as sweep_file:
-        sweep = tomllib.load(sweep_file)
+    sweep = load_toml(resolve(sweep_path))
 
     name = sweep.get('name')
     base_spec_path = sweep.get('base_spec')
@@ -108,13 +106,13 @@ def write_batch(sweep_path: str | Path) -> Path:
     manifest_lines: list[str] = []
     for spec in specs:
         spec_path = specs_dir / f'{spec.name}_seed{spec.seed}.toml'
-        spec_path.write_text(dumps_toml(spec.to_dict()))
+        atomic_write_text(spec_path, dumps_toml(spec.to_dict()))
         manifest_lines.append(
             f'python -m experiments.harness.run {shlex.quote(str(spec_path))} --out {shlex.quote(str(out_dir))}'
         )
 
     manifest_path = out_dir / 'manifest.txt'
-    manifest_path.write_text('\n'.join(manifest_lines) + '\n')
+    atomic_write_text(manifest_path, '\n'.join(manifest_lines) + '\n')
     return manifest_path
 
 

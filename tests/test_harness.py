@@ -21,7 +21,13 @@ from DTMCMC.numba_backend import _VALID_MODES
 from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.batch import write_batch
-from experiments.harness.paths import default_config_path, repo_root
+from experiments.harness.paths import (
+    MAX_TOML_FILE_BYTES,
+    atomic_write_text,
+    default_config_path,
+    read_regular_file_bytes,
+    repo_root,
+)
 from experiments.harness.runner import (
     LADDER_BUILDERS,
     LIKELIHOOD_BUILDERS,
@@ -163,6 +169,56 @@ def test_spec_validation_errors(field_path: tuple[str, str], bad_value: str | in
     table[field_path[-1]] = bad_value
     with pytest.raises(SpecError, match=match):
         RunSpec.from_dict(data)
+
+
+@pytest.mark.parametrize('name', ['', '.', '..', '../escape', r'..\\escape'])
+def test_spec_name_must_be_one_filename_component(name: str) -> None:
+    """Spec-derived artifact names cannot escape the selected output directory."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = name
+    with pytest.raises(SpecError, match='filename component'):
+        RunSpec.from_dict(data)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_run_rejects_unsafe_explicit_artifact_name_before_seeding(tmp_path: Path) -> None:
+    """The lower-level artifact-name override obeys the same containment boundary."""
+    with pytest.raises(ValueError, match='filename component'):
+        run_from_spec(make_tiny_spec(), tmp_path, artifact_name='../escape.h5')
+    assert not (tmp_path.parent / 'escape.h5').exists()
+    assert seed_run(1234) == derive_child_seeds(1234)
+
+
+def test_toml_reader_rejects_non_regular_and_oversized_inputs(tmp_path: Path) -> None:
+    """CLI-selected TOML input is regular and bounded before parsing."""
+    with pytest.raises(OSError, match='regular file'):
+        RunSpec.from_toml(tmp_path)
+
+    oversized = tmp_path / 'oversized.toml'
+    oversized.write_bytes(b'#' * (MAX_TOML_FILE_BYTES + 1))
+    with pytest.raises(ValueError, match='read limit'):
+        RunSpec.from_toml(oversized)
+
+
+def test_safe_io_rejects_symlink_reads_and_replaces_symlink_writes(tmp_path: Path) -> None:
+    """Safe I/O neither reads through nor writes through a final symlink."""
+    target = tmp_path / 'target.txt'
+    target.write_text('original')
+    link = tmp_path / 'link.txt'
+    try:
+        link.symlink_to(target)
+    except NotImplementedError, OSError:
+        pytest.skip('symlink creation is unavailable on this platform')
+
+    with pytest.raises(OSError, match='regular file'):
+        read_regular_file_bytes(link, max_bytes=1024)
+
+    atomic_write_text(link, 'replacement')
+    assert not link.is_symlink()
+    assert link.read_text() == 'replacement'
+    assert target.read_text() == 'original'
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
