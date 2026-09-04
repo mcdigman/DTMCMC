@@ -91,6 +91,7 @@ markers = [
 # linters/type-checkers installed in DTMCMC-dev (also wired up via .pre-commit-config.yaml).
 dev = [
     "pytest>=9.0",
+    "setuptools>=61.0",
     "h5py-stubs",
     "scipy-stubs",
     "types-setuptools",
