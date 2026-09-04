@@ -23,7 +23,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from .paths import atomic_write_text, load_toml, resolve
+from .paths import atomic_write_text, is_printable_line, load_toml, resolve
 from .spec import RunSpec, dumps_toml
 
 if TYPE_CHECKING:
@@ -65,6 +65,11 @@ def expand_sweep(sweep_path: str | Path) -> tuple[str, Path, list[RunSpec[Abstra
 
     if not isinstance(name, str) or not isinstance(base_spec_path, str) or not isinstance(out_dir_raw, str):
         msg = 'sweep file requires string entries: name, base_spec, out'
+        raise TypeError(msg)
+    if not is_printable_line(out_dir_raw):
+        # the manifest is one shell command per line; a newline in the out path
+        # would split a quoted argument across lines for line-oriented readers
+        msg = 'sweep out must be a printable single-line path'
         raise TypeError(msg)
     if (
         not isinstance(seeds, list)

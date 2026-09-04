@@ -7,6 +7,7 @@ counting-proxy eval accounting; and batch sweep expansion.
 """
 
 import shlex
+import stat
 import tomllib
 import warnings as warnings_module
 from typing import TYPE_CHECKING, Any
@@ -191,6 +192,25 @@ def test_run_rejects_unsafe_explicit_artifact_name_before_seeding(tmp_path: Path
     assert seed_run(1234) == derive_child_seeds(1234)
 
 
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_flush_ignores_a_planted_temp_symlink(tmp_path: Path) -> None:
+    """The flush temp name is unpredictable, so a planted symlink is never written through."""
+    out_dir = tmp_path / 'out'
+    out_dir.mkdir()
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+    spec = make_tiny_spec()
+    planted = out_dir / f'{spec.name}_seed{spec.seed}.h5.tmp'
+    planted.symlink_to(canary)
+
+    artifact_path = run_from_spec(spec, out_dir)
+
+    assert canary.read_text() == 'untouched'
+    assert artifact_path.is_file()
+    assert not artifact_path.is_symlink()
+    assert not list(out_dir.glob('.dtmcmc-*.tmp'))
+
+
 def test_toml_reader_rejects_non_regular_and_oversized_inputs(tmp_path: Path) -> None:
     """CLI-selected TOML input is regular and bounded before parsing."""
     with pytest.raises(OSError, match='regular file'):
@@ -219,6 +239,22 @@ def test_safe_io_rejects_symlink_reads_and_replaces_symlink_writes(tmp_path: Pat
     assert not link.is_symlink()
     assert link.read_text() == 'replacement'
     assert target.read_text() == 'original'
+
+
+def test_atomic_write_does_not_narrow_permissions(tmp_path: Path) -> None:
+    """Atomic replacement keeps a destination's mode and creates at the umask default."""
+    reference = tmp_path / 'reference.txt'
+    reference.write_text('written by a plain open()')
+    created = tmp_path / 'created.txt'
+    atomic_write_text(created, 'payload')
+    assert stat.S_IMODE(created.stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)
+
+    shared = tmp_path / 'shared.txt'
+    shared.write_text('first')
+    shared.chmod(0o664)
+    atomic_write_text(shared, 'second')
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o664
+    assert shared.read_text() == 'second'
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
@@ -424,6 +460,29 @@ def test_batch_rejects_multiline_name_before_writing_manifest(tmp_path: Path) ->
     )
 
     with pytest.raises(SpecError, match='filename component'):
+        write_batch(sweep_path)
+    assert not out_path.exists()
+
+
+def test_batch_rejects_multiline_out_before_writing_manifest(tmp_path: Path) -> None:
+    """A sweep out path cannot split the line-oriented shell manifest either."""
+    base_path = tmp_path / 'base.toml'
+    base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
+
+    out_path = tmp_path / 'out\ntouch PWNED #'
+    sweep_path = tmp_path / 'sweep.toml'
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'safe',
+                'base_spec': str(base_path),
+                'out': str(out_path),
+                'seeds': [101],
+            }
+        )
+    )
+
+    with pytest.raises(TypeError, match='single-line'):
         write_batch(sweep_path)
     assert not out_path.exists()
 
