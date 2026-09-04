@@ -266,7 +266,7 @@ def _freeze(value: object) -> object:
 
 
 def build_from_handle_no_params[S](
-    fn: Callable[[S], NDArray[np.floating]], inputs: S, owner: str, role: str
+    fn: Callable[[S], NDArray[np.floating]], inputs: S, owner: type, role: str
 ) -> tuple[PriorDrawFn, str | None]:
     key = (owner, role, _freeze(inputs))
     got = _HANDLE_MEMO_NO_PARAMS.get(key)
@@ -295,7 +295,7 @@ def build_from_handle_params[
     | tuple[NDArray[np.floating], bool]
     | tuple[NDArray[np.floating], float, bool],
 ](
-    fn: Callable[[NDArray[np.floating], S], T], inputs: S, owner: str, role: str
+    fn: Callable[[NDArray[np.floating], S], T], inputs: S, owner: type, role: str
 ) -> tuple[
     LoglikeFn | ValidateBoundsFn | CheckBoundsFn | CorrectBoundsFn | PriorProposalFn | PriorFactorFn, str | None
 ]:
@@ -476,7 +476,7 @@ def _prior_proposal_function[InputType](
 
 class AbstractNativeLikelihood[InputType](ABC):
     def __init__(self) -> None:
-        owner = type(self).__qualname__
+        owner = type(self)
         failures: list[tuple[str, str]] = []
 
         loglike_handle, failure = build_from_handle_params(self.loglike_fn, self.inputs, owner, 'get_loglike')
@@ -541,7 +541,7 @@ class AbstractNativeLikelihood[InputType](ABC):
             roles = ', '.join(role for role, _failure in failures)
             details = '\n'.join(f'{role}: {failure}' for role, failure in failures)
             warn(
-                f'{owner} {roles} failed nopython compilation and will run as plain Python:\n{details}',
+                f'{owner.__qualname__} {roles} failed nopython compilation and will run as plain Python:\n{details}',
                 CompilationFallbackWarning,
                 stacklevel=2,
             )

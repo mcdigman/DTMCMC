@@ -53,11 +53,10 @@ class TemperatureLadder:
         sort_mode: int
             Selector for how to sort the input temperatures
         T_cold: float | None
-            temperature of the n_cold readout chains; None (default) keeps
-            the historical convention that the first n_cold rungs are the
-            readout chains, and reads T_cold from those. Ladders that may extend below the readout
-            temperature must set T_cold so get_arg_cold can locate the
-            readout rungs by temperature instead of by position.
+            temperature of the n_cold readout chains; None (default) reads
+            it from Ts_in[0], before any sorting is applied. Pass it
+            explicitly whenever Ts_in is not written coldest-first, or the
+            wrong rungs are designated as the readout chains.
         n_cold: int
             n_cold<=n_chain, minimum total number of T=T_cold chains.
 
@@ -130,12 +129,8 @@ class TemperatureLadder:
         With T_cold set, the readout chains are the n_cold rungs pinned at
         exactly T_cold (every ladder family pins them there by
         construction) — not necessarily the coldest rungs, since a ladder
-        may extend below T_cold (T_min < T_cold, sort_mode=1). Without
-        T_cold the first n_cold rungs are the readout chains, preserving
-        the historical positional convention for raw ladders.
+        may extend below T_cold (T_min < T_cold, sort_mode=1).
         """
-        if self.T_cold is None:
-            return np.arange(self.n_cold, dtype=np.int64)
         matches = np.flatnonzero(self.Ts == self.T_cold)
         # every ladder family pins exactly n_cold rungs at T_cold; a spaced
         # rung landing there exactly only adds interchangeable duplicates
