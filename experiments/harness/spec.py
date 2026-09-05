@@ -17,15 +17,16 @@ import io
 import json
 import math
 import re
-import tomllib
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 import DTMCMC.exchange_manager as em
 from DTMCMC.likelihood import AbstractLikelihood
 
-from .paths import default_config_path
+from .paths import default_config_path, is_filename_component, load_toml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 TomlScalar = str | int | float | bool
 TomlValue = TomlScalar | list[str] | list[int] | list[float] | list[bool]
@@ -350,6 +351,9 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
 
     def __post_init__(self) -> None:
         """Validate cross-field constraints."""
+        if not is_filename_component(self.name):
+            msg = 'spec name must be a single non-special filename component'
+            raise SpecError(msg)
         if self.likelihood_name not in LIKELIHOOD_NAMES:
             msg = f'unknown likelihood {self.likelihood_name!r}; known: {sorted(LIKELIHOOD_NAMES)}'
             raise SpecError(msg)
@@ -555,9 +559,7 @@ class RunSpec[LikelihoodType: AbstractLikelihood[NamedTuple]]:
     @classmethod
     def from_toml(cls, path: str | Path) -> RunSpec[LikelihoodType]:
         """Read and validate a RunSpec from a TOML file."""
-        with Path(path).open('rb') as spec_file:
-            data = tomllib.load(spec_file)
-        return cls.from_dict(data)
+        return cls.from_dict(load_toml(path))
 
     def to_dict(self) -> dict[str, object]:
         """Get the nested-dict (TOML-shaped) form of this spec."""

@@ -7,9 +7,11 @@ counting-proxy eval accounting; and batch sweep expansion.
 """
 
 import shlex
+import stat
 import tomllib
 import warnings as warnings_module
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -21,7 +23,14 @@ from DTMCMC.numba_backend import _VALID_MODES
 from DTMCMC.rng_helpers import derive_child_seeds, get_rng, reset_seed_guard_for_tests, seed_run
 from experiments.harness.artifact import collect_provenance, read_attrs, validate, write_artifact
 from experiments.harness.batch import write_batch
-from experiments.harness.paths import default_config_path, repo_root
+from experiments.harness.paths import (
+    MAX_TOML_FILE_BYTES,
+    atomic_write_text,
+    default_config_path,
+    read_regular_file_bytes,
+    repo_root,
+    staged_replacement,
+)
 from experiments.harness.runner import (
     LADDER_BUILDERS,
     LIKELIHOOD_BUILDERS,
@@ -31,9 +40,6 @@ from experiments.harness.runner import (
     run_from_spec,
 )
 from experiments.harness.spec import KERNEL_BACKENDS, LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'name': 'tiny_gaussian_test',
@@ -163,6 +169,176 @@ def test_spec_validation_errors(field_path: tuple[str, str], bad_value: str | in
     table[field_path[-1]] = bad_value
     with pytest.raises(SpecError, match=match):
         RunSpec.from_dict(data)
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        '',
+        '.',
+        '..',
+        '../escape',
+        r'..\\escape',
+        'line\nbreak',
+        'tab\tname',
+        'nul\x00name',
+        'CON',
+        'has:stream',
+        'trailing.',
+    ],
+)
+def test_spec_name_must_be_one_filename_component(name: str) -> None:
+    """Spec-derived artifact names cannot escape the selected output directory."""
+    data: dict[str, Any] = {
+        key: dict(value) if isinstance(value, dict) else value for key, value in TINY_GAUSSIAN_SPEC.items()
+    }
+    data['name'] = name
+    with pytest.raises(SpecError, match='filename component'):
+        RunSpec.from_dict(data)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_run_rejects_unsafe_explicit_artifact_name_before_seeding(tmp_path: Path) -> None:
+    """The lower-level artifact-name override obeys the same containment boundary."""
+    with pytest.raises(ValueError, match='filename component'):
+        run_from_spec(make_tiny_spec(), tmp_path, artifact_name='../escape.h5')
+    assert not (tmp_path.parent / 'escape.h5').exists()
+    assert seed_run(1234) == derive_child_seeds(1234)
+
+
+@pytest.mark.usefixtures('fresh_seed_guard')
+def test_artifact_flush_ignores_a_planted_temp_symlink(tmp_path: Path) -> None:
+    """The flush temp name is unpredictable, so a planted symlink is never written through."""
+    out_dir = tmp_path / 'out'
+    out_dir.mkdir()
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+    spec = make_tiny_spec()
+    planted = out_dir / f'{spec.name}_seed{spec.seed}.h5.tmp'
+    planted.symlink_to(canary)
+
+    artifact_path = run_from_spec(spec, out_dir)
+
+    assert canary.read_text() == 'untouched'
+    assert artifact_path.is_file()
+    assert not artifact_path.is_symlink()
+    assert not list(out_dir.glob('.dtmcmc-*'))
+
+
+def test_toml_reader_rejects_non_regular_and_oversized_inputs(tmp_path: Path) -> None:
+    """CLI-selected TOML input is regular and bounded before parsing."""
+    with pytest.raises(OSError, match='regular file'):
+        RunSpec.from_toml(tmp_path)
+
+    oversized = tmp_path / 'oversized.toml'
+    oversized.write_bytes(b'#' * (MAX_TOML_FILE_BYTES + 1))
+    with pytest.raises(ValueError, match='read limit'):
+        RunSpec.from_toml(oversized)
+
+
+def test_safe_io_rejects_symlink_reads_and_replaces_symlink_writes(tmp_path: Path) -> None:
+    """Safe I/O neither reads through nor writes through a final symlink."""
+    target = tmp_path / 'target.txt'
+    target.write_text('original')
+    link = tmp_path / 'link.txt'
+    try:
+        link.symlink_to(target)
+    except NotImplementedError, OSError:
+        pytest.skip('symlink creation is unavailable on this platform')
+
+    with pytest.raises(OSError, match='regular file'):
+        read_regular_file_bytes(link, max_bytes=1024)
+
+    atomic_write_text(link, 'replacement')
+    assert not link.is_symlink()
+    assert link.read_text() == 'replacement'
+    assert target.read_text() == 'original'
+
+
+def test_atomic_write_does_not_narrow_permissions(tmp_path: Path) -> None:
+    """Atomic replacement keeps a destination's mode and creates at the umask default."""
+    reference = tmp_path / 'reference.txt'
+    reference.write_text('written by a plain open()')
+    created = tmp_path / 'created.txt'
+    atomic_write_text(created, 'payload')
+    assert stat.S_IMODE(created.stat().st_mode) == stat.S_IMODE(reference.stat().st_mode)
+
+    shared = tmp_path / 'shared.txt'
+    shared.write_text('first')
+    shared.chmod(0o664)
+    atomic_write_text(shared, 'second')
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o664
+    assert shared.read_text() == 'second'
+
+
+def test_staged_replacement_survives_a_hostile_output_directory(tmp_path: Path) -> None:
+    """Another writer in the output directory can steer neither the write nor the result."""
+    destination = tmp_path / 'artifact.bin'
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+
+    with staged_replacement(destination) as handle:
+        staging_dir = Path(handle.name).parent
+        assert stat.S_IMODE(staging_dir.stat().st_mode) == 0o700
+        # 0o700 guards the directory's contents, but its name is an entry in the
+        # output directory: anyone who can write there can swap the whole thing
+        staging_dir.rename(tmp_path / 'stolen')
+        staging_dir.mkdir(0o777)
+        (staging_dir / 'staged.tmp').symlink_to(canary)
+        handle.write(b'payload')
+
+    assert canary.read_text() == 'untouched'
+    assert destination.read_bytes() == b'payload'
+    assert not destination.is_symlink()
+
+
+def test_staged_replacement_fails_loudly_if_staging_is_destroyed(tmp_path: Path) -> None:
+    """Losing the staged file is an error, never a promotion of someone else's."""
+    destination = tmp_path / 'artifact.bin'
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+
+    def stage_over_a_destroyed_directory() -> None:
+        with staged_replacement(destination) as handle:
+            staging_dir = Path(handle.name).parent
+            (staging_dir / 'staged.tmp').unlink()
+            staging_dir.rmdir()
+            staging_dir.mkdir(0o777)
+            (staging_dir / 'staged.tmp').symlink_to(canary)
+            handle.write(b'payload')
+
+    with pytest.raises(OSError, match='No such file'):
+        stage_over_a_destroyed_directory()
+    assert not destination.exists()
+    assert canary.read_text() == 'untouched'
+
+
+def test_staged_replacement_leaves_nothing_behind(tmp_path: Path) -> None:
+    """Neither a failed body nor a failed replace strands the staged file."""
+    destination = tmp_path / 'artifact.bin'
+    with staged_replacement(destination) as handle:
+        handle.write(b'payload')
+    assert destination.read_bytes() == b'payload'
+    assert not list(tmp_path.glob('.dtmcmc-*'))
+
+    def fail_after_staging() -> None:
+        with staged_replacement(destination) as handle:
+            handle.write(b'never landed')
+            msg = 'body failed'
+            raise RuntimeError(msg)
+
+    with pytest.raises(RuntimeError, match='body failed'):
+        fail_after_staging()
+    assert destination.read_bytes() == b'payload'
+    assert not list(tmp_path.glob('.dtmcmc-*'))
+
+    # a destination that cannot be replaced must not strand the staged file
+    occupied = tmp_path / 'occupied'
+    occupied.mkdir()
+    (occupied / 'child').write_text('keeps the directory non-empty')
+    with pytest.raises(OSError, match='irectory'):
+        atomic_write_text(occupied, 'payload')
+    assert not list(tmp_path.glob('.dtmcmc-*'))
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
@@ -347,6 +523,52 @@ def test_batch_expansion(tmp_path: Path) -> None:
         assert spec.n_steps == 128
         seen.add((spec.n_chain, spec.seed))
     assert seen == {(n_chain, seed) for n_chain in (6, 8) for seed in (101, 102, 103)}
+
+
+def test_batch_rejects_multiline_name_before_writing_manifest(tmp_path: Path) -> None:
+    """A sweep name cannot split the line-oriented shell manifest."""
+    base_path = tmp_path / 'base.toml'
+    base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
+
+    out_path = tmp_path / 'out'
+    sweep_path = tmp_path / 'sweep.toml'
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'safe\ntouch PWNED #',
+                'base_spec': str(base_path),
+                'out': str(out_path),
+                'seeds': [101],
+            }
+        )
+    )
+
+    with pytest.raises(SpecError, match='filename component'):
+        write_batch(sweep_path)
+    assert not out_path.exists()
+
+
+def test_batch_rejects_multiline_out_before_writing_manifest(tmp_path: Path) -> None:
+    """A sweep out path cannot split the line-oriented shell manifest either."""
+    base_path = tmp_path / 'base.toml'
+    base_path.write_text(dumps_toml(dict(TINY_GAUSSIAN_SPEC)))
+
+    out_path = tmp_path / 'out\ntouch PWNED #'
+    sweep_path = tmp_path / 'sweep.toml'
+    sweep_path.write_text(
+        dumps_toml(
+            {
+                'name': 'safe',
+                'base_spec': str(base_path),
+                'out': str(out_path),
+                'seeds': [101],
+            }
+        )
+    )
+
+    with pytest.raises(TypeError, match='single-line'):
+        write_batch(sweep_path)
+    assert not out_path.exists()
 
 
 @pytest.mark.usefixtures('fresh_seed_guard')
