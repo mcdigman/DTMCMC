@@ -19,8 +19,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import BinaryIO
 
 MAX_TOML_FILE_BYTES = 1024 * 1024
+
+# fixed name of the staged replacement inside its own private staging directory
+STAGED_NAME = 'staged.tmp'
 
 
 def repo_root() -> Path:
@@ -137,51 +141,83 @@ def load_toml(path_in: str | Path) -> dict[str, object]:
     return tomllib.loads(payload.decode())
 
 
-def _carry_destination_mode(replacement: Path, destination: Path) -> None:
+def _carry_destination_mode(replacement: BinaryIO, destination: Path) -> None:
     """Give the staged replacement the permissions of the regular file it replaces.
 
     Without this a replacement keeps whatever mode it was created with and
     silently narrows (or widens) a destination whose permissions were set
     deliberately.  A symlink or special-file destination is left alone: this
     module never follows one, so its mode is not the mode being replaced.
+    Applied to the open descriptor, so it cannot land on a different file than
+    the one that was written.
     """
     try:
         existing = destination.lstat()
     except OSError:
         return
     if stat.S_ISREG(existing.st_mode):
-        replacement.chmod(stat.S_IMODE(existing.st_mode))
+        os.fchmod(replacement.fileno(), stat.S_IMODE(existing.st_mode))
+
+
+def _replace_from_staging(directory_fd: int, staging_path: Path, destination: Path) -> None:
+    """Rename the staged file onto *destination*, resolved against the pinned directory.
+
+    Naming the source relative to the open staging directory means that if
+    another writer in the output directory renamed that directory away and put
+    its own back, the file renamed into place is still the one that was written
+    here rather than whatever they left under the same name.
+    """
+    if os.rename in os.supports_dir_fd:
+        # os.rename, not os.replace: only the former registers dir_fd support,
+        # and on the platforms that have it both are the same overwriting
+        # renameat(2).  Missing staging means someone took it -- let that raise.
+        os.rename(STAGED_NAME, destination, src_dir_fd=directory_fd)
+    else:  # pragma: no cover - platforms without dir_fd support
+        staging_path.replace(destination)
 
 
 @contextmanager
-def staged_replacement(destination: str | Path) -> Iterator[Path]:
-    """Yield a staging path that atomically replaces *destination* once the body succeeds.
+def staged_replacement(destination: str | Path) -> Iterator[BinaryIO]:
+    """Yield an open handle whose contents atomically replace *destination* on success.
 
-    The staging file lives in a fresh 0o700 directory beside the destination,
-    so no other user can substitute a symlink for it between its creation and a
-    writer opening it by name -- the window a bare temporary filename leaves
-    open for writers that take a path rather than a descriptor (h5py).  An
-    ordinary open() inside that directory lets the umask pick the permissions
-    exactly as writing the destination directly would, unless there is already
-    a regular file there whose mode should be carried over instead.  The
-    directory and anything still in it are removed on every exit, so a failed
-    body or a failed replace never leaves a partial file behind.
+    Staging happens in a fresh 0o700 directory beside the destination, and the
+    handle is what callers get: no writer re-resolves the staging path, so a
+    writer that would otherwise open by name (h5py) cannot be redirected.  That
+    matters because 0o700 protects only the directory's contents -- the name is
+    an entry in the output directory, and anyone who can write there can rename
+    it away and put their own directory back.  Exclusive creation ('x') closes
+    the same door for the staging file itself, since it never follows a symlink.
+
+    Creating the file with a plain open() lets the umask pick the permissions
+    exactly as writing the destination directly would, unless a regular file is
+    already there whose mode should be carried over instead.  The directory and
+    anything still in it are removed on every exit, so neither a failed body nor
+    a failed replace leaves a partial file behind.
+
+    The rename into place is resolved against the pinned staging directory for
+    the same reason, so what lands at the destination is always what was
+    written here.
     """
     destination_path = Path(destination)
     with tempfile.TemporaryDirectory(
         prefix='.dtmcmc-', dir=destination_path.parent, ignore_cleanup_errors=True
     ) as staging_dir:
-        # a fixed name is fine inside a directory nobody else can enter, and the
-        # .tmp suffix keeps an in-flight artifact out of the dashboard's *.h5 scan
-        staging_path = Path(staging_dir) / 'staged.tmp'
-        yield staging_path
-        _carry_destination_mode(staging_path, destination_path)
-        staging_path.replace(destination_path)
+        # pin the directory now: from here on the staged file is reached through
+        # this descriptor, not through a name another writer could rename away
+        directory_fd = os.open(staging_dir, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+        try:
+            staging_path = Path(staging_dir) / STAGED_NAME
+            with staging_path.open('xb+') as handle:
+                yield handle
+                _carry_destination_mode(handle, destination_path)
+            _replace_from_staging(directory_fd, staging_path, destination_path)
+        finally:
+            os.close(directory_fd)
 
 
 def atomic_write_bytes(path_in: str | Path, payload: bytes) -> None:
     """Atomically replace a file without following an existing destination symlink."""
-    with staged_replacement(path_in) as staging_path, staging_path.open('wb') as handle:
+    with staged_replacement(path_in) as handle:
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())

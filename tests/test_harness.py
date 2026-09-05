@@ -10,7 +10,8 @@ import shlex
 import stat
 import tomllib
 import warnings as warnings_module
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
@@ -39,9 +40,6 @@ from experiments.harness.runner import (
     run_from_spec,
 )
 from experiments.harness.spec import KERNEL_BACKENDS, LADDER_KINDS, LIKELIHOOD_NAMES, RunSpec, SpecError, dumps_toml
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 TINY_GAUSSIAN_SPEC: dict[str, Any] = {
     'name': 'tiny_gaussian_test',
@@ -273,18 +271,59 @@ def test_atomic_write_does_not_narrow_permissions(tmp_path: Path) -> None:
     assert shared.read_text() == 'second'
 
 
-def test_staged_replacement_is_private_and_leaves_nothing_behind(tmp_path: Path) -> None:
-    """Staging is unreachable by other users, and neither failure path litters."""
+def test_staged_replacement_survives_a_hostile_output_directory(tmp_path: Path) -> None:
+    """Another writer in the output directory can steer neither the write nor the result."""
     destination = tmp_path / 'artifact.bin'
-    with staged_replacement(destination) as staging_path:
-        assert stat.S_IMODE(staging_path.parent.stat().st_mode) == 0o700
-        staging_path.write_bytes(b'payload')
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+
+    with staged_replacement(destination) as handle:
+        staging_dir = Path(handle.name).parent
+        assert stat.S_IMODE(staging_dir.stat().st_mode) == 0o700
+        # 0o700 guards the directory's contents, but its name is an entry in the
+        # output directory: anyone who can write there can swap the whole thing
+        staging_dir.rename(tmp_path / 'stolen')
+        staging_dir.mkdir(0o777)
+        (staging_dir / 'staged.tmp').symlink_to(canary)
+        handle.write(b'payload')
+
+    assert canary.read_text() == 'untouched'
+    assert destination.read_bytes() == b'payload'
+    assert not destination.is_symlink()
+
+
+def test_staged_replacement_fails_loudly_if_staging_is_destroyed(tmp_path: Path) -> None:
+    """Losing the staged file is an error, never a promotion of someone else's."""
+    destination = tmp_path / 'artifact.bin'
+    canary = tmp_path / 'canary.txt'
+    canary.write_text('untouched')
+
+    def stage_over_a_destroyed_directory() -> None:
+        with staged_replacement(destination) as handle:
+            staging_dir = Path(handle.name).parent
+            (staging_dir / 'staged.tmp').unlink()
+            staging_dir.rmdir()
+            staging_dir.mkdir(0o777)
+            (staging_dir / 'staged.tmp').symlink_to(canary)
+            handle.write(b'payload')
+
+    with pytest.raises(OSError, match='No such file'):
+        stage_over_a_destroyed_directory()
+    assert not destination.exists()
+    assert canary.read_text() == 'untouched'
+
+
+def test_staged_replacement_leaves_nothing_behind(tmp_path: Path) -> None:
+    """Neither a failed body nor a failed replace strands the staged file."""
+    destination = tmp_path / 'artifact.bin'
+    with staged_replacement(destination) as handle:
+        handle.write(b'payload')
     assert destination.read_bytes() == b'payload'
     assert not list(tmp_path.glob('.dtmcmc-*'))
 
     def fail_after_staging() -> None:
-        with staged_replacement(destination) as failing_path:
-            failing_path.write_bytes(b'never landed')
+        with staged_replacement(destination) as handle:
+            handle.write(b'never landed')
             msg = 'body failed'
             raise RuntimeError(msg)
 

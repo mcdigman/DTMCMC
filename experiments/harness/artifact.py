@@ -219,9 +219,11 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
     # never wraps mid-run, so the written rows are a prefix of the buffer
     rows_written = min(-(-sampler.itrn // sampler.store_thin), sampler.store_size)
 
-    # h5py opens by name, so the flush is staged inside a private directory
-    # that no other user can reach in to swap for a symlink
-    with staged_replacement(path) as tmp_path, h5py.File(str(tmp_path), 'w') as hf:
+    # h5py writes through the staging handle rather than reopening a path, so
+    # nothing in the output directory can redirect the flush
+    # h5py's fileobj driver takes a file-like object; its stubs only declare the
+    # str/PathLike name, so the supported call has to be suppressed
+    with staged_replacement(path) as staging_file, h5py.File(staging_file, 'w') as hf:  # type: ignore[arg-type]
         for prov_field in fields(provenance):
             hf.attrs[prov_field.name] = getattr(provenance, prov_field.name)
         hf.attrs['schema_version'] = SCHEMA_VERSION
