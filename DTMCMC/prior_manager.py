@@ -31,7 +31,7 @@ class PriorNativeState(NamedTuple):
 _PRIOR_NATIVE_MEMO: dict[tuple[object], tuple[NativeJumpCall[PriorNativeState], str | None]] = {}
 
 _JUMP_ARGS: tuple[nb_types.Type, ...] = (
-    nb_types.Array(nb_types.float64, 1, 'C'),  # type: ignore[no-untyped-call]
+    nb_types.Array(nb_types.float64, 1, 'C'),
     nb_types.int64,
     typeof(PriorNativeState()),  # type: ignore[no-untyped-call]
 )
