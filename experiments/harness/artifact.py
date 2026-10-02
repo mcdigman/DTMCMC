@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, NamedTuple, SupportsInt, cast
 import h5py
 import numpy as np
 
-from .paths import repo_root
+from .paths import repo_root, staged_replacement
 
 if TYPE_CHECKING:
     from DTMCMC.dtmcmc_sampler import DTMCMCSampler
@@ -219,8 +219,11 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
     # never wraps mid-run, so the written rows are a prefix of the buffer
     rows_written = min(-(-sampler.itrn // sampler.store_thin), sampler.store_size)
 
-    tmp_path = path.with_name(path.name + '.tmp')
-    with h5py.File(str(tmp_path), 'w') as hf:
+    # h5py writes through the staging handle rather than reopening a path, so
+    # nothing in the output directory can redirect the flush
+    # h5py's fileobj driver takes a file-like object; its stubs only declare the
+    # str/PathLike name, so the supported call has to be suppressed
+    with staged_replacement(path) as staging_file, h5py.File(staging_file, 'w') as hf:  # type: ignore[arg-type]
         for prov_field in fields(provenance):
             hf.attrs[prov_field.name] = getattr(provenance, prov_field.name)
         hf.attrs['schema_version'] = SCHEMA_VERSION
@@ -356,8 +359,6 @@ def write_artifact[LikelihoodType: AbstractLikelihood[NamedTuple]](
         store_grp.create_dataset('record_history_indices', data=np.asarray(sampler.record_history, dtype=np.int64))
         store_grp.create_dataset('samples', data=sampler.samples_store[:rows_written])
         store_grp.create_dataset('logLs', data=sampler.logLs_store[:rows_written])
-
-    tmp_path.replace(path)
 
 
 def _attr_int(hf: h5py.File, key: str) -> int:

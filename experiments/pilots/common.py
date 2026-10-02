@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 
 from DTMCMC.rng_helpers import get_rng
-from experiments.harness.paths import repo_root
+from experiments.harness.paths import atomic_write_text, repo_root
 from experiments.harness.spec import RunSpec, dumps_toml
 from experiments.metrics import round_trip_counts, round_trip_rate, scramble_block_n_eff_min
 
@@ -136,7 +136,7 @@ def write_specs(specs: list[dict[str, Any]], spec_dir: Path) -> list[Path]:
     for spec_data in specs:
         RunSpec.from_dict(spec_data)  # validate before writing
         path = spec_dir / f'{spec_data["name"]}_seed{spec_data["seed"]}.toml'
-        path.write_text(dumps_toml(spec_data))
+        atomic_write_text(path, dumps_toml(spec_data))
         paths.append(path)
     return paths
 
@@ -231,5 +231,5 @@ def save_summary(name: str, payload: dict[str, Any]) -> Path:
     """Write a pilot summary JSON under the pilot root."""
     PILOT_ROOT.mkdir(parents=True, exist_ok=True)
     path = PILOT_ROOT / f'{name}.json'
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True))
     return path

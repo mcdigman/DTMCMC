@@ -30,7 +30,7 @@ from DTMCMC.dtmcmc_sampler import DTMCMCSampler
 from DTMCMC.proposal_manager_helper import get_default_proposal_manager
 from DTMCMC.rng_helpers import get_rng, seed_run
 from DTMCMC.temperature_ladder_helpers import GeometricTemperatureLadder
-from experiments.harness.paths import chdir_repo_root, repo_root
+from experiments.harness.paths import atomic_write_text, chdir_repo_root, repo_root
 from experiments.harness.runner import build_ladder, build_likelihood
 from experiments.harness.spec import RunSpec
 from experiments.metrics import round_trip_counts
@@ -148,7 +148,7 @@ def run_single(rule: str, seed: int, out_path: Path) -> None:
         'late_swap_acceptance_per_block': float(accepted_swaps[-16:].mean()),
         'early_swap_acceptance_per_block': float(accepted_swaps[:8].mean()),
     }
-    out_path.write_text(json.dumps(result, indent=2))
+    atomic_write_text(out_path, json.dumps(result, indent=2))
 
 
 def main(argv: list[str] | None = None) -> int:

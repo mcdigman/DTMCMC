@@ -62,7 +62,7 @@ from experiments.adaptive import AdaptiveLadderController
 from experiments.metrics import de_buffer_difference_spectrum
 
 from .artifact import CheckpointLog, RunProvenance, collect_provenance, write_artifact
-from .paths import chdir_repo_root, resolve
+from .paths import chdir_repo_root, is_filename_component, resolve
 from .spec import EXCHANGE_STRATEGY_CODES, RunSpec, config_to_text
 
 # random buffer-difference pairs per temperature in the checkpoint DE spectrum
@@ -562,6 +562,12 @@ def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
     sampler's own teardown hook flushes the artifact at every checkpoint
     and finalizes at the last (plan D2).
     """
+    artifact_filename = artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5'
+    if not is_filename_component(artifact_filename):
+        msg = 'artifact_name must be a single non-special filename component'
+        raise ValueError(msg)
+    safe_artifact_filename = Path(artifact_filename).name
+
     chdir_repo_root()
     start_monotonic = time.monotonic()
 
@@ -592,8 +598,8 @@ def run_from_spec[LikelihoodType: AbstractLikelihood[NamedTuple]](
         controller = cast('AdaptiveLadderController[LikelihoodType]', controller_temp)
 
     out_path = Path(out_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
-    artifact_path = out_path / (artifact_name if artifact_name is not None else f'{spec.name}_seed{spec.seed}.h5')
+    out_path.mkdir(parents=True, exist_ok=True)  # skylos: ignore[SKY-D215] caller explicitly selects the output root
+    artifact_path = out_path / safe_artifact_filename
 
     # build_sampler consumes scientific run modes from the effective spec,
     # including zero_loglike, so artifact provenance and execution agree.
