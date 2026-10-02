@@ -191,7 +191,7 @@ class NativeBackendCompilationError(RuntimeError):
 # they mirror the hot-path call (a 1D C-contiguous float64 parameter
 # vector) but do not restrict the handle: the compiled dispatcher still
 # lazily specializes for any other argument types it is later called with
-_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (nb_types.Array(nb_types.float64, 1, 'C'),)  # type: ignore[no-untyped-call]
+_PARAMS_PROBE_ARGS: tuple[nb_types.Type, ...] = (nb_types.Array(nb_types.float64, 1, 'C'),)
 _NO_PROBE_ARGS: tuple[nb_types.Type, ...] = ()
 
 

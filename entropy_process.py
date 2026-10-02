@@ -23,7 +23,7 @@ def NNEntropy1(samples: NDArray[np.floating]) -> float:
     assert n_par <= n_par_max
     n_samp = samples.shape[0]
     entropy_sum = 0.0
-    for itrn in prange(n_samp):  # type: ignore[no-untyped-call, attr-defined]
+    for itrn in prange(n_samp):  # pyrefly: ignore[not-iterable]
         # find the distance to the nearest neighbor to sample itrn
         samples_cur = samples[itrn].copy()
         samples[itrn, :] = (
@@ -68,7 +68,7 @@ def NNEntropy2(samples1: NDArray[np.floating], samples2: NDArray[np.floating]) -
     n_par = n_par1
     n_samp = samples2.shape[0]
     entropy_sum = 0.0
-    for itrn in prange(n_samp):  # type: ignore[no-untyped-call, attr-defined]
+    for itrn in prange(n_samp):  # pyrefly: ignore[not-iterable]
         # find the distance to the nearest neighbor to sample itrn
         samples_cur = samples2[itrn]
         dist_sq_min = float(dist_large[n_par])
